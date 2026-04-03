@@ -1,9 +1,16 @@
 package deps
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
+
+	"github.com/matzehuels/stacktower/pkg/core/dag"
+	"github.com/matzehuels/stacktower/pkg/observability"
 )
 
 // ManifestParser reads dependency information from local manifest files.
@@ -53,10 +60,9 @@ type ManifestParser interface {
 //
 // Returned by [ManifestParser.Parse] after successfully reading a manifest.
 type ManifestResult struct {
-	// Graph is the dependency graph, typically a *dag.DAG with nodes for
-	// packages and edges for dependencies. The concrete type depends on
-	// the parser implementation.
-	Graph any
+	// Graph is the dependency graph with nodes for packages and edges
+	// for dependencies.
+	Graph *dag.DAG
 
 	// Type is the manifest type identifier (from ManifestParser.Type).
 	// Examples: "poetry", "cargo", "npm", "requirements".
@@ -70,6 +76,19 @@ type ManifestResult struct {
 	// manifest. Empty if the manifest doesn't specify a package name (e.g.,
 	// requirements.txt has no root package).
 	RootPackage string
+
+	// RuntimeVersion is the target runtime version detected from the manifest.
+	// For Python: extracted from requires-python (e.g., ">=3.9" → "3.9")
+	// For Node.js: extracted from engines.node
+	// For Ruby: extracted from ruby version directive
+	// Empty if not specified; callers should use a language-specific default.
+	RuntimeVersion string
+
+	// RuntimeConstraint is the raw runtime constraint from the manifest.
+	// For Python: ">=3.9,<4.0"
+	// For Node.js: ">=18"
+	// Empty if not specified.
+	RuntimeConstraint string
 }
 
 // DetectManifest finds a parser that supports the given file path.
@@ -222,4 +241,161 @@ func NormalizeLanguageName(name string, languages []*Language) string {
 
 	// Return lowercase if no match
 	return lower
+}
+
+// ProjectRootNodeID is the conventional node ID for the virtual project root
+// in manifest-based dependency graphs.
+const ProjectRootNodeID = "__project__"
+
+// ResolveAndMerge resolves each dependency via the resolver and merges the
+// results into a single DAG with a virtual project root. Dependencies that
+// fail to resolve are added as leaf nodes with a direct edge from the root.
+//
+// This is the shared implementation used by all manifest parsers that support
+// transitive resolution (e.g., requirements.txt + resolver, Cargo.toml + resolver).
+//
+// When a dependency has a Pinned version, the resolver will fetch that exact
+// version rather than the latest. This is important for lock files and go.mod
+// where versions are explicitly specified.
+func ResolveAndMerge(ctx context.Context, resolver Resolver, dependencies []Dependency, opts Options) (*dag.DAG, error) {
+	opts = opts.WithDefaults()
+	merged := dag.New(nil)
+	_ = merged.AddNode(dag.Node{ID: ProjectRootNodeID, Meta: dag.Metadata{"virtual": true}})
+
+	seenEdges := make(map[[2]string]bool)
+	addEdge := func(e dag.Edge) {
+		key := [2]string{e.From, e.To}
+		if seenEdges[key] {
+			return
+		}
+		seenEdges[key] = true
+		_ = merged.AddEdge(e)
+	}
+
+	type resolveResult struct {
+		index int
+		dep   Dependency
+		g     *dag.DAG
+		err   error
+	}
+
+	if len(dependencies) == 0 {
+		return merged, nil
+	}
+
+	// Check context before starting work
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	hooks := observability.ResolverFromContext(ctx)
+	workerCount := min(opts.Workers, len(dependencies))
+	if workerCount <= 0 {
+		workerCount = 1
+	}
+
+	jobs := make(chan int)
+	results := make(chan resolveResult, workerCount)
+
+	var wg sync.WaitGroup
+	for range workerCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				dep := dependencies[index]
+				hooks.OnFetchStart(ctx, dep.Name, 0)
+
+				resolveOpts := opts
+				if dep.Pinned != "" {
+					resolveOpts.Version = dep.Pinned
+					resolveOpts.Constraint = ""
+				} else if dep.Constraint != "" {
+					resolveOpts.Version = ""
+					resolveOpts.Constraint = dep.Constraint
+				}
+				g, err := resolver.Resolve(ctx, dep.Name, resolveOpts)
+
+				depCount := 0
+				if g != nil {
+					depCount = len(g.Nodes())
+				}
+				hooks.OnFetchComplete(ctx, dep.Name, 0, depCount, err)
+
+				results <- resolveResult{index: index, dep: dep, g: g, err: err}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(jobs)
+		for index := range dependencies {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- index:
+			}
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect all results, then merge in original dependency order for
+	// deterministic graph construction regardless of goroutine scheduling.
+	collected := make([]resolveResult, 0, len(dependencies))
+	for res := range results {
+		if res.err != nil {
+			if errors.Is(res.err, context.Canceled) || errors.Is(res.err, context.DeadlineExceeded) || ctx.Err() != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				return nil, res.err
+			}
+		}
+		collected = append(collected, res)
+	}
+	slices.SortFunc(collected, func(a, b resolveResult) int { return a.index - b.index })
+
+	for _, res := range collected {
+		if res.err != nil {
+			opts.Logger("resolve failed: %s: %v", res.dep.Name, res.err)
+			_ = merged.AddNode(dag.Node{ID: res.dep.Name})
+			addEdge(dag.Edge{From: ProjectRootNodeID, To: res.dep.Name, Meta: buildEdgeMeta(res.dep)})
+			continue
+		}
+
+		for _, n := range res.g.Nodes() {
+			_ = merged.AddNode(dag.Node{ID: n.ID, Meta: n.Meta})
+		}
+		for _, e := range res.g.Edges() {
+			addEdge(dag.Edge{From: e.From, To: e.To, Meta: e.Meta})
+		}
+		addEdge(dag.Edge{From: ProjectRootNodeID, To: res.dep.Name, Meta: buildEdgeMeta(res.dep)})
+	}
+
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	return merged, nil
+}
+
+// buildEdgeMeta creates edge metadata from a dependency, storing version and
+// constraint separately. This allows consumers to distinguish between pinned
+// versions (from lock files / go.mod) and version constraints (from manifests).
+func buildEdgeMeta(dep Dependency) dag.Metadata {
+	meta := dag.Metadata{}
+	if dep.Pinned != "" {
+		meta["version"] = dep.Pinned
+	}
+	if dep.Constraint != "" {
+		meta["constraint"] = dep.Constraint
+	}
+	return meta
 }

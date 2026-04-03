@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -274,10 +276,11 @@ func TestClientCachedFetchError(t *testing.T) {
 	}
 }
 
-func TestCheckStatus(t *testing.T) {
+func TestCheckResponse(t *testing.T) {
 	tests := []struct {
 		name       string
 		code       int
+		headers    map[string]string
 		wantErr    bool
 		wantType   error
 		isRetryErr bool
@@ -317,32 +320,67 @@ func TestCheckStatus(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "403 Forbidden",
-			code:    403,
+			name:     "401 Unauthorized",
+			code:     401,
+			wantErr:  true,
+			wantType: ErrUnauthorized,
+		},
+		{
+			name:     "403 Forbidden",
+			code:     403,
+			wantErr:  true,
+			wantType: ErrUnauthorized,
+		},
+		{
+			name:    "429 Rate Limited without Retry-After",
+			code:    429,
+			wantErr: true,
+		},
+		{
+			name:    "429 Rate Limited with Retry-After",
+			code:    429,
+			headers: map[string]string{"Retry-After": "60"},
 			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := checkStatus(tt.code)
+			resp := &http.Response{
+				StatusCode: tt.code,
+				Header:     make(http.Header),
+			}
+			for k, v := range tt.headers {
+				resp.Header.Set(k, v)
+			}
+
+			err := checkResponse(resp)
 
 			if tt.wantErr {
 				if err == nil {
-					t.Error("checkStatus() should return error")
+					t.Error("checkResponse() should return error")
 				}
 				if tt.wantType != nil && !errors.Is(err, tt.wantType) {
-					t.Errorf("checkStatus() error = %v, want %v", err, tt.wantType)
+					t.Errorf("checkResponse() error = %v, want %v", err, tt.wantType)
 				}
 				if tt.isRetryErr {
 					var retryErr *cache.RetryableError
 					if !errors.As(err, &retryErr) {
-						t.Errorf("checkStatus() error should be RetryableError, got %T", err)
+						t.Errorf("checkResponse() error should be RetryableError, got %T", err)
+					}
+				}
+				// Check Retry-After parsing for 429
+				if tt.code == 429 {
+					var rateLimitErr *RateLimitedError
+					if errors.As(err, &rateLimitErr) {
+						if tt.headers != nil && tt.headers["Retry-After"] == "60" && rateLimitErr.RetryAfter != 60 {
+							t.Errorf("checkResponse() RetryAfter = %d, want 60", rateLimitErr.RetryAfter)
+						}
 					}
 				}
 			} else {
 				if err != nil {
-					t.Errorf("checkStatus() unexpected error: %v", err)
+					t.Errorf("checkResponse() unexpected error: %v", err)
 				}
 			}
 		})
@@ -423,7 +461,212 @@ func TestNewHTTPClient(t *testing.T) {
 	if client == nil {
 		t.Fatal("NewHTTPClient() returned nil")
 	}
-	if client.Timeout != httpTimeout {
-		t.Errorf("Timeout = %v, want %v", client.Timeout, httpTimeout)
+	if client.Timeout != DefaultTimeout {
+		t.Errorf("Timeout = %v, want %v", client.Timeout, DefaultTimeout)
+	}
+}
+
+// =============================================================================
+// Singleflight Deduplication Tests
+// =============================================================================
+
+func TestCachedSingleflightDedup(t *testing.T) {
+	c, _ := cache.NewFileCache(t.TempDir())
+	defer c.Close()
+
+	client := NewClient(c, "test:", time.Hour, nil)
+
+	var fetchCount atomic.Int32
+	type testData struct {
+		Value string `json:"value"`
+	}
+
+	key := "singleflight-test-" + time.Now().String()
+
+	// Launch 10 concurrent requests for the same key
+	var wg sync.WaitGroup
+	errs := make([]error, 10)
+	results := make([]testData, 10)
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			var value testData
+			errs[idx] = client.Cached(context.Background(), key, false, &value, func() error {
+				fetchCount.Add(1)
+				// Simulate some work
+				time.Sleep(50 * time.Millisecond)
+				value = testData{Value: "shared-result"}
+				return nil
+			})
+			results[idx] = value
+		}(i)
+	}
+
+	wg.Wait()
+
+	// All should succeed
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: Cached() error: %v", i, err)
+		}
+	}
+
+	// Only 1 fetch should have been executed (singleflight dedup)
+	count := fetchCount.Load()
+	if count != 1 {
+		t.Errorf("fetch called %d times, want 1 (singleflight should deduplicate)", count)
+	}
+}
+
+func TestCachedSingleflightDifferentKeys(t *testing.T) {
+	c, _ := cache.NewFileCache(t.TempDir())
+	defer c.Close()
+
+	client := NewClient(c, "test:", time.Hour, nil)
+
+	var fetchCount atomic.Int32
+
+	type testData struct {
+		Value string `json:"value"`
+	}
+
+	// Different keys should NOT be deduplicated
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			var value testData
+			key := "different-key-" + time.Now().String() + "-" + string(rune('a'+idx))
+			_ = client.Cached(context.Background(), key, false, &value, func() error {
+				fetchCount.Add(1)
+				time.Sleep(50 * time.Millisecond)
+				value = testData{Value: "result"}
+				return nil
+			})
+		}(i)
+	}
+
+	wg.Wait()
+
+	count := fetchCount.Load()
+	if count != 3 {
+		t.Errorf("fetch called %d times, want 3 (different keys should each fetch)", count)
+	}
+}
+
+// =============================================================================
+// Rate Limiter Tests
+// =============================================================================
+
+func TestNewClientWithRateLimit(t *testing.T) {
+	c, _ := cache.NewFileCache(t.TempDir())
+	defer c.Close()
+
+	client := NewClientWithRateLimit(c, "test:", time.Hour, nil, 5.0, 10)
+	if client == nil {
+		t.Fatal("NewClientWithRateLimit() returned nil")
+	}
+	if client.limiter == nil {
+		t.Error("NewClientWithRateLimit() should set limiter")
+	}
+}
+
+func TestNewClientWithRateLimitZeroRPS(t *testing.T) {
+	c, _ := cache.NewFileCache(t.TempDir())
+	defer c.Close()
+
+	client := NewClientWithRateLimit(c, "test:", time.Hour, nil, 0, 0)
+	if client == nil {
+		t.Fatal("NewClientWithRateLimit() returned nil")
+	}
+	if client.limiter != nil {
+		t.Error("NewClientWithRateLimit(rps=0) should not set limiter")
+	}
+}
+
+func TestRateLimiterBlocksExcessRequests(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}))
+	defer server.Close()
+
+	c, _ := cache.NewFileCache(t.TempDir())
+	defer c.Close()
+
+	// Very low rate limit: 1 req/s, burst 1
+	client := NewClientWithRateLimit(c, "test:", time.Hour, nil, 1, 1)
+	client.http = server.Client()
+
+	// First request should succeed (uses the burst token)
+	var resp map[string]string
+	err := client.Get(context.Background(), server.URL, &resp)
+	if err != nil {
+		t.Fatalf("first request should succeed: %v", err)
+	}
+
+	// Second request with a very short context should fail (rate limited)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	err = client.Get(ctx, server.URL, &resp)
+	if err == nil {
+		t.Error("second request should be rate limited with short context")
+	}
+}
+
+// =============================================================================
+// IsRateLimitedError Tests
+// =============================================================================
+
+func TestIsRateLimitedError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"RateLimitedError", &RateLimitedError{RetryAfter: 10}, true},
+		{"wrapped RateLimitedError", cache.Retryable(&RateLimitedError{RetryAfter: 5}), true},
+		{"ErrNotFound", ErrNotFound, false},
+		{"generic error", errors.New("generic"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsRateLimitedError(tt.err); got != tt.want {
+				t.Errorf("IsRateLimitedError() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRateLimitedErrorRetryAfterSeconds(t *testing.T) {
+	err := &RateLimitedError{RetryAfter: 15}
+	if got := err.RetryAfterSeconds(); got != 15 {
+		t.Fatalf("RetryAfterSeconds() = %d, want 15", got)
+	}
+}
+
+// =============================================================================
+// DefaultRateLimits Tests
+// =============================================================================
+
+func TestDefaultRateLimitsExist(t *testing.T) {
+	registries := []string{"pypi", "npm", "crates", "rubygems", "packagist", "maven", "goproxy"}
+	for _, name := range registries {
+		rl, ok := DefaultRateLimits[name]
+		if !ok {
+			t.Errorf("DefaultRateLimits missing entry for %q", name)
+			continue
+		}
+		if rl.RequestsPerSecond <= 0 {
+			t.Errorf("DefaultRateLimits[%q].RequestsPerSecond = %f, want > 0", name, rl.RequestsPerSecond)
+		}
+		if rl.Burst <= 0 {
+			t.Errorf("DefaultRateLimits[%q].Burst = %d, want > 0", name, rl.Burst)
+		}
 	}
 }

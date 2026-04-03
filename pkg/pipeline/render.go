@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/matzehuels/stacktower/pkg/core/dag"
+	corerender "github.com/matzehuels/stacktower/pkg/core/render"
 	"github.com/matzehuels/stacktower/pkg/core/render/nodelink"
 	"github.com/matzehuels/stacktower/pkg/core/render/tower/layout"
 	"github.com/matzehuels/stacktower/pkg/core/render/tower/sink"
@@ -29,6 +30,22 @@ func RenderNodelink(layout graph.Layout, opts Options) (map[string][]byte, error
 	}
 
 	artifacts := make(map[string][]byte)
+	needsSVG := false
+	for _, format := range opts.Formats {
+		if format == FormatSVG || format == FormatPNG || format == FormatPDF {
+			needsSVG = true
+			break
+		}
+	}
+
+	var svgData []byte
+	if needsSVG {
+		var err error
+		svgData, err = nodelink.RenderSVG(layout.DOT)
+		if err != nil {
+			return nil, fmt.Errorf("render %s: %w", FormatSVG, err)
+		}
+	}
 
 	for _, format := range opts.Formats {
 		var data []byte
@@ -36,11 +53,11 @@ func RenderNodelink(layout graph.Layout, opts Options) (map[string][]byte, error
 
 		switch format {
 		case FormatSVG:
-			data, err = nodelink.RenderSVG(layout.DOT)
+			data = svgData
 		case FormatPNG:
-			data, err = nodelink.RenderPNG(layout.DOT, 2.0)
+			data, err = corerender.ToPNG(svgData, 2.0)
 		case FormatPDF:
-			data, err = nodelink.RenderPDF(layout.DOT)
+			data, err = corerender.ToPDF(svgData)
 		case FormatJSON:
 			data, err = graph.MarshalLayout(layout)
 		default:
@@ -78,6 +95,17 @@ func renderTower(l layout.Layout, g *dag.DAG, opts Options) (map[string][]byte, 
 
 	svgOpts := buildSVGOptions(g, l, opts)
 	artifacts := make(map[string][]byte)
+	needsSVG := false
+	for _, format := range opts.Formats {
+		if format == FormatSVG || format == FormatPNG || format == FormatPDF {
+			needsSVG = true
+			break
+		}
+	}
+	var svgData []byte
+	if needsSVG {
+		svgData = sink.RenderSVG(l, svgOpts...)
+	}
 
 	for _, format := range opts.Formats {
 		var data []byte
@@ -85,11 +113,11 @@ func renderTower(l layout.Layout, g *dag.DAG, opts Options) (map[string][]byte, 
 
 		switch format {
 		case FormatSVG:
-			data = sink.RenderSVG(l, svgOpts...)
+			data = svgData
 		case FormatPNG:
-			data, err = sink.RenderPNG(l, sink.WithPNGSVGOptions(svgOpts...))
+			data, err = corerender.ToPNG(svgData, 2.0)
 		case FormatPDF:
-			data, err = sink.RenderPDF(l, sink.WithPDFSVGOptions(svgOpts...))
+			data, err = corerender.ToPDF(svgData)
 		case FormatJSON:
 			var exported graph.Layout
 			exported, err = l.Export(g)
@@ -163,6 +191,9 @@ func buildSVGOptions(g *dag.DAG, l layout.Layout, opts Options) []sink.SVGOption
 	if opts.Nebraska && len(l.Nebraska) > 0 {
 		svgOpts = append(svgOpts, sink.WithNebraska(l.Nebraska))
 	}
+
+	// Security flags rendering position
+	svgOpts = append(svgOpts, sink.WithFlagsOnTop(opts.FlagsOnTop))
 
 	return svgOpts
 }

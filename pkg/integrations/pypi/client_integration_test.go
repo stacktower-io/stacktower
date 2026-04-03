@@ -6,13 +6,12 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/matzehuels/stacktower/pkg/cache"
 )
 
 func TestFetchPackage_Integration(t *testing.T) {
-	client, err := NewClient(time.Hour)
-	if err != nil {
-		t.Fatalf("NewClient() error: %v", err)
-	}
+	client := NewClient(cache.NewNullCache(), time.Hour)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -47,10 +46,7 @@ func TestFetchPackage_Integration(t *testing.T) {
 }
 
 func TestFetchPackageWithDeps_Integration(t *testing.T) {
-	client, err := NewClient(time.Hour)
-	if err != nil {
-		t.Fatalf("NewClient() error: %v", err)
-	}
+	client := NewClient(cache.NewNullCache(), time.Hour)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

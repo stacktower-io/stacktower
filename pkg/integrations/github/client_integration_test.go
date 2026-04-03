@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/matzehuels/stacktower/pkg/cache"
 )
 
 func TestFetch_Integration(t *testing.T) {
@@ -15,10 +17,7 @@ func TestFetch_Integration(t *testing.T) {
 		t.Skip("GITHUB_TOKEN not set, skipping integration test")
 	}
 
-	client, err := NewClient(token, time.Hour)
-	if err != nil {
-		t.Fatalf("NewClient() error: %v", err)
-	}
+	client := NewClient(cache.NewNullCache(), token, time.Hour)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

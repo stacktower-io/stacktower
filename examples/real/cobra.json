@@ -1,266 +1,585 @@
 {
+  "meta": {
+    "dependency_scope": "prod_only",
+    "include_prerelease": false,
+    "runtime_source": "default",
+    "runtime_version": "1.21"
+  },
   "nodes": [
     {
       "id": "github.com/cpuguy83/go-md2man/v2",
+      "license": "MIT",
+      "url": "https://github.com/cpuguy83/go-md2man",
       "meta": {
+        "license": "MIT",
+        "repo_archived": false,
+        "repo_language": "Go",
+        "repo_last_commit": "2025-11-24",
+        "repo_last_release": "2025-04-24",
+        "repo_license": "MIT",
+        "repo_owner": "cpuguy83",
+        "repo_stars": 267,
+        "repo_url": "https://github.com/cpuguy83/go-md2man",
         "version": "v2.0.7"
       }
     },
     {
       "id": "github.com/creack/pty",
+      "brittle": true,
+      "license": "MIT",
+      "url": "https://github.com/creack/pty",
       "meta": {
+        "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "PTY interface for Go",
+        "repo_language": "Go",
+        "repo_last_commit": "2024-10-31",
+        "repo_last_release": "2024-10-31",
+        "repo_license": "MIT",
+        "repo_owner": "creack",
+        "repo_stars": 1990,
+        "repo_topics": [
+          "pty",
+          "go",
+          "tty",
+          "cross-platform"
+        ],
+        "repo_url": "https://github.com/creack/pty",
         "version": "v1.1.24"
       }
     },
     {
       "id": "github.com/google/go-cmp",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/google/go-cmp",
       "meta": {
+        "license": "BSD-3-Clause",
+        "repo_archived": false,
+        "repo_description": "Package for comparing Go values in tests",
+        "repo_language": "Go",
+        "repo_last_commit": "2026-03-10",
+        "repo_last_release": "2025-02-21",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "google",
+        "repo_stars": 4613,
+        "repo_topics": [
+          "go",
+          "equality",
+          "testing"
+        ],
+        "repo_url": "https://github.com/google/go-cmp",
         "version": "v0.7.0"
       }
     },
     {
       "id": "github.com/inconshreveable/mousetrap",
+      "brittle": true,
+      "license": "Apache-2.0",
+      "url": "https://github.com/inconshreveable/mousetrap",
       "meta": {
+        "license": "Apache-2.0",
+        "repo_archived": false,
+        "repo_description": "Detect starting from Windows explorer",
+        "repo_language": "Go",
+        "repo_last_commit": "2022-11-29",
+        "repo_last_release": "2017-07-29",
+        "repo_license": "Apache-2.0",
+        "repo_owner": "inconshreveable",
+        "repo_stars": 268,
+        "repo_url": "https://github.com/inconshreveable/mousetrap",
         "version": "v1.1.0"
       }
     },
     {
       "id": "github.com/kr/pretty",
+      "brittle": true,
+      "license": "MIT",
+      "url": "https://github.com/kr/pretty",
       "meta": {
+        "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "Pretty printing for Go values",
+        "repo_language": "Go",
+        "repo_last_commit": "2024-07-26",
+        "repo_license": "MIT",
+        "repo_owner": "kr",
+        "repo_stars": 1407,
+        "repo_url": "https://github.com/kr/pretty",
         "version": "v0.3.1"
       }
     },
     {
       "id": "github.com/kr/text",
+      "brittle": true,
+      "license": "MIT",
+      "url": "https://github.com/kr/text",
       "meta": {
+        "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "Miscellaneous functions for formatting text",
+        "repo_language": "Go",
+        "repo_last_commit": "2024-07-26",
+        "repo_license": "MIT",
+        "repo_owner": "kr",
+        "repo_stars": 97,
+        "repo_url": "https://github.com/kr/text",
         "version": "v0.2.0"
       }
     },
     {
       "id": "github.com/rogpeppe/go-internal",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/rogpeppe/go-internal",
       "meta": {
+        "license": "BSD-3-Clause",
+        "repo_archived": false,
+        "repo_description": "Selected Go-internal packages factored out from the standard library",
+        "repo_language": "Go",
+        "repo_last_commit": "2025-04-10",
+        "repo_last_release": "2025-02-25",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "rogpeppe",
+        "repo_stars": 966,
+        "repo_url": "https://github.com/rogpeppe/go-internal",
         "version": "v1.14.1"
       }
     },
     {
       "id": "github.com/russross/blackfriday/v2",
+      "brittle": true,
+      "url": "https://github.com/russross/blackfriday",
       "meta": {
+        "repo_archived": false,
+        "repo_description": "Blackfriday: a markdown processor for Go",
+        "repo_language": "Go",
+        "repo_last_commit": "2024-01-29",
+        "repo_last_release": "2020-11-07",
+        "repo_owner": "russross",
+        "repo_stars": 5619,
+        "repo_url": "https://github.com/russross/blackfriday",
         "version": "v2.1.0"
       }
     },
     {
       "id": "github.com/spf13/cobra",
+      "license": "Apache-2.0",
+      "url": "https://github.com/spf13/cobra",
       "meta": {
+        "license": "Apache-2.0",
+        "repo_archived": false,
+        "repo_description": "A Commander for modern Go CLI interactions",
+        "repo_language": "Go",
+        "repo_last_commit": "2025-12-10",
+        "repo_last_release": "2025-12-04",
+        "repo_license": "Apache-2.0",
+        "repo_owner": "spf13",
+        "repo_stars": 43531,
+        "repo_topics": [
+          "cobra",
+          "cobra-library",
+          "cobra-generator",
+          "posix-compliant-flags",
+          "command-cobra",
+          "cli-app",
+          "command-line",
+          "commandline",
+          "command",
+          "cli"
+        ],
+        "repo_url": "https://github.com/spf13/cobra",
         "version": "v1.10.2"
       }
     },
     {
       "id": "github.com/spf13/pflag",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/spf13/pflag",
       "meta": {
+        "license": "BSD-3-Clause",
+        "repo_archived": false,
+        "repo_description": "Drop-in replacement for Go's flag package, implementing POSIX/GNU-style --flags.",
+        "repo_language": "Go",
+        "repo_last_commit": "2026-03-05",
+        "repo_last_release": "2025-09-02",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "spf13",
+        "repo_stars": 2720,
+        "repo_url": "https://github.com/spf13/pflag",
         "version": "v1.0.10"
       }
     },
     {
       "id": "github.com/yuin/goldmark",
+      "license": "MIT",
+      "url": "https://github.com/yuin/goldmark",
       "meta": {
-        "version": "v1.7.16"
+        "license": "MIT",
+        "repo_archived": false,
+        "repo_description": ":trophy: A markdown parser written in Go. Easy to extend, standard(CommonMark) compliant, well structured.",
+        "repo_language": "Go",
+        "repo_last_commit": "2026-03-25",
+        "repo_last_release": "2026-03-25",
+        "repo_license": "MIT",
+        "repo_owner": "yuin",
+        "repo_stars": 4677,
+        "repo_topics": [
+          "markdown",
+          "commonmark",
+          "golang",
+          "go"
+        ],
+        "repo_url": "https://github.com/yuin/goldmark",
+        "version": "v1.8.2"
       }
     },
     {
       "id": "go.yaml.in/yaml/v3",
+      "license": "Apache-2.0",
+      "url": "https://github.com/yaml/go-yaml",
       "meta": {
+        "license": "Apache-2.0",
+        "repo_archived": false,
+        "repo_description": "The YAML org maintained fork of https://github.com/go-yaml/yaml",
+        "repo_language": "Go",
+        "repo_last_commit": "2026-03-21",
+        "repo_license": "Apache-2.0",
+        "repo_owner": "yaml",
+        "repo_stars": 447,
+        "repo_url": "https://github.com/yaml/go-yaml",
         "version": "v3.0.4"
       }
     },
     {
       "id": "golang.org/x/crypto",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/golang/crypto",
       "meta": {
-        "version": "v0.47.0"
-      }
-    },
-    {
-      "id": "golang.org/x/mod",
-      "meta": {
-        "version": "v0.32.0"
-      }
-    },
-    {
-      "id": "golang.org/x/net",
-      "meta": {
+        "license": "BSD-3-Clause",
+        "repo_archived": false,
+        "repo_description": "[mirror] Go supplementary cryptography libraries",
+        "repo_language": "Go",
+        "repo_last_commit": "2026-03-23",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "golang",
+        "repo_stars": 3308,
+        "repo_url": "https://github.com/golang/crypto",
         "version": "v0.49.0"
       }
     },
     {
-      "id": "golang.org/x/sync",
+      "id": "golang.org/x/mod",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/golang/mod",
       "meta": {
-        "version": "v0.19.0"
+        "license": "BSD-3-Clause",
+        "repo_archived": false,
+        "repo_description": "[mirror] Go module mechanics libraries",
+        "repo_language": "Go",
+        "repo_last_commit": "2026-03-11",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "golang",
+        "repo_stars": 207,
+        "repo_url": "https://github.com/golang/mod",
+        "version": "v0.34.0"
+      }
+    },
+    {
+      "id": "golang.org/x/net",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/golang/net",
+      "meta": {
+        "license": "BSD-3-Clause",
+        "repo_archived": false,
+        "repo_description": "[mirror] Go supplementary network libraries",
+        "repo_language": "Go",
+        "repo_last_commit": "2026-03-27",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "golang",
+        "repo_stars": 2992,
+        "repo_url": "https://github.com/golang/net",
+        "version": "v0.52.0"
+      }
+    },
+    {
+      "id": "golang.org/x/sync",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/golang/sync",
+      "meta": {
+        "license": "BSD-3-Clause",
+        "repo_archived": false,
+        "repo_description": "[mirror] concurrency primitives",
+        "repo_language": "Go",
+        "repo_last_commit": "2026-03-08",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "golang",
+        "repo_stars": 916,
+        "repo_url": "https://github.com/golang/sync",
+        "version": "v0.20.0"
       }
     },
     {
       "id": "golang.org/x/sys",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/golang/sys",
       "meta": {
-        "version": "v0.40.0"
+        "license": "BSD-3-Clause",
+        "repo_archived": false,
+        "repo_description": "[mirror] Go packages for low-level interaction with the operating system",
+        "repo_language": "Go",
+        "repo_last_commit": "2026-03-27",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "golang",
+        "repo_stars": 1337,
+        "repo_url": "https://github.com/golang/sys",
+        "version": "v0.42.0"
       }
     },
     {
       "id": "golang.org/x/telemetry",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/golang/telemetry",
       "meta": {
-        "version": "v0.0.0-20260128140115-fcf36f686977"
+        "license": "BSD-3-Clause",
+        "repo_archived": false,
+        "repo_description": "[mirror] Go Telemetry services and libraries",
+        "repo_language": "Go",
+        "repo_last_commit": "2026-03-27",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "golang",
+        "repo_stars": 46,
+        "repo_url": "https://github.com/golang/telemetry",
+        "version": "v0.0.0-20260316223853-b6b0c46d1ccd"
       }
     },
     {
       "id": "golang.org/x/term",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/golang/term",
       "meta": {
-        "version": "v0.39.0"
-      }
-    },
-    {
-      "id": "golang.org/x/text",
-      "meta": {
-        "version": "v0.33.0"
-      }
-    },
-    {
-      "id": "golang.org/x/tools",
-      "meta": {
+        "license": "BSD-3-Clause",
+        "repo_archived": false,
+        "repo_description": "Go terminal and console support",
+        "repo_language": "Go",
+        "repo_last_commit": "2026-03-11",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "golang",
+        "repo_stars": 303,
+        "repo_url": "https://github.com/golang/term",
         "version": "v0.41.0"
       }
     },
     {
-      "id": "gopkg.in/check.v1",
+      "id": "golang.org/x/text",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/golang/text",
       "meta": {
+        "license": "BSD-3-Clause",
+        "repo_archived": false,
+        "repo_description": "[mirror] Go text processing support",
+        "repo_language": "Go",
+        "repo_last_commit": "2026-03-11",
+        "repo_last_release": "2018-02-21",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "golang",
+        "repo_stars": 800,
+        "repo_url": "https://github.com/golang/text",
+        "version": "v0.35.0"
+      }
+    },
+    {
+      "id": "golang.org/x/tools",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/golang/tools",
+      "meta": {
+        "license": "BSD-3-Clause",
+        "repo_archived": false,
+        "repo_description": "[mirror] Go Tools",
+        "repo_language": "Go",
+        "repo_last_commit": "2026-03-28",
+        "repo_last_release": "2026-02-12",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "golang",
+        "repo_stars": 7916,
+        "repo_url": "https://github.com/golang/tools",
+        "version": "v0.43.0"
+      }
+    },
+    {
+      "id": "gopkg.in/check.v1",
+      "brittle": true,
+      "url": "https://github.com/go-check/check",
+      "meta": {
+        "repo_archived": false,
+        "repo_description": "Rich testing for the Go language",
+        "repo_language": "Go",
+        "repo_last_commit": "2024-07-26",
+        "repo_owner": "go-check",
+        "repo_stars": 695,
+        "repo_url": "https://github.com/go-check/check",
         "version": "v1.0.0-20201130134442-10cb98267c6c"
       }
     }
   ],
   "edges": [
     {
-      "from": "github.com/spf13/cobra",
-      "to": "github.com/cpuguy83/go-md2man/v2"
-    },
-    {
-      "from": "github.com/spf13/cobra",
-      "to": "github.com/inconshreveable/mousetrap"
-    },
-    {
-      "from": "github.com/spf13/cobra",
-      "to": "github.com/spf13/pflag"
-    },
-    {
-      "from": "github.com/spf13/cobra",
-      "to": "go.yaml.in/yaml/v3"
-    },
-    {
-      "from": "go.yaml.in/yaml/v3",
-      "to": "gopkg.in/check.v1"
-    },
-    {
-      "from": "github.com/cpuguy83/go-md2man/v2",
-      "to": "github.com/russross/blackfriday/v2"
-    },
-    {
-      "from": "gopkg.in/check.v1",
-      "to": "github.com/kr/pretty"
-    },
-    {
-      "from": "github.com/kr/pretty",
-      "to": "github.com/kr/text"
-    },
-    {
-      "from": "github.com/kr/pretty",
-      "to": "github.com/rogpeppe/go-internal"
+      "from": "github.com/rogpeppe/go-internal",
+      "to": "golang.org/x/mod",
+      "constraint": "=v0.21.0"
     },
     {
       "from": "github.com/rogpeppe/go-internal",
-      "to": "golang.org/x/mod"
+      "to": "golang.org/x/sys",
+      "constraint": "=v0.26.0"
     },
     {
       "from": "github.com/rogpeppe/go-internal",
-      "to": "golang.org/x/sys"
-    },
-    {
-      "from": "github.com/rogpeppe/go-internal",
-      "to": "golang.org/x/tools"
-    },
-    {
-      "from": "github.com/kr/text",
-      "to": "github.com/creack/pty"
-    },
-    {
-      "from": "golang.org/x/tools",
-      "to": "github.com/google/go-cmp"
-    },
-    {
-      "from": "golang.org/x/tools",
-      "to": "github.com/yuin/goldmark"
-    },
-    {
-      "from": "golang.org/x/tools",
-      "to": "golang.org/x/mod"
-    },
-    {
-      "from": "golang.org/x/tools",
-      "to": "golang.org/x/net"
-    },
-    {
-      "from": "golang.org/x/tools",
-      "to": "golang.org/x/sync"
-    },
-    {
-      "from": "golang.org/x/tools",
-      "to": "golang.org/x/telemetry"
-    },
-    {
-      "from": "golang.org/x/mod",
-      "to": "golang.org/x/tools"
-    },
-    {
-      "from": "golang.org/x/net",
-      "to": "golang.org/x/crypto"
-    },
-    {
-      "from": "golang.org/x/net",
-      "to": "golang.org/x/sys"
-    },
-    {
-      "from": "golang.org/x/net",
-      "to": "golang.org/x/term"
-    },
-    {
-      "from": "golang.org/x/net",
-      "to": "golang.org/x/text"
+      "to": "golang.org/x/tools",
+      "constraint": "=v0.26.0"
     },
     {
       "from": "golang.org/x/telemetry",
-      "to": "golang.org/x/mod"
+      "to": "golang.org/x/mod",
+      "constraint": "=v0.34.0"
     },
     {
       "from": "golang.org/x/telemetry",
-      "to": "golang.org/x/sync"
+      "to": "golang.org/x/sync",
+      "constraint": "=v0.20.0"
     },
     {
       "from": "golang.org/x/telemetry",
-      "to": "golang.org/x/sys"
-    },
-    {
-      "from": "golang.org/x/crypto",
-      "to": "golang.org/x/net"
-    },
-    {
-      "from": "golang.org/x/crypto",
-      "to": "golang.org/x/sys"
-    },
-    {
-      "from": "golang.org/x/crypto",
-      "to": "golang.org/x/term"
+      "to": "golang.org/x/sys",
+      "constraint": "=v0.42.0"
     },
     {
       "from": "golang.org/x/text",
-      "to": "golang.org/x/tools"
+      "to": "golang.org/x/tools",
+      "constraint": "=v0.42.0"
+    },
+    {
+      "from": "golang.org/x/mod",
+      "to": "golang.org/x/tools",
+      "constraint": "=v0.42.0"
+    },
+    {
+      "from": "github.com/spf13/cobra",
+      "to": "github.com/cpuguy83/go-md2man/v2",
+      "constraint": "=v2.0.6"
+    },
+    {
+      "from": "github.com/spf13/cobra",
+      "to": "github.com/inconshreveable/mousetrap",
+      "constraint": "=v1.1.0"
+    },
+    {
+      "from": "github.com/spf13/cobra",
+      "to": "github.com/spf13/pflag",
+      "constraint": "=v1.0.9"
+    },
+    {
+      "from": "github.com/spf13/cobra",
+      "to": "go.yaml.in/yaml/v3",
+      "constraint": "=v3.0.4"
+    },
+    {
+      "from": "github.com/kr/pretty",
+      "to": "github.com/kr/text",
+      "constraint": "=v0.2.0"
+    },
+    {
+      "from": "github.com/kr/pretty",
+      "to": "github.com/rogpeppe/go-internal",
+      "constraint": "=v1.9.0"
     },
     {
       "from": "golang.org/x/term",
-      "to": "golang.org/x/sys"
+      "to": "golang.org/x/sys",
+      "constraint": "=v0.42.0"
+    },
+    {
+      "from": "golang.org/x/tools",
+      "to": "github.com/google/go-cmp",
+      "constraint": "=v0.6.0"
+    },
+    {
+      "from": "golang.org/x/tools",
+      "to": "github.com/yuin/goldmark",
+      "constraint": "=v1.4.13"
+    },
+    {
+      "from": "golang.org/x/tools",
+      "to": "golang.org/x/mod",
+      "constraint": "=v0.34.0"
+    },
+    {
+      "from": "golang.org/x/tools",
+      "to": "golang.org/x/net",
+      "constraint": "=v0.52.0"
+    },
+    {
+      "from": "golang.org/x/tools",
+      "to": "golang.org/x/sync",
+      "constraint": "=v0.20.0"
+    },
+    {
+      "from": "golang.org/x/tools",
+      "to": "golang.org/x/telemetry",
+      "constraint": "=v0.0.0-20260311193753-579e4da9a98c"
+    },
+    {
+      "from": "github.com/kr/text",
+      "to": "github.com/creack/pty",
+      "constraint": "=v1.1.9"
+    },
+    {
+      "from": "golang.org/x/crypto",
+      "to": "golang.org/x/net",
+      "constraint": "=v0.51.0"
+    },
+    {
+      "from": "golang.org/x/crypto",
+      "to": "golang.org/x/sys",
+      "constraint": "=v0.42.0"
+    },
+    {
+      "from": "golang.org/x/crypto",
+      "to": "golang.org/x/term",
+      "constraint": "=v0.41.0"
+    },
+    {
+      "from": "gopkg.in/check.v1",
+      "to": "github.com/kr/pretty",
+      "constraint": "=v0.2.1"
+    },
+    {
+      "from": "golang.org/x/net",
+      "to": "golang.org/x/crypto",
+      "constraint": "=v0.49.0"
+    },
+    {
+      "from": "golang.org/x/net",
+      "to": "golang.org/x/sys",
+      "constraint": "=v0.42.0"
+    },
+    {
+      "from": "golang.org/x/net",
+      "to": "golang.org/x/term",
+      "constraint": "=v0.41.0"
+    },
+    {
+      "from": "golang.org/x/net",
+      "to": "golang.org/x/text",
+      "constraint": "=v0.35.0"
+    },
+    {
+      "from": "github.com/cpuguy83/go-md2man/v2",
+      "to": "github.com/russross/blackfriday/v2",
+      "constraint": "=v2.1.0"
+    },
+    {
+      "from": "go.yaml.in/yaml/v3",
+      "to": "gopkg.in/check.v1",
+      "constraint": "=v0.0.0-20161208181325-20d25e280405"
     }
   ]
 }

@@ -1,123 +1,302 @@
 {
+  "meta": {
+    "dependency_scope": "prod_only",
+    "include_prerelease": false,
+    "runtime_source": "package",
+    "runtime_version": "8.4"
+  },
   "nodes": [
     {
       "id": "psr/container",
+      "license": "MIT",
+      "url": "https://github.com/php-fig/container",
       "meta": {
         "author": "PHP-FIG",
         "description": "Common Container Interface (PHP FIG PSR-11)",
+        "homepage": "https://github.com/php-fig/container",
         "license": "MIT",
+        "repo_archived": false,
+        "repo_language": "PHP",
+        "repo_last_commit": "2026-02-02",
+        "repo_last_release": "2021-11-05",
+        "repo_license": "MIT",
+        "repo_owner": "php-fig",
+        "repo_stars": 10021,
+        "repo_url": "https://github.com/php-fig/container",
         "version": "2.0.2"
       }
     },
     {
       "id": "symfony/console",
+      "license": "MIT",
+      "url": "https://github.com/symfony/console",
       "meta": {
         "author": "Fabien Potencier",
         "description": "Eases the creation of beautiful and testable command line interfaces",
+        "homepage": "https://symfony.com",
         "license": "MIT",
-        "version": "v8.0.4"
+        "repo_archived": false,
+        "repo_description": "Eases the creation of beautiful and testable command line interfaces",
+        "repo_language": "PHP",
+        "repo_last_commit": "2026-03-23",
+        "repo_last_release": "2026-03-06",
+        "repo_license": "MIT",
+        "repo_owner": "symfony",
+        "repo_stars": 9835,
+        "repo_topics": [
+          "php",
+          "symfony",
+          "component",
+          "symfony-component",
+          "console",
+          "cli",
+          "command-line",
+          "terminal"
+        ],
+        "repo_url": "https://github.com/symfony/console",
+        "version": "v8.0.7"
       }
     },
     {
       "id": "symfony/deprecation-contracts",
+      "license": "MIT",
+      "url": "https://github.com/symfony/deprecation-contracts",
       "meta": {
         "author": "Nicolas Grekas",
         "description": "A generic function and convention to trigger deprecation notices",
+        "homepage": "https://symfony.com",
         "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "A generic function and convention to trigger deprecation notices",
+        "repo_language": "PHP",
+        "repo_last_commit": "2026-01-25",
+        "repo_last_release": "2020-09-08",
+        "repo_license": "MIT",
+        "repo_owner": "symfony",
+        "repo_stars": 2112,
+        "repo_topics": [
+          "php",
+          "symfony",
+          "contract",
+          "deprecation",
+          "symfony-contract"
+        ],
+        "repo_url": "https://github.com/symfony/deprecation-contracts",
         "version": "v3.6.0"
       }
     },
     {
       "id": "symfony/polyfill-ctype",
+      "license": "MIT",
+      "url": "https://github.com/symfony/polyfill-ctype",
       "meta": {
         "author": "Gert de Pagter",
         "description": "Symfony polyfill for ctype functions",
+        "homepage": "https://symfony.com",
         "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "Symfony polyfill for ctype functions",
+        "repo_language": "PHP",
+        "repo_last_commit": "2025-08-19",
+        "repo_license": "MIT",
+        "repo_owner": "symfony",
+        "repo_stars": 4051,
+        "repo_topics": [
+          "symfony",
+          "polyfill",
+          "component",
+          "symfony-component",
+          "compatibility",
+          "ctype",
+          "javascript",
+          "portable",
+          "symfony-polyfill"
+        ],
+        "repo_url": "https://github.com/symfony/polyfill-ctype",
         "version": "v1.33.0"
       }
     },
     {
       "id": "symfony/polyfill-intl-grapheme",
+      "license": "MIT",
+      "url": "https://github.com/symfony/polyfill-intl-grapheme",
       "meta": {
         "author": "Nicolas Grekas",
         "description": "Symfony polyfill for intl's grapheme_* functions",
+        "homepage": "https://symfony.com",
         "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "Symfony polyfill for intl's grapheme_* functions",
+        "repo_language": "PHP",
+        "repo_last_commit": "2025-08-19",
+        "repo_license": "MIT",
+        "repo_owner": "symfony",
+        "repo_stars": 1738,
+        "repo_topics": [
+          "symfony",
+          "component",
+          "symfony-component",
+          "polyfill",
+          "compatibility",
+          "grapheme",
+          "intl",
+          "javascript",
+          "portable",
+          "shim"
+        ],
+        "repo_url": "https://github.com/symfony/polyfill-intl-grapheme",
         "version": "v1.33.0"
       }
     },
     {
       "id": "symfony/polyfill-intl-normalizer",
+      "license": "MIT",
+      "url": "https://github.com/symfony/polyfill-intl-normalizer",
       "meta": {
         "author": "Nicolas Grekas",
         "description": "Symfony polyfill for intl's Normalizer class and related functions",
+        "homepage": "https://symfony.com",
         "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "Symfony polyfill for intl's Normalizer class and related functions",
+        "repo_language": "PHP",
+        "repo_last_commit": "2025-08-19",
+        "repo_license": "MIT",
+        "repo_owner": "symfony",
+        "repo_stars": 2074,
+        "repo_topics": [
+          "symfony",
+          "polyfill",
+          "component",
+          "symfony-component",
+          "compatibility",
+          "intl",
+          "javascript",
+          "normalizer",
+          "portable",
+          "shim"
+        ],
+        "repo_url": "https://github.com/symfony/polyfill-intl-normalizer",
         "version": "v1.33.0"
       }
     },
     {
       "id": "symfony/polyfill-mbstring",
+      "license": "MIT",
+      "url": "https://github.com/symfony/polyfill-mbstring",
       "meta": {
         "author": "Nicolas Grekas",
         "description": "Symfony polyfill for the Mbstring extension",
+        "homepage": "https://symfony.com",
         "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "Symfony polyfill for the Mbstring extension",
+        "repo_language": "PHP",
+        "repo_last_commit": "2025-08-19",
+        "repo_license": "MIT",
+        "repo_owner": "symfony",
+        "repo_stars": 7845,
+        "repo_topics": [
+          "symfony",
+          "polyfill",
+          "component",
+          "symfony-component",
+          "compatibility",
+          "javascript",
+          "mbstring",
+          "portable",
+          "shim",
+          "symfony-polyfill"
+        ],
+        "repo_url": "https://github.com/symfony/polyfill-mbstring",
         "version": "v1.33.0"
       }
     },
     {
       "id": "symfony/service-contracts",
+      "license": "MIT",
+      "url": "https://github.com/symfony/service-contracts",
       "meta": {
         "author": "Nicolas Grekas",
         "description": "Generic abstractions related to writing services",
+        "homepage": "https://symfony.com",
         "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "A set of service abstractions extracted out of the Symfony components",
+        "repo_language": "PHP",
+        "repo_last_commit": "2026-03-28",
+        "repo_last_release": "2020-09-08",
+        "repo_license": "MIT",
+        "repo_owner": "symfony",
+        "repo_stars": 2632,
+        "repo_topics": [
+          "php",
+          "symfony",
+          "contract",
+          "service",
+          "symfony-contract"
+        ],
+        "repo_url": "https://github.com/symfony/service-contracts",
         "version": "v3.6.1"
       }
     },
     {
       "id": "symfony/string",
       "meta": {
-        "author": "Nicolas Grekas",
-        "description": "Provides an object-oriented API to strings and deals with bytes, UTF-8 code points and grapheme clusters in a unified way",
-        "license": "MIT",
-        "version": "v8.0.4"
+        "version": "v7.4.6"
       }
     }
   ],
   "edges": [
     {
-      "from": "symfony/console",
-      "to": "symfony/polyfill-mbstring"
-    },
-    {
-      "from": "symfony/console",
-      "to": "symfony/service-contracts"
-    },
-    {
-      "from": "symfony/console",
-      "to": "symfony/string"
+      "from": "symfony/string",
+      "to": "symfony/deprecation-contracts",
+      "constraint": "^2.5|^3.0"
     },
     {
       "from": "symfony/string",
-      "to": "symfony/polyfill-intl-normalizer"
+      "to": "symfony/polyfill-ctype",
+      "constraint": "~1.8"
     },
     {
       "from": "symfony/string",
-      "to": "symfony/polyfill-mbstring"
+      "to": "symfony/polyfill-intl-grapheme",
+      "constraint": "~1.33"
     },
     {
       "from": "symfony/string",
-      "to": "symfony/polyfill-ctype"
+      "to": "symfony/polyfill-intl-normalizer",
+      "constraint": "~1.0"
     },
     {
       "from": "symfony/string",
-      "to": "symfony/polyfill-intl-grapheme"
+      "to": "symfony/polyfill-mbstring",
+      "constraint": "~1.0"
     },
     {
       "from": "symfony/service-contracts",
-      "to": "psr/container"
+      "to": "psr/container",
+      "constraint": "^1.1|^2.0"
     },
     {
       "from": "symfony/service-contracts",
-      "to": "symfony/deprecation-contracts"
+      "to": "symfony/deprecation-contracts",
+      "constraint": "^2.5|^3"
+    },
+    {
+      "from": "symfony/console",
+      "to": "symfony/polyfill-mbstring",
+      "constraint": "^1.0"
+    },
+    {
+      "from": "symfony/console",
+      "to": "symfony/service-contracts",
+      "constraint": "^2.5|^3"
+    },
+    {
+      "from": "symfony/console",
+      "to": "symfony/string",
+      "constraint": "^7.4|^8.0"
     }
   ]
 }

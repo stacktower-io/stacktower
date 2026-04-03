@@ -284,6 +284,10 @@ func (d *DAG) Nodes() []*Node {
 // slice or its edge structs do not affect the graph.
 func (d *DAG) Edges() []Edge { return slices.Clone(d.edges) }
 
+// EdgesIter returns the edges slice for read-only iteration without copying.
+// The returned slice must not be modified. Use Edges() if you need a mutable copy.
+func (d *DAG) EdgesIter() []Edge { return d.edges }
+
 // NodeCount returns the number of nodes in the graph.
 func (d *DAG) NodeCount() int { return len(d.nodes) }
 

@@ -4,13 +4,14 @@
 //
 // Stacktower transforms dependency trees into visual tower diagrams where packages
 // rest on what they depend on—inspired by XKCD #2347 ("Dependency"). The pkg
-// directory is organized into four main areas:
+// directory is organized into these areas:
 //
 //  1. [core] - Domain logic (dependency resolution, graph structures, rendering)
-//  2. [infra] - Infrastructure (caching, storage, queues, sessions)
-//  3. [integrations] - External API clients (PyPI, npm, GitHub, etc.)
-//  4. [pipeline] - Orchestration (parse → layout → render)
-//  5. [graph] - Serialization types for graphs and layouts
+//  2. [integrations] - External API clients (PyPI, npm, GitHub, etc.)
+//  3. [pipeline] - Orchestration (parse → layout → render)
+//  4. [graph] - Serialization types for graphs and layouts
+//  5. [cache] - Caching interfaces and implementations
+//  6. [security] - Vulnerability scanning and license analysis
 //
 // # Architecture
 //
@@ -46,7 +47,7 @@
 //	})
 //
 //	// 2. Transform the graph
-//	g = transform.Normalize(g, nil)
+//	_, _ = transform.Normalize(g)
 //
 //	// 3. Compute layout
 //	l := layout.Build(g, 1200, 800)
@@ -69,16 +70,12 @@
 // [core/render] - Visualization rendering with two output formats: tower
 // (stacked blocks) and nodelink (traditional directed graphs).
 //
-// ## Infrastructure
-//
-// [infra/storage] - Unified storage backends for caching and persistence.
-// FileBackend for CLI (filesystem), DistributedBackend for API/Worker
-// (Redis + MongoDB), MemoryBackend for testing.
-//
 // ## External Integrations
 //
 // [integrations] - HTTP clients for package registries (PyPI, npm, crates.io,
 // RubyGems, Packagist, Maven, Go proxy) and code hosts (GitHub, GitLab).
+//
+// ## Graph Transformations
 //
 // [dag/transform] - Graph transformations: transitive reduction, layering,
 // edge subdivision, and span overlap resolution. [transform.Normalize] runs
@@ -107,26 +104,10 @@
 //
 // [graph] - Serialization types for graphs and layouts (JSON node-link format).
 //
-// ## Infrastructure
+// ## Orchestration
 //
 // [pipeline] - Complete visualization pipeline (parse → layout → render) used
-// by CLI, API, and worker. Ensures consistent behavior across all entry points.
-//
-// [storage] - Unified storage backends implementing a two-tier caching strategy:
-//
-//   - Tier 1 (Index): Fast TTL-based lookup via Redis (hash(inputs) → document_id)
-//   - Tier 2 (DocumentStore): Durable storage via MongoDB (documents + GridFS)
-//
-// Three implementations: FileBackend (CLI), DistributedBackend (API/Worker),
-// MemoryBackend (testing).
-//
-// [queue] - Job queue interface with memory and Redis implementations. Supports
-// job lifecycle (pending, running, completed, failed, cancelled).
-//
-// [session] - Session management for authenticated users. Provides memory, Redis,
-// and file-based backends for sessions and OAuth state tokens.
-//
-// [common] - Shared configuration, constants (TTLs), errors, and hash utilities.
+// by CLI and API. Ensures consistent behavior across all entry points.
 //
 // # Common Workflows
 //
@@ -134,7 +115,7 @@
 //
 //	parser := python.PoetryLock{}
 //	result, _ := parser.Parse("poetry.lock", deps.Options{})
-//	g := result.Graph.(*dag.DAG)
+//	g := result.Graph
 //
 // Enrich with GitHub metadata:
 //
@@ -170,8 +151,6 @@
 // [core/deps]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/core/deps
 // [core/dag]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/core/dag
 // [core/render]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/core/render
-// [infra]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/infra
-// [infra/storage]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/storage
 // [integrations]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/integrations
 // [dag/transform]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/core/dag/transform
 // [dag/perm]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/core/dag/perm
@@ -186,10 +165,8 @@
 // [render/nodelink]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/core/render/nodelink
 // [graph]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/graph
 // [pipeline]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/pipeline
-// [storage]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/storage
-// [queue]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/infra/queue
-// [session]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/infra/session
-// [common]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/infra/common
+// [cache]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/cache
+// [security]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/security
 //
 // [deps]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/core/deps
 // [dag]: https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/core/dag

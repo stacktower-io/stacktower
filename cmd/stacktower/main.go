@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -11,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/matzehuels/stacktower/internal/cli"
+	"github.com/matzehuels/stacktower/internal/cli/ui"
 )
 
 func main() {
@@ -18,33 +18,31 @@ func main() {
 	defer cancel()
 
 	if err := run(ctx); err != nil {
-		if errors.Is(err, context.Canceled) {
-			os.Exit(130) // Standard shell convention for SIGINT
-		}
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		fmt.Fprintln(os.Stderr, ui.StyleError.Render("Error:")+fmt.Sprintf(" %s", err))
+		os.Exit(cli.ExitCodeForError(err))
 	}
 }
 
 func run(ctx context.Context) error {
-	var verbose bool
+	var (
+		verbose bool
+		quiet   bool
+	)
 
-	// Create CLI - verbose flag will be handled via PersistentPreRun
-	// Create a temporary CLI to build the root command structure
 	c := cli.New(os.Stderr, cli.LogInfo)
 	root := c.RootCommand()
 
 	root.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose logging")
+	root.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "suppress non-essential output")
 
-	// Recreate CLI with correct log level before command execution
 	originalPreRun := root.PersistentPreRunE
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		level := cli.LogInfo
 		if verbose {
 			level = cli.LogDebug
 		}
-		// Update the CLI's logger
 		c.SetLogLevel(level)
+		c.SetQuiet(quiet)
 
 		if originalPreRun != nil {
 			return originalPreRun(cmd, args)

@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/matzehuels/stacktower/internal/cli/ui"
 	"github.com/matzehuels/stacktower/pkg/graph"
 	"github.com/matzehuels/stacktower/pkg/pipeline"
 )
@@ -56,19 +58,26 @@ Results are cached locally for faster subsequent runs.`,
 	cmd.Flags().IntVar(&orderTimeout, "ordering-timeout", defaultOrderTimeout, "timeout in seconds for optimal ordering search")
 	cmd.Flags().StringVar(&opts.Style, "style", opts.Style, "visual style: handdrawn (default), simple")
 
+	// Security flags
+	cmd.Flags().BoolVar(&opts.ShowVulns, "show-vulns", opts.ShowVulns, "show vulnerability severity colours (requires scanned graph)")
+	cmd.Flags().BoolVar(&opts.ShowLicenses, "show-licenses", opts.ShowLicenses, "show license compliance indicators (copyleft/unknown borders)")
+	cmd.Flags().BoolVar(&opts.FlagsOnTop, "flags-on-top", opts.FlagsOnTop, "render security flags on top of all blocks")
+
 	return cmd
 }
 
 // runLayout loads the graph, computes the layout, and writes output.
 func (c *CLI) runLayout(ctx context.Context, input string, opts pipeline.Options, output string, noCache bool, orderTimeout int) error {
+	start := time.Now()
+
 	g, err := graph.ReadGraphFile(input)
 	if err != nil {
-		return fmt.Errorf("load graph %s: %w", input, err)
+		return WrapSystemError(err, fmt.Sprintf("failed to load graph %s", input), "Check that the file exists and is valid JSON.")
 	}
 
-	runner, err := c.newRunner(noCache)
+	runner, err := c.newRunner(noCache, false)
 	if err != nil {
-		return fmt.Errorf("initialize runner: %w", err)
+		return WrapSystemError(err, "failed to initialize runner", "This may be a cache or configuration issue.")
 	}
 	defer runner.Close()
 
@@ -77,15 +86,18 @@ func (c *CLI) runLayout(ctx context.Context, input string, opts pipeline.Options
 		opts.Orderer = c.newOptimalOrderer(orderTimeout)
 	}
 
-	workGraph := runner.PrepareGraph(g, opts)
+	workGraph, err := runner.PrepareGraph(g, opts)
+	if err != nil {
+		return WrapSystemError(err, "graph normalization failed", "The dependency graph may contain invalid structure.")
+	}
 
-	spinner := newSpinnerWithContext(ctx, fmt.Sprintf("Computing %s layout...", opts.VizType))
+	spinner := ui.NewSpinnerWithContext(ctx, fmt.Sprintf("Computing %s layout...", opts.VizType))
 	spinner.Start()
 
 	layout, cacheHit, err := runner.GenerateLayoutWithCacheInfo(ctx, workGraph, opts)
 	if err != nil {
 		spinner.StopWithError("Layout failed")
-		return fmt.Errorf("compute layout: %w", err)
+		return WrapSystemError(err, "layout computation failed", "Try reducing max-nodes or simplifying the graph.")
 	}
 	spinner.Stop()
 
@@ -100,14 +112,14 @@ func (c *CLI) runLayout(ctx context.Context, input string, opts pipeline.Options
 	}
 
 	if err := graph.WriteLayoutFile(layout, outputPath); err != nil {
-		return fmt.Errorf("write output %s: %w", outputPath, err)
+		return WrapSystemError(err, fmt.Sprintf("failed to write output %s", outputPath), "Check that the output path is writable.")
 	}
 
-	printSuccess("Layout complete")
-	printFile(outputPath)
-	printStats(g.NodeCount(), g.EdgeCount(), cacheHit)
-	printNewline()
-	printNextStep("Render", "stacktower visualize "+outputPath)
+	ui.PrintSuccess("Layout complete")
+	ui.PrintFile(outputPath)
+	ui.PrintStats(g.NodeCount(), g.EdgeCount(), 0, cacheHit, time.Since(start))
+	ui.PrintNewline()
+	ui.PrintNextStep("Render", "stacktower visualize "+outputPath)
 
 	return nil
 }

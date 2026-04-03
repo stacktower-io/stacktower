@@ -7,6 +7,7 @@ import (
 	"github.com/matzehuels/stacktower/pkg/core/deps/metadata"
 	"github.com/matzehuels/stacktower/pkg/core/render/tower/feature"
 	"github.com/matzehuels/stacktower/pkg/graph"
+	"github.com/matzehuels/stacktower/pkg/security"
 )
 
 // Export converts an internal tower layout to the serialization format.
@@ -105,6 +106,9 @@ func buildBlocks(l Layout, g *dag.DAG) []graph.Block {
 				if n.Meta != nil {
 					bd.URL, _ = n.Meta[metadata.RepoURL].(string)
 					bd.Brittle = feature.IsBrittle(n)
+					if vs, ok := n.Meta[security.MetaVulnSeverity].(string); ok {
+						bd.VulnSeverity = vs
+					}
 					bd.Meta = extractMeta(n)
 				}
 			}

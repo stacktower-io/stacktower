@@ -54,8 +54,14 @@ func Generate(n, limit int) [][]int {
 	perm := Seq(n)
 	state := make([]int, n)
 
-	capacity := limit
-	if capacity <= 0 || n <= 12 {
+	// Calculate capacity: use limit if specified, otherwise factorial (capped at 12!)
+	var capacity int
+	if limit > 0 {
+		// When limit is specified, only allocate for what we need
+		maxPossible := Factorial(min(n, 12))
+		capacity = min(limit, maxPossible)
+	} else {
+		// No limit: allocate for all permutations (capped at 12! for safety)
 		capacity = Factorial(min(n, 12))
 	}
 	result := make([][]int, 0, capacity)

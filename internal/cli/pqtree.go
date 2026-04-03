@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/matzehuels/stacktower/internal/cli/ui"
 	"github.com/matzehuels/stacktower/pkg/core/dag/perm"
 )
 
@@ -57,12 +58,12 @@ Example: "0,1" means elements 0 and 1 must be adjacent.`,
 				return fmt.Errorf("write output: %w", err)
 			}
 
-			printSuccess("PQ-tree generated")
-			printKeyValue("Tree", tree.StringWithLabels(labelList))
-			printKeyValue("Permutations", fmt.Sprintf("%d", tree.ValidCount()))
+			ui.PrintSuccess("PQ-tree generated")
 			if output != "" {
-				printFile(output)
+				ui.PrintFile(output)
 			}
+			ui.PrintKeyValue("Tree", tree.StringWithLabels(labelList))
+			ui.PrintKeyValue("Permutations", fmt.Sprintf("%d", tree.ValidCount()))
 
 			return nil
 		},

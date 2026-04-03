@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/matzehuels/stacktower/pkg/core/dag"
 	"github.com/matzehuels/stacktower/pkg/core/deps"
 )
 
@@ -56,16 +55,19 @@ pretty_assertions = "1.0"
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	g := result.Graph.(*dag.DAG)
+	g := result.Graph
 
-	if got := g.NodeCount(); got != 4 {
-		t.Errorf("NodeCount = %d, want 4", got)
+	if got := g.NodeCount(); got != 3 {
+		t.Errorf("NodeCount = %d, want 3", got)
 	}
 
-	for _, dep := range []string{"serde", "tokio", "pretty_assertions"} {
+	for _, dep := range []string{"serde", "tokio"} {
 		if _, ok := g.Node(dep); !ok {
 			t.Errorf("expected node %q not found", dep)
 		}
+	}
+	if _, ok := g.Node("pretty_assertions"); ok {
+		t.Error("did not expect dev dependency pretty_assertions in prod_only scope")
 	}
 
 	if result.RootPackage != "my-crate" {
@@ -93,5 +95,76 @@ func TestCargoToml_IncludesTransitive(t *testing.T) {
 	parser := &CargoToml{}
 	if parser.IncludesTransitive() {
 		t.Error("IncludesTransitive() = true, want false (no resolver)")
+	}
+}
+
+func TestCargoToml_RuntimeVersion(t *testing.T) {
+	dir := t.TempDir()
+	cargoFile := filepath.Join(dir, "Cargo.toml")
+	content := `[package]
+name = "my-crate"
+version = "0.1.0"
+rust-version = "1.70.0"
+
+[dependencies]
+serde = "1.0"
+`
+
+	if err := os.WriteFile(cargoFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	parser := &CargoToml{}
+	result, err := parser.Parse(cargoFile, deps.Options{})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if result.RuntimeVersion != "1.70.0" {
+		t.Errorf("RuntimeVersion = %q, want %q", result.RuntimeVersion, "1.70.0")
+	}
+	if result.RuntimeConstraint != ">=1.70.0" {
+		t.Errorf("RuntimeConstraint = %q, want %q", result.RuntimeConstraint, ">=1.70.0")
+	}
+}
+
+func TestCargoToml_RuntimeVersion_Empty(t *testing.T) {
+	dir := t.TempDir()
+	cargoFile := filepath.Join(dir, "Cargo.toml")
+	content := `[package]
+name = "my-crate"
+version = "0.1.0"
+
+[dependencies]
+serde = "1.0"
+`
+
+	if err := os.WriteFile(cargoFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	parser := &CargoToml{}
+	result, err := parser.Parse(cargoFile, deps.Options{})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if result.RuntimeVersion != "" {
+		t.Errorf("RuntimeVersion = %q, want empty (no rust-version specified)", result.RuntimeVersion)
+	}
+}
+
+func TestCargoToml_Parse_InvalidTOML(t *testing.T) {
+	dir := t.TempDir()
+	cargoFile := filepath.Join(dir, "Cargo.toml")
+	content := `[package
+name = "broken"`
+	if err := os.WriteFile(cargoFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	parser := &CargoToml{}
+	if _, err := parser.Parse(cargoFile, deps.Options{}); err == nil {
+		t.Fatal("expected parse error for malformed TOML")
 	}
 }

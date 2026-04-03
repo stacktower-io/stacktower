@@ -1,98 +1,225 @@
 {
+  "meta": {
+    "dependency_scope": "prod_only",
+    "include_prerelease": false,
+    "runtime_source": "default",
+    "runtime_version": "1.75"
+  },
   "nodes": [
     {
       "id": "proc-macro2",
+      "license": "Apache-2.0",
+      "url": "https://github.com/dtolnay/proc-macro2",
       "meta": {
         "description": "A substitute implementation of the compiler's `proc_macro` API to decouple token-based libraries from the procedural macro use case.",
-        "downloads": 919778105,
+        "downloads": 1036095746,
+        "license": "Apache-2.0",
+        "repo_archived": false,
+        "repo_language": "Rust",
+        "repo_last_commit": "2026-02-16",
+        "repo_last_release": "2026-01-21",
+        "repo_license": "Apache-2.0",
+        "repo_owner": "dtolnay",
+        "repo_stars": 912,
+        "repo_url": "https://github.com/dtolnay/proc-macro2",
         "version": "1.0.106"
       }
     },
     {
       "id": "quote",
+      "license": "Apache-2.0",
+      "url": "https://github.com/dtolnay/quote",
       "meta": {
         "description": "Quasi-quoting macro quote!(...)",
-        "downloads": 899531495,
-        "version": "1.0.44"
+        "downloads": 1017661219,
+        "license": "Apache-2.0",
+        "repo_archived": false,
+        "repo_description": "Rust quasi-quoting",
+        "repo_language": "Rust",
+        "repo_last_commit": "2026-03-25",
+        "repo_last_release": "2026-03-03",
+        "repo_license": "Apache-2.0",
+        "repo_owner": "dtolnay",
+        "repo_stars": 1533,
+        "repo_topics": [
+          "syn",
+          "proc-macro",
+          "rust"
+        ],
+        "repo_url": "https://github.com/dtolnay/quote",
+        "version": "1.0.45"
       }
     },
     {
       "id": "serde",
+      "license": "Apache-2.0",
+      "url": "https://github.com/serde-rs/serde",
       "meta": {
         "description": "A generic serialization/deserialization framework",
-        "downloads": 798236839,
+        "downloads": 895704587,
+        "homepage": "https://serde.rs",
+        "license": "Apache-2.0",
+        "repo_archived": false,
+        "repo_description": "Serialization framework for Rust",
+        "repo_language": "Rust",
+        "repo_last_commit": "2026-03-06",
+        "repo_last_release": "2025-09-27",
+        "repo_license": "Apache-2.0",
+        "repo_owner": "serde-rs",
+        "repo_stars": 10489,
+        "repo_topics": [
+          "rust",
+          "serde",
+          "derive",
+          "no-std"
+        ],
+        "repo_url": "https://github.com/serde-rs/serde",
         "version": "1.0.228"
       }
     },
     {
       "id": "serde_core",
+      "license": "Apache-2.0",
+      "url": "https://github.com/serde-rs/serde",
       "meta": {
         "description": "Serde traits only, with no support for derive -- use the `serde` crate instead",
-        "downloads": 89424375,
+        "downloads": 160099056,
+        "homepage": "https://serde.rs",
+        "license": "Apache-2.0",
+        "repo_archived": false,
+        "repo_description": "Serialization framework for Rust",
+        "repo_language": "Rust",
+        "repo_last_commit": "2026-03-06",
+        "repo_last_release": "2025-09-27",
+        "repo_license": "Apache-2.0",
+        "repo_owner": "serde-rs",
+        "repo_stars": 10489,
+        "repo_topics": [
+          "rust",
+          "serde",
+          "derive",
+          "no-std"
+        ],
+        "repo_url": "https://github.com/serde-rs/serde",
         "version": "1.0.228"
       }
     },
     {
       "id": "serde_derive",
+      "license": "Apache-2.0",
+      "url": "https://github.com/serde-rs/serde",
       "meta": {
         "description": "Macros 1.1 implementation of #[derive(Serialize, Deserialize)]",
-        "downloads": 740018551,
+        "downloads": 834766585,
+        "homepage": "https://serde.rs",
+        "license": "Apache-2.0",
+        "repo_archived": false,
+        "repo_description": "Serialization framework for Rust",
+        "repo_language": "Rust",
+        "repo_last_commit": "2026-03-06",
+        "repo_last_release": "2025-09-27",
+        "repo_license": "Apache-2.0",
+        "repo_owner": "serde-rs",
+        "repo_stars": 10489,
+        "repo_topics": [
+          "rust",
+          "serde",
+          "derive",
+          "no-std"
+        ],
+        "repo_url": "https://github.com/serde-rs/serde",
         "version": "1.0.228"
       }
     },
     {
       "id": "syn",
+      "license": "Apache-2.0",
+      "url": "https://github.com/dtolnay/syn",
       "meta": {
         "description": "Parser for Rust source code",
-        "downloads": 1331315986,
-        "version": "2.0.114"
+        "downloads": 1500599567,
+        "license": "Apache-2.0",
+        "repo_archived": false,
+        "repo_description": "Parser for Rust source code",
+        "repo_language": "Rust",
+        "repo_last_commit": "2026-03-26",
+        "repo_last_release": "2026-02-20",
+        "repo_license": "Apache-2.0",
+        "repo_owner": "dtolnay",
+        "repo_stars": 3302,
+        "repo_topics": [
+          "proc-macro"
+        ],
+        "repo_url": "https://github.com/dtolnay/syn",
+        "version": "2.0.117"
       }
     },
     {
       "id": "unicode-ident",
+      "license": "Apache-2.0",
+      "url": "https://github.com/dtolnay/unicode-ident",
       "meta": {
         "description": "Determine whether characters have the XID_Start or XID_Continue properties according to Unicode Standard Annex #31",
-        "downloads": 715962350,
-        "version": "1.0.22"
+        "downloads": 828147028,
+        "license": "Apache-2.0",
+        "repo_archived": false,
+        "repo_description": "Determine whether characters have the XID_Start or XID_Continue properties",
+        "repo_language": "Rust",
+        "repo_last_commit": "2026-02-16",
+        "repo_last_release": "2026-02-16",
+        "repo_license": "Apache-2.0",
+        "repo_owner": "dtolnay",
+        "repo_stars": 109,
+        "repo_url": "https://github.com/dtolnay/unicode-ident",
+        "version": "1.0.24"
       }
     }
   ],
   "edges": [
     {
+      "from": "syn",
+      "to": "proc-macro2",
+      "constraint": "^1.0.91"
+    },
+    {
+      "from": "syn",
+      "to": "unicode-ident",
+      "constraint": "^1"
+    },
+    {
       "from": "serde",
-      "to": "serde_core"
+      "to": "serde_core",
+      "constraint": "=1.0.228"
     },
     {
       "from": "serde_core",
-      "to": "serde_derive"
+      "to": "serde_derive",
+      "constraint": "=1.0.228"
     },
     {
       "from": "serde_derive",
-      "to": "proc-macro2"
+      "to": "proc-macro2",
+      "constraint": "^1.0.74"
     },
     {
       "from": "serde_derive",
-      "to": "quote"
+      "to": "quote",
+      "constraint": "^1.0.35"
     },
     {
       "from": "serde_derive",
-      "to": "syn"
-    },
-    {
-      "from": "quote",
-      "to": "proc-macro2"
+      "to": "syn",
+      "constraint": "^2.0.81"
     },
     {
       "from": "proc-macro2",
-      "to": "unicode-ident"
+      "to": "unicode-ident",
+      "constraint": "^1.0"
     },
     {
-      "from": "syn",
-      "to": "proc-macro2"
-    },
-    {
-      "from": "syn",
-      "to": "unicode-ident"
+      "from": "quote",
+      "to": "proc-macro2",
+      "constraint": "^1.0.80"
     }
   ]
 }

@@ -1,7 +1,6 @@
 package rust
 
 import (
-	"context"
 	"os"
 	"strings"
 
@@ -9,9 +8,9 @@ import (
 
 	"github.com/matzehuels/stacktower/pkg/core/dag"
 	"github.com/matzehuels/stacktower/pkg/core/deps"
+	"github.com/matzehuels/stacktower/pkg/core/deps/constraints"
+	"github.com/matzehuels/stacktower/pkg/observability"
 )
-
-const projectRoot = "__project__"
 
 // CargoToml parses Cargo.toml files. It extracts direct, dev, and build
 // dependencies.
@@ -24,6 +23,8 @@ func (c *CargoToml) IncludesTransitive() bool  { return c.resolver != nil }
 func (c *CargoToml) Supports(name string) bool { return strings.EqualFold(name, "cargo.toml") }
 
 func (c *CargoToml) Parse(path string, opts deps.Options) (*deps.ManifestResult, error) {
+	opts = opts.WithDefaults()
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -34,21 +35,28 @@ func (c *CargoToml) Parse(path string, opts deps.Options) (*deps.ManifestResult,
 		return nil, err
 	}
 
-	directDeps := extractCargoDeps(cargo)
+	directDeps := extractCargoDepsWithVersions(cargo, opts.DependencyScope)
+
+	// Emit observability hooks for extracted dependencies
+	hooks := observability.ResolverFromContext(opts.Ctx)
+	for _, dep := range directDeps {
+		hooks.OnFetchStart(opts.Ctx, dep.Name, 0)
+		hooks.OnFetchComplete(opts.Ctx, dep.Name, 0, 0, nil)
+	}
 
 	var g *dag.DAG
 	if c.resolver != nil {
-		g, err = c.resolve(context.Background(), directDeps, opts)
+		g, err = deps.ResolveAndMerge(opts.Ctx, c.resolver, directDeps, opts)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		g = shallowCargoGraph(directDeps)
+		g = deps.ShallowGraphFromDeps(directDeps)
 	}
 
 	rootPackage := cargo.Package.Name
 	if rootPackage != "" {
-		if root, ok := g.Node(projectRoot); ok {
+		if root, ok := g.Node(deps.ProjectRootNodeID); ok {
 			root.Meta["version"] = cargo.Package.Version
 		}
 	}
@@ -58,61 +66,60 @@ func (c *CargoToml) Parse(path string, opts deps.Options) (*deps.ManifestResult,
 		Type:               c.Type(),
 		IncludesTransitive: c.resolver != nil,
 		RootPackage:        rootPackage,
+		RuntimeVersion:     cargo.Package.RustVersion,
+		RuntimeConstraint:  constraints.NormalizeRuntimeConstraint(cargo.Package.RustVersion),
 	}, nil
 }
 
-func (c *CargoToml) resolve(ctx context.Context, pkgs []string, opts deps.Options) (*dag.DAG, error) {
-	merged := dag.New(nil)
-	_ = merged.AddNode(dag.Node{ID: projectRoot, Meta: dag.Metadata{"virtual": true}})
-
-	for _, pkg := range pkgs {
-		g, err := c.resolver.Resolve(ctx, pkg, opts)
-		if err != nil {
-			opts.Logger("resolve failed: %s: %v", pkg, err)
-			_ = merged.AddNode(dag.Node{ID: pkg})
-			_ = merged.AddEdge(dag.Edge{From: projectRoot, To: pkg})
-			continue
-		}
-		for _, n := range g.Nodes() {
-			_ = merged.AddNode(dag.Node{ID: n.ID, Meta: n.Meta})
-		}
-		for _, e := range g.Edges() {
-			_ = merged.AddEdge(dag.Edge{From: e.From, To: e.To})
-		}
-		_ = merged.AddEdge(dag.Edge{From: projectRoot, To: pkg})
+// extractCargoDepsWithVersions extracts dependencies with version constraints from Cargo.toml
+func extractCargoDepsWithVersions(cargo cargoFile, scope string) []deps.Dependency {
+	var result []deps.Dependency
+	for name, spec := range cargo.Dependencies {
+		result = append(result, parseCargoDependency(name, spec))
 	}
-
-	return merged, nil
+	if scope == deps.DependencyScopeAll {
+		for name, spec := range cargo.DevDependencies {
+			result = append(result, parseCargoDependency(name, spec))
+		}
+	}
+	for name, spec := range cargo.BuildDependencies {
+		result = append(result, parseCargoDependency(name, spec))
+	}
+	return result
 }
 
-func extractCargoDeps(cargo cargoFile) []string {
-	var deps []string
-	for name := range cargo.Dependencies {
-		deps = append(deps, name)
+// parseCargoDependency extracts version constraint from a Cargo dependency spec.
+// The spec can be a string (version) or a table with "version" key.
+func parseCargoDependency(name string, spec any) deps.Dependency {
+	dep := deps.Dependency{Name: name}
+	switch v := spec.(type) {
+	case string:
+		dep.Constraint = v
+	case map[string]any:
+		if version, ok := v["version"].(string); ok {
+			dep.Constraint = version
+		}
+		// Could also handle git/path deps here if needed
+		if git, ok := v["git"].(string); ok {
+			// For git dependencies, store the git URL as a hint
+			if rev, ok := v["rev"].(string); ok {
+				dep.Commit = rev
+			} else if tag, ok := v["tag"].(string); ok {
+				dep.Pinned = tag
+			} else if branch, ok := v["branch"].(string); ok {
+				dep.Constraint = "branch:" + branch
+			}
+			_ = git // suppress unused warning
+		}
 	}
-	for name := range cargo.DevDependencies {
-		deps = append(deps, name)
-	}
-	for name := range cargo.BuildDependencies {
-		deps = append(deps, name)
-	}
-	return deps
-}
-
-func shallowCargoGraph(pkgs []string) *dag.DAG {
-	g := dag.New(nil)
-	_ = g.AddNode(dag.Node{ID: projectRoot, Meta: dag.Metadata{"virtual": true}})
-	for _, pkg := range pkgs {
-		_ = g.AddNode(dag.Node{ID: pkg})
-		_ = g.AddEdge(dag.Edge{From: projectRoot, To: pkg})
-	}
-	return g
+	return dep
 }
 
 type cargoFile struct {
 	Package struct {
-		Name    string `toml:"name"`
-		Version string `toml:"version"`
+		Name        string `toml:"name"`
+		Version     string `toml:"version"`
+		RustVersion string `toml:"rust-version"` // MSRV - Minimum Supported Rust Version
 	} `toml:"package"`
 	Dependencies      map[string]any `toml:"dependencies"`
 	DevDependencies   map[string]any `toml:"dev-dependencies"`

@@ -12,4 +12,5 @@ const (
 	RepoLastCommit  = "repo_last_commit"
 	RepoLastRelease = "repo_last_release"
 	RepoLicense     = "repo_license"
+	HomePage        = "homepage"
 )

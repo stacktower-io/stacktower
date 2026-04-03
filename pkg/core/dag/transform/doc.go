@@ -74,13 +74,16 @@
 //
 //	g := dag.New(nil)
 //	// ... populate graph ...
-//	result := transform.Normalize(g) // Modifies g in place, returns metrics
+//	result, err := transform.Normalize(g) // Modifies g in place, returns metrics
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
 //	fmt.Printf("Removed %d cycles, %d transitive edges\n",
 //	    result.CyclesRemoved, result.TransitiveEdgesRemoved)
 //
 // To skip specific transformations, use [NormalizeWithOptions]:
 //
-//	result := transform.NormalizeWithOptions(g, transform.NormalizeOptions{
+//	result, err := transform.NormalizeWithOptions(g, transform.NormalizeOptions{
 //	    SkipTransitiveReduction: true, // Keep all edges
 //	    SkipSeparators:          true, // Accept crossings
 //	})

@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/matzehuels/stacktower/internal/cli/ui"
 	"github.com/matzehuels/stacktower/pkg/graph"
 	"github.com/matzehuels/stacktower/pkg/pipeline"
 )
@@ -55,14 +57,21 @@ Use 'render' as a shortcut to go directly from graph.json to visual output.`,
 	cmd.Flags().BoolVar(&opts.Popups, "popups", opts.Popups, "show hover popups with metadata")
 	cmd.Flags().StringVarP(&formatsStr, "format", "f", "", "output format(s): svg (default), pdf, png (comma-separated)")
 
+	// Security flags
+	cmd.Flags().BoolVar(&opts.ShowVulns, "show-vulns", opts.ShowVulns, "show vulnerability severity colours (requires scanned graph)")
+	cmd.Flags().BoolVar(&opts.ShowLicenses, "show-licenses", opts.ShowLicenses, "show license compliance indicators (copyleft/unknown borders)")
+	cmd.Flags().BoolVar(&opts.FlagsOnTop, "flags-on-top", opts.FlagsOnTop, "render security flags on top of all blocks")
+
 	return cmd
 }
 
 // runVisualize loads the layout and renders it.
 func (c *CLI) runVisualize(ctx context.Context, input string, opts pipeline.Options, output string, noCache bool) error {
+	start := time.Now()
+
 	layout, err := graph.ReadLayoutFile(input)
 	if err != nil {
-		return fmt.Errorf("load layout %s: %w", input, err)
+		return WrapSystemError(err, fmt.Sprintf("failed to load layout %s", input), "Check that the file exists and is valid JSON.")
 	}
 
 	// Infer viz type from layout
@@ -72,9 +81,9 @@ func (c *CLI) runVisualize(ctx context.Context, input string, opts pipeline.Opti
 	}
 	opts.VizType = vizType
 
-	runner, err := c.newRunner(noCache)
+	runner, err := c.newRunner(noCache, false)
 	if err != nil {
-		return fmt.Errorf("initialize runner: %w", err)
+		return WrapSystemError(err, "failed to initialize runner", "This may be a cache or configuration issue.")
 	}
 	defer runner.Close()
 
@@ -83,13 +92,13 @@ func (c *CLI) runVisualize(ctx context.Context, input string, opts pipeline.Opti
 		opts.Style = layout.Style
 	}
 
-	spinner := newSpinnerWithContext(ctx, fmt.Sprintf("Rendering %s...", vizType))
+	spinner := ui.NewSpinnerWithContext(ctx, fmt.Sprintf("Rendering %s...", vizType))
 	spinner.Start()
 
 	artifacts, cacheHit, err := runner.RenderWithCacheInfo(ctx, layout, nil, opts)
 	if err != nil {
 		spinner.StopWithError("Visualization failed")
-		return fmt.Errorf("visualize: %w", err)
+		return WrapSystemError(err, "visualization failed", "Check the output format and try again.")
 	}
 	spinner.Stop()
 
@@ -98,6 +107,9 @@ func (c *CLI) runVisualize(ctx context.Context, input string, opts pipeline.Opti
 		formats:   opts.Formats,
 		input:     input,
 		output:    output,
+		nodeCount: len(layout.Nodes),
+		edgeCount: len(layout.Edges),
 		cacheHit:  cacheHit,
+		elapsed:   time.Since(start),
 	})
 }

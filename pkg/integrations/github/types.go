@@ -51,6 +51,22 @@ type RepoWithManifests struct {
 	Manifests []ManifestFile `json:"manifests,omitempty"`
 }
 
+// Org represents a GitHub organization.
+type Org struct {
+	ID          int64  `json:"id"`
+	Login       string `json:"login"`
+	Description string `json:"description"`
+	AvatarURL   string `json:"avatar_url"`
+}
+
+// OrgMembership represents a user's membership in a GitHub organization.
+// Returned by GET /user/memberships/orgs.
+type OrgMembership struct {
+	State string `json:"state"` // "active" or "pending"
+	Role  string `json:"role"`  // "admin" or "member"
+	Org   Org    `json:"organization"`
+}
+
 // OAuthConfig holds OAuth configuration.
 type OAuthConfig struct {
 	ClientID     string

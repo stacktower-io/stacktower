@@ -88,6 +88,106 @@ func TestClient_FetchPackage_NotFound(t *testing.T) {
 	}
 }
 
+func TestClient_ListVersions_ToleratesMalformedEngines(t *testing.T) {
+	response := map[string]any{
+		"name": "mongoose",
+		"dist-tags": map[string]any{
+			"latest": "8.0.0",
+		},
+		"versions": map[string]any{
+			// Real-world malformed shape: engines is an array instead of an object.
+			"7.0.0": map[string]any{
+				"engines": []any{"node >=14"},
+			},
+			"8.0.0": map[string]any{
+				"engines": map[string]any{"node": ">=16"},
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/mongoose" {
+			_ = json.NewEncoder(w).Encode(response)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := testClient(t, server.URL)
+
+	versions, err := c.ListVersions(context.Background(), "mongoose", true)
+	if err != nil {
+		t.Fatalf("ListVersions failed: %v", err)
+	}
+	if len(versions) != 2 {
+		t.Fatalf("expected 2 versions, got %d (%v)", len(versions), versions)
+	}
+}
+
+func TestClient_FetchPackageVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/express/4.18.2" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"description": "Express specific version",
+				"engines":     map[string]any{"node": ">=18"},
+				"dependencies": map[string]string{
+					"qs": "^6.13.0",
+				},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := testClient(t, server.URL)
+
+	info, err := c.FetchPackageVersion(context.Background(), "express", "4.18.2", true)
+	if err != nil {
+		t.Fatalf("FetchPackageVersion failed: %v", err)
+	}
+	if info.Version != "4.18.2" {
+		t.Fatalf("expected version 4.18.2, got %s", info.Version)
+	}
+	if info.RequiredNode != ">=18" {
+		t.Fatalf("expected required node >=18, got %s", info.RequiredNode)
+	}
+}
+
+func TestClient_ListVersionsWithConstraints(t *testing.T) {
+	response := map[string]any{
+		"name": "express",
+		"versions": map[string]any{
+			"4.18.2": map[string]any{"engines": map[string]any{"node": ">=18"}},
+			"4.17.0": map[string]any{"engines": map[string]any{"node": ">=14"}},
+			"3.0.0":  map[string]any{},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/express" {
+			_ = json.NewEncoder(w).Encode(response)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := testClient(t, server.URL)
+
+	got, err := c.ListVersionsWithConstraints(context.Background(), "express", true)
+	if err != nil {
+		t.Fatalf("ListVersionsWithConstraints failed: %v", err)
+	}
+	if got["4.18.2"] != ">=18" {
+		t.Fatalf("expected >=18 for 4.18.2, got %q", got["4.18.2"])
+	}
+	if got["3.0.0"] != "" {
+		t.Fatalf("expected empty constraint for 3.0.0, got %q", got["3.0.0"])
+	}
+}
+
 func TestNormalizeRepoURL(t *testing.T) {
 	tests := []struct {
 		name     string

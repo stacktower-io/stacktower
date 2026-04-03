@@ -8,6 +8,7 @@ import (
 	"github.com/matzehuels/stacktower/pkg/core/deps/metadata"
 	"github.com/matzehuels/stacktower/pkg/core/render/tower/feature"
 	"github.com/matzehuels/stacktower/pkg/core/render/tower/styles"
+	"github.com/matzehuels/stacktower/pkg/security"
 )
 
 const (
@@ -50,7 +51,22 @@ func extractPopupData(n *dag.Node) *styles.PopupData {
 	p.LastCommit, _ = n.Meta[metadata.RepoLastCommit].(string)
 	p.LastRelease, _ = n.Meta[metadata.RepoLastRelease].(string)
 	p.Archived, _ = n.Meta[metadata.RepoArchived].(bool)
+
+	// Prefer GitHub description ("repo_description"), fall back to registry
+	// description ("description") which is always set by the resolver.
 	p.Description, _ = n.Meta[metadata.RepoDescription].(string)
+	if p.Description == "" {
+		p.Description, _ = n.Meta["description"].(string)
+	}
+	if p.Description == "" {
+		// Keep popups informative even when upstream metadata is sparse
+		// (common for virtual/root nodes from GitHub manifest parsing).
+		p.Description = n.ID
+	}
+
+	p.License, _ = n.Meta["license"].(string)
+	p.LicenseRisk, _ = n.Meta[security.MetaLicenseRisk].(string)
+	p.VulnSeverity, _ = n.Meta[security.MetaVulnSeverity].(string)
 	return p
 }
 

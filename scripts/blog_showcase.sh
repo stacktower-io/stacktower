@@ -112,8 +112,7 @@ generate_package() {
         --ordering optimal \
         --merge \
         --randomize \
-        --nebraska \
-        --popups \
+        --popups=false \
         -o "$output_file" 2>&1 | grep -v "^WARN:" >&2; then
         echo "FAIL (render desktop)"
         return 1
@@ -127,9 +126,8 @@ generate_package() {
         --height "$MOBILE_HEIGHT" \
         --ordering optimal \
         --merge \
+        --popups=false \
         --randomize \
-        --nebraska \
-        --popups \
         -o "$output_file_mobile" 2>&1 | grep -v "^WARN:" >&2; then
         echo "FAIL (render mobile)"
         return 1

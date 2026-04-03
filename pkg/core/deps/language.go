@@ -2,7 +2,6 @@ package deps
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/matzehuels/stacktower/pkg/cache"
 )
@@ -24,6 +23,11 @@ type Language struct {
 	// is explicitly specified.
 	DefaultRegistry string
 
+	// DefaultRuntimeVersion is the default runtime version to use when none
+	// is specified via CLI or manifest. For example, "3.11" for Python,
+	// "20" for Node.js, "1.75" for Rust. Empty string means no default.
+	DefaultRuntimeVersion string
+
 	// RegistryAliases maps alternative registry names to canonical names.
 	// For example, {"npm": "npm", "npmjs": "npm"}. May be nil or empty.
 	RegistryAliases map[string]string
@@ -38,11 +42,12 @@ type Language struct {
 	// Used by DetectManifest to match file paths. May be nil or empty.
 	ManifestAliases map[string]string
 
-	// NewResolver creates a registry Resolver with the given cache and TTL.
+	// NewResolver creates a registry Resolver with the given cache and options.
 	// The cache is used for HTTP response caching (use cache.NullCache{} for no caching).
+	// Options provides language-specific configuration (e.g., RuntimeVersion for Python).
 	// Returns an error if resolver construction fails (e.g., missing
 	// configuration). May be nil if the language has no registry support.
-	NewResolver func(c cache.Cache, ttl time.Duration) (Resolver, error)
+	NewResolver func(c cache.Cache, opts Options) (Resolver, error)
 
 	// NewManifest creates a ManifestParser for the given type name and resolver.
 	// The name is typically a value from ManifestTypes or ManifestAliases.
@@ -69,25 +74,25 @@ type Language struct {
 // DefaultRegistry, an error is returned. This method currently only supports
 // a single registry per language.
 //
-// The resolver is created with the given backend and DefaultCacheTTL (24 hours).
-// Use NewResolver directly for custom TTLs.
+// The resolver is created with the given backend and options. Use DefaultCacheTTL
+// in opts.CacheTTL if not specified.
 //
 // Returns an error if the registry name is unknown or if NewResolver fails.
-func (l *Language) Registry(backend cache.Cache, name string) (Resolver, error) {
+func (l *Language) Registry(backend cache.Cache, name string, opts Options) (Resolver, error) {
 	name = l.alias(l.RegistryAliases, name)
 	if name != l.DefaultRegistry {
 		return nil, fmt.Errorf("unknown registry %q (available: %s)", name, l.DefaultRegistry)
 	}
-	return l.NewResolver(backend, DefaultCacheTTL)
+	return l.NewResolver(backend, opts.WithDefaults())
 }
 
 // Resolver returns the default registry resolver for this language.
 //
 // This is a convenience wrapper around NewResolver with the given backend
-// and DefaultCacheTTL.
+// and default options.
 // Returns an error if NewResolver is nil or fails.
-func (l *Language) Resolver(backend cache.Cache) (Resolver, error) {
-	return l.NewResolver(backend, DefaultCacheTTL)
+func (l *Language) Resolver(backend cache.Cache, opts Options) (Resolver, error) {
+	return l.NewResolver(backend, opts.WithDefaults())
 }
 
 // Manifest returns a parser for the named manifest type, resolving aliases.

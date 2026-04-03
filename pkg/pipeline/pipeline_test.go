@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"testing"
+
+	"github.com/matzehuels/stacktower/pkg/core/deps"
 )
 
 func TestValidateFormat(t *testing.T) {
@@ -96,6 +98,9 @@ func TestOptionsDefaults(t *testing.T) {
 	if opts.MaxNodes != DefaultMaxNodes {
 		t.Errorf("MaxNodes should be %d, got %d", DefaultMaxNodes, opts.MaxNodes)
 	}
+	if opts.DependencyScope != deps.DependencyScopeProdOnly {
+		t.Errorf("DependencyScope should default to %q, got %q", deps.DependencyScopeProdOnly, opts.DependencyScope)
+	}
 }
 
 func TestOptionsValidateForParse(t *testing.T) {
@@ -121,6 +126,12 @@ func TestOptionsValidateForParse(t *testing.T) {
 	opts = Options{Language: "python", Manifest: "content", ManifestFilename: "poetry.lock"}
 	if err := opts.ValidateForParse(); err != nil {
 		t.Errorf("Valid manifest options should pass: %v", err)
+	}
+
+	// Invalid dependency scope
+	opts = Options{Language: "python", Package: "requests", DependencyScope: "invalid"}
+	if err := opts.ValidateForParse(); err == nil {
+		t.Error("Invalid dependency_scope should fail")
 	}
 }
 

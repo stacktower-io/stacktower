@@ -71,9 +71,13 @@ type Keyer interface {
 // Different options produce different graphs, so they're part of the cache key.
 // Note: Normalization is applied during layout, not parsing, so it's not here.
 type GraphKeyOpts struct {
-	MaxDepth int  `json:"max_depth"`
-	MaxNodes int  `json:"max_nodes"`
-	Enriched bool `json:"enriched,omitempty"` // Whether GitHub metadata enrichment was performed
+	MaxDepth          int    `json:"max_depth"`
+	MaxNodes          int    `json:"max_nodes"`
+	Enriched          bool   `json:"enriched,omitempty"`           // Whether GitHub metadata enrichment was performed
+	SecurityScan      bool   `json:"security_scan,omitempty"`      // Whether vulnerability scan data is included
+	IncludePrerelease bool   `json:"include_prerelease,omitempty"` // Whether prerelease versions were included
+	DependencyScope   string `json:"dependency_scope,omitempty"`   // Whether graph includes prod-only or all dependency groups
+	RuntimeVersion    string `json:"runtime_version,omitempty"`    // Target runtime version for marker evaluation (e.g., "3.11" for Python)
 }
 
 // LayoutKeyOpts defines parameters that affect layout computation.
@@ -100,16 +104,20 @@ type LayoutKeyOpts struct {
 //   - Nebraska: Maintainer ranking - adds panel to visualization
 //   - Merge: Edge filtering for subdividers - affects which edges render
 //   - Normalize: Whether graph was normalized - changes node/edge count
+//   - ShowVulns: Whether vulnerability colours are rendered
 //
 // When adding new render-time options to pipeline.Options, update this struct!
 type ArtifactKeyOpts struct {
-	Format    string `json:"format"`
-	Style     string `json:"style,omitempty"`
-	ShowEdges bool   `json:"show_edges,omitempty"`
-	Popups    bool   `json:"popups,omitempty"`
-	Nebraska  bool   `json:"nebraska,omitempty"`
-	Merge     bool   `json:"merge,omitempty"`
-	Normalize bool   `json:"normalize,omitempty"`
+	Format       string `json:"format"`
+	Style        string `json:"style,omitempty"`
+	ShowEdges    bool   `json:"show_edges,omitempty"`
+	Popups       bool   `json:"popups,omitempty"`
+	Nebraska     bool   `json:"nebraska,omitempty"`
+	Merge        bool   `json:"merge,omitempty"`
+	Normalize    bool   `json:"normalize,omitempty"`
+	ShowVulns    bool   `json:"show_vulns,omitempty"`
+	ShowLicenses bool   `json:"show_licenses,omitempty"`
+	FlagsOnTop   bool   `json:"flags_on_top,omitempty"`
 }
 
 // DefaultKeyer provides a simple hash-based key generation strategy.

@@ -15,6 +15,11 @@ import (
 
 const maxCandidatesBase = 10000
 
+// maxRowWidth is the maximum number of nodes in a single row before falling
+// back to barycentric ordering. Rows wider than this have factorial search
+// spaces too large for optimal search, even with PQ-tree pruning.
+const maxRowWidth = 30
+
 // OptimalSearch implements a branch-and-bound search algorithm to find the
 // mathematically optimal horizontal ordering (minimum crossings). It uses
 // PQ-trees to prune the search space to only include orderings that satisfy
@@ -44,6 +49,14 @@ func (o OptimalSearch) OrderRows(g *dag.DAG) map[int][]string {
 	rows := g.RowIDs()
 	if len(rows) == 0 {
 		return nil
+	}
+
+	// Check for rows too wide for optimal search - fall back to barycentric
+	// to avoid factorial memory explosion
+	for _, r := range rows {
+		if len(g.NodesInRow(r)) > maxRowWidth {
+			return Barycentric{}.OrderRows(g)
+		}
 	}
 
 	timeout := o.Timeout
@@ -123,8 +136,9 @@ func calcCandidateLimit(numRows int) int {
 	}
 	// Linear scaling: more rows = fewer candidates per row
 	// 5 rows → 2000, 10 rows → 1000, 20 rows → 500
+	// Cap at 2000 max to prevent memory issues with wide rows
 	limit := maxCandidatesBase / numRows
-	return max(100, min(1000, limit))
+	return max(100, min(2000, limit))
 }
 
 func (s *solver) search() {
@@ -296,6 +310,14 @@ func (s *solver) generateC1PCandidates(depth int, nodes []*dag.Node, prevOrder [
 		return [][]int{perm.Seq(n)}
 	}
 
+	// For wide rows, limit candidates more aggressively to prevent memory issues
+	// Each candidate is n ints (8 bytes each), so 1000 candidates × 20 nodes = 160KB
+	limit := s.candLimit
+	if n > 15 {
+		// Scale down limit for wider rows: 20 nodes → 500, 25 nodes → 400, 30 nodes → 333
+		limit = min(limit, s.candLimit*15/n)
+	}
+
 	nodeIdx := buildNodeIndex(nodes)
 	tree := perm.NewPQTree(n)
 
@@ -306,16 +328,14 @@ func (s *solver) generateC1PCandidates(depth int, nodes []*dag.Node, prevOrder [
 		return s.fallbackPermutations(n)
 	}
 
-	limit := s.candLimit
 	if n <= 8 {
 		// For small rows, use actual count but cap at candidate limit
 		// to prevent combinatorial explosion (e.g., 6! = 720 candidates
 		// combined with other large rows creates 720M+ search paths)
 		actualCount := tree.ValidCount()
-		if actualCount <= s.candLimit {
+		if actualCount <= limit {
 			limit = actualCount
 		}
-		// else keep s.candLimit to prevent memory explosion
 	}
 
 	perms := tree.Enumerate(limit)

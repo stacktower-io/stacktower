@@ -117,7 +117,7 @@ func TestClient_FetchArtifact_NotFound(t *testing.T) {
 func TestExtractDeps(t *testing.T) {
 	pom := &pomProject{
 		Dependencies: []pomDependency{
-			{GroupID: "org.apache", ArtifactID: "commons-lang", Scope: "compile"},
+			{GroupID: "org.apache", ArtifactID: "commons-lang", Version: "3.12.0", Scope: "compile"},
 			{GroupID: "junit", ArtifactID: "junit", Scope: "test"},
 			{GroupID: "org.slf4j", ArtifactID: "slf4j-api", Scope: "provided"},
 			{GroupID: "org.optional", ArtifactID: "opt", Optional: "true"},
@@ -129,8 +129,11 @@ func TestExtractDeps(t *testing.T) {
 	if len(deps) != 1 {
 		t.Errorf("expected 1 dep, got %d: %v", len(deps), deps)
 	}
-	if deps[0] != "org.apache:commons-lang" {
-		t.Errorf("expected org.apache:commons-lang, got %s", deps[0])
+	if deps[0].Name != "org.apache:commons-lang" {
+		t.Errorf("expected org.apache:commons-lang, got %s", deps[0].Name)
+	}
+	if deps[0].Constraint != "3.12.0" {
+		t.Errorf("expected constraint 3.12.0, got %s", deps[0].Constraint)
 	}
 }
 

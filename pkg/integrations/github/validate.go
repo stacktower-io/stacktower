@@ -45,8 +45,26 @@ func ValidateRepoRef(owner, repo string) error {
 }
 
 // ParseRepoRef parses an "owner/repo" string and validates both parts.
+// It also accepts full GitHub URLs in any of these forms:
+//
+//	https://github.com/owner/repo
+//	http://github.com/owner/repo
+//	github.com/owner/repo
+//	owner/repo           (plain)
+//
+// Trailing slashes and ".git" suffixes are stripped automatically.
 // Returns owner, repo, and any validation error.
 func ParseRepoRef(ref string) (owner, repo string, err error) {
+	ref = strings.TrimSuffix(strings.TrimRight(ref, "/"), ".git")
+
+	// Strip scheme and host when a GitHub URL is supplied.
+	for _, prefix := range []string{"https://github.com/", "http://github.com/", "github.com/"} {
+		if strings.HasPrefix(ref, prefix) {
+			ref = strings.TrimPrefix(ref, prefix)
+			break
+		}
+	}
+
 	parts := strings.SplitN(ref, "/", 2)
 	if len(parts) != 2 {
 		return "", "", errors.New("invalid repo format: use owner/repo")

@@ -27,7 +27,11 @@ func ExampleNormalize() {
 	fmt.Println("  Edges:", g.EdgeCount())
 
 	// Normalize: assigns layers, removes transitive edges, subdivides long edges
-	result := transform.Normalize(g)
+	result, err := transform.Normalize(g)
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
 
 	fmt.Println("After normalize:")
 	fmt.Println("  Nodes:", g.NodeCount())
@@ -198,9 +202,13 @@ func ExampleNormalizeWithOptions() {
 	_ = g.AddEdge(dag.Edge{From: "auth", To: "db"})
 
 	// Skip cycle breaking (we know it's acyclic) but keep transitive reduction
-	result := transform.NormalizeWithOptions(g, transform.NormalizeOptions{
+	result, err := transform.NormalizeWithOptions(g, transform.NormalizeOptions{
 		SkipCycleBreaking: true,
 	})
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
 
 	fmt.Println("Cycles removed:", result.CyclesRemoved)
 	fmt.Println("Transitive edges removed:", result.TransitiveEdgesRemoved)
@@ -221,9 +229,13 @@ func ExampleNormalizeWithOptions_preserveTransitive() {
 	_ = g.AddEdge(dag.Edge{From: "B", To: "C"})
 	_ = g.AddEdge(dag.Edge{From: "A", To: "C"}) // Keep this transitive edge
 
-	result := transform.NormalizeWithOptions(g, transform.NormalizeOptions{
+	result, err := transform.NormalizeWithOptions(g, transform.NormalizeOptions{
 		SkipTransitiveReduction: true,
 	})
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
 
 	fmt.Println("Transitive edges removed:", result.TransitiveEdgesRemoved)
 	fmt.Println("Subdividers added:", result.SubdividersAdded)
@@ -247,9 +259,13 @@ func ExampleNormalizeWithOptions_skipSeparators() {
 	_ = g.AddEdge(dag.Edge{From: "api", To: "log"})
 	_ = g.AddEdge(dag.Edge{From: "api", To: "metrics"})
 
-	result := transform.NormalizeWithOptions(g, transform.NormalizeOptions{
+	result, err := transform.NormalizeWithOptions(g, transform.NormalizeOptions{
 		SkipSeparators: true,
 	})
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
 
 	fmt.Println("Separators added:", result.SeparatorsAdded)
 	fmt.Println("Node count unchanged:", g.NodeCount() == 4)

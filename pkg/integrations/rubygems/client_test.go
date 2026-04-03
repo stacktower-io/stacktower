@@ -75,6 +75,67 @@ func TestClient_FetchGem_NotFound(t *testing.T) {
 	}
 }
 
+func TestClient_FetchGemVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/versions/rails.json" {
+			_ = json.NewEncoder(w).Encode([]gemVersionResponse{
+				{
+					Number:              "7.1.0",
+					RequiredRubyVersion: ">= 3.0.0",
+				},
+				{
+					Number:              "7.0.0",
+					RequiredRubyVersion: ">= 2.7.0",
+				},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	c := testClient(t, server.URL)
+
+	info, err := c.FetchGemVersion(context.Background(), "rails", "7.0.0", true)
+	if err != nil {
+		t.Fatalf("FetchGemVersion failed: %v", err)
+	}
+	if info.Version != "7.0.0" {
+		t.Fatalf("expected version 7.0.0, got %s", info.Version)
+	}
+	if info.RequiredRubyVersion != ">= 2.7.0" {
+		t.Fatalf("expected ruby constraint >= 2.7.0, got %s", info.RequiredRubyVersion)
+	}
+}
+
+func TestClient_ListVersionsWithConstraints(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/versions/rails.json" {
+			_ = json.NewEncoder(w).Encode([]gemVersionResponse{
+				{Number: "7.1.0", RequiredRubyVersion: ">= 3.0.0"},
+				{Number: "7.0.0", RequiredRubyVersion: ">= 2.7.0"},
+				{Number: "6.0.0"},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	c := testClient(t, server.URL)
+
+	got, err := c.ListVersionsWithConstraints(context.Background(), "rails", true)
+	if err != nil {
+		t.Fatalf("ListVersionsWithConstraints failed: %v", err)
+	}
+	if got["7.1.0"] != ">= 3.0.0" {
+		t.Fatalf("expected >= 3.0.0, got %q", got["7.1.0"])
+	}
+	if got["6.0.0"] != "" {
+		t.Fatalf("expected empty constraint, got %q", got["6.0.0"])
+	}
+}
+
 func TestRuntimeDeps(t *testing.T) {
 	deps := []dependency{
 		{Name: "activesupport"},
@@ -103,6 +164,23 @@ func TestJoinLicenses(t *testing.T) {
 		result := strings.Join(tt.input, ", ")
 		if result != tt.expected {
 			t.Errorf("join(%v): expected %s, got %s", tt.input, tt.expected, result)
+		}
+	}
+}
+
+func TestRubyVersionsEquivalent(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{"3.17.0.0", "3.17.0", true},
+		{"v3.17.0.0", "3.17.0", true},
+		{"3.17.0.5", "3.17.0", false},
+		{"1.2.3", "1.2.3", true},
+	}
+	for _, tt := range tests {
+		if got := rubyVersionsEquivalent(tt.a, tt.b); got != tt.want {
+			t.Fatalf("rubyVersionsEquivalent(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
 		}
 	}
 }

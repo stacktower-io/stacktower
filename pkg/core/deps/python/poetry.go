@@ -2,7 +2,6 @@ package python
 
 import (
 	"context"
-	"maps"
 	"os"
 	"path/filepath"
 
@@ -10,9 +9,8 @@ import (
 
 	"github.com/matzehuels/stacktower/pkg/core/dag"
 	"github.com/matzehuels/stacktower/pkg/core/deps"
+	"github.com/matzehuels/stacktower/pkg/observability"
 )
-
-const projectRoot = "__project__"
 
 // PoetryLock parses poetry.lock files. It provides a full transitive closure
 // of the dependency graph without needing to contact a registry.
@@ -23,6 +21,8 @@ func (p *PoetryLock) IncludesTransitive() bool  { return true }
 func (p *PoetryLock) Supports(name string) bool { return name == "poetry.lock" }
 
 func (p *PoetryLock) Parse(path string, opts deps.Options) (*deps.ManifestResult, error) {
+	opts = opts.WithDefaults()
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -32,43 +32,26 @@ func (p *PoetryLock) Parse(path string, opts deps.Options) (*deps.ManifestResult
 		return nil, err
 	}
 
-	g := buildGraph(lock.Packages)
-	enrich(context.Background(), g, opts)
+	g := buildGraph(opts.Ctx, lock.Packages, opts.DependencyScope)
+	deps.EnrichGraph(opts.Ctx, g, "pyproject.toml", opts)
 
 	return &deps.ManifestResult{
 		Graph:              g,
 		Type:               p.Type(),
 		IncludesTransitive: true,
 		RootPackage:        extractPyprojectName(filepath.Dir(path)),
+		RuntimeVersion:     extractPythonVersion(lock.Metadata.PythonVersions),
+		RuntimeConstraint:  lock.Metadata.PythonVersions,
 	}, nil
-}
-
-func extractPyprojectName(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, "pyproject.toml"))
-	if err != nil {
-		return ""
-	}
-	var pyproject struct {
-		Tool struct {
-			Poetry struct {
-				Name string `toml:"name"`
-			} `toml:"poetry"`
-		} `toml:"tool"`
-		Project struct {
-			Name string `toml:"name"`
-		} `toml:"project"`
-	}
-	if err := toml.Unmarshal(data, &pyproject); err != nil {
-		return ""
-	}
-	if pyproject.Tool.Poetry.Name != "" {
-		return pyproject.Tool.Poetry.Name
-	}
-	return pyproject.Project.Name
 }
 
 type lockFile struct {
 	Packages []lockPackage `toml:"package"`
+	Metadata lockMetadata  `toml:"metadata"`
+}
+
+type lockMetadata struct {
+	PythonVersions string `toml:"python-versions"`
 }
 
 type lockPackage struct {
@@ -79,11 +62,15 @@ type lockPackage struct {
 	Dependencies map[string]any `toml:"dependencies"`
 }
 
-func buildGraph(packages []lockPackage) *dag.DAG {
+func buildGraph(ctx context.Context, packages []lockPackage, scope string) *dag.DAG {
 	g := dag.New(nil)
 	pkgs := make(map[string]bool, len(packages))
 
+	hooks := observability.ResolverFromContext(ctx)
 	for _, pkg := range packages {
+		if scope == deps.DependencyScopeProdOnly && pkg.Category == "dev" {
+			continue
+		}
 		name := normalize(pkg.Name)
 		pkgs[name] = true
 		meta := dag.Metadata{"version": pkg.Version}
@@ -93,52 +80,39 @@ func buildGraph(packages []lockPackage) *dag.DAG {
 		if pkg.Category != "" {
 			meta["category"] = pkg.Category
 		}
+		hooks.OnFetchStart(ctx, name, 0)
 		_ = g.AddNode(dag.Node{ID: name, Meta: meta})
+		hooks.OnFetchComplete(ctx, name, 0, len(pkg.Dependencies), nil)
 	}
 
 	incoming := make(map[string]bool)
 	for _, pkg := range packages {
 		from := normalize(pkg.Name)
-		for dep := range pkg.Dependencies {
+		for dep, constraint := range pkg.Dependencies {
 			to := normalize(dep)
 			if pkgs[to] {
-				_ = g.AddEdge(dag.Edge{From: from, To: to})
+				edgeMeta := dag.Metadata{}
+				// Extract constraint from the dependency value
+				if constraintStr := extractConstraint(constraint); constraintStr != "" {
+					edgeMeta["constraint"] = constraintStr
+				}
+				_ = g.AddEdge(dag.Edge{From: from, To: to, Meta: edgeMeta})
 				incoming[to] = true
 			}
 		}
 	}
 
-	_ = g.AddNode(dag.Node{ID: projectRoot, Meta: dag.Metadata{"virtual": true}})
+	_ = g.AddNode(dag.Node{ID: deps.ProjectRootNodeID, Meta: dag.Metadata{"virtual": true}})
 	for _, pkg := range packages {
 		name := normalize(pkg.Name)
 		if !incoming[name] {
-			_ = g.AddEdge(dag.Edge{From: projectRoot, To: name})
+			edgeMeta := dag.Metadata{}
+			if pkg.Version != "" {
+				edgeMeta["constraint"] = "==" + pkg.Version
+			}
+			_ = g.AddEdge(dag.Edge{From: deps.ProjectRootNodeID, To: name, Meta: edgeMeta})
 		}
 	}
 
 	return g
-}
-
-func enrich(ctx context.Context, g *dag.DAG, opts deps.Options) {
-	if len(opts.MetadataProviders) == 0 {
-		return
-	}
-	for _, node := range g.Nodes() {
-		if node.ID == projectRoot {
-			continue
-		}
-		version, _ := node.Meta["version"].(string)
-		ref := &deps.PackageRef{
-			Name:         node.ID,
-			Version:      version,
-			ManifestFile: "pyproject.toml",
-		}
-		for _, p := range opts.MetadataProviders {
-			if m, err := p.Enrich(ctx, ref, opts.Refresh); err == nil {
-				maps.Copy(node.Meta, m)
-			} else {
-				opts.Logger("enrich failed: %s: %v", node.ID, err)
-			}
-		}
-	}
 }

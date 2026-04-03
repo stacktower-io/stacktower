@@ -3,7 +3,6 @@ package java
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/matzehuels/stacktower/pkg/cache"
 	"github.com/matzehuels/stacktower/pkg/core/deps"
@@ -11,40 +10,82 @@ import (
 )
 
 // Language provides Java dependency resolution via Maven Central.
-// Supports pom.xml manifest files.
+// Supports pom.xml and build.gradle manifest files.
 var Language = &deps.Language{
-	Name:            "java",
-	DefaultRegistry: "maven",
-	RegistryAliases: map[string]string{"maven-central": "maven", "mvn": "maven"},
-	ManifestTypes:   []string{"pom"},
-	ManifestAliases: map[string]string{"pom.xml": "pom"},
+	Name:                  "java",
+	DefaultRegistry:       "maven",
+	DefaultRuntimeVersion: "17", // LTS
+	RegistryAliases:       map[string]string{"maven-central": "maven", "mvn": "maven"},
+	ManifestTypes:         []string{"pom", "gradle"},
+	ManifestAliases: map[string]string{
+		"pom.xml":          "pom",
+		"build.gradle":     "gradle",
+		"build.gradle.kts": "gradle",
+	},
 	NewResolver:     newResolver,
 	NewManifest:     newManifest,
 	ManifestParsers: manifestParsers,
 	NormalizeName:   NormalizeCoordinate,
 }
 
-func newResolver(backend cache.Cache, ttl time.Duration) (deps.Resolver, error) {
-	c := maven.NewClient(backend, ttl)
-	return deps.NewRegistry("maven", fetcher{c}), nil
+func newResolver(backend cache.Cache, opts deps.Options) (deps.Resolver, error) {
+	c := maven.NewClient(backend, opts.CacheTTL)
+	f := fetcher{client: c, javaVersion: opts.RuntimeVersion}
+
+	// Use PubGrub for proper SAT-solver-based dependency resolution
+	return deps.NewPubGrubResolver("maven", f, MavenMatcher{})
 }
 
-type fetcher struct{ *maven.Client }
+type fetcher struct {
+	client      *maven.Client
+	javaVersion string
+}
 
 func (f fetcher) Fetch(ctx context.Context, name string, refresh bool) (*deps.Package, error) {
 	coord := NormalizeCoordinate(name)
-	a, err := f.FetchArtifact(ctx, coord, refresh)
+	a, err := f.client.FetchArtifact(ctx, coord, refresh)
 	if err != nil {
 		return nil, err
 	}
-	return &deps.Package{
+	return mavenArtifactToDepsPkg(a), nil
+}
+
+func (f fetcher) FetchVersion(ctx context.Context, name, version string, refresh bool) (*deps.Package, error) {
+	coord := NormalizeCoordinate(name)
+	a, err := f.client.FetchArtifactVersion(ctx, coord, version, refresh)
+	if err != nil {
+		return nil, err
+	}
+	return mavenArtifactToDepsPkg(a), nil
+}
+
+// ListVersions implements deps.VersionLister for constraint-based resolution.
+func (f fetcher) ListVersions(ctx context.Context, name string, refresh bool) ([]string, error) {
+	coord := NormalizeCoordinate(name)
+	return f.client.ListVersions(ctx, coord, refresh)
+}
+
+func mavenArtifactToDepsPkg(a *maven.ArtifactInfo) *deps.Package {
+	pkg := &deps.Package{
 		Name:         a.Coordinate(),
 		Version:      a.Version,
-		Dependencies: a.Dependencies,
 		Description:  a.Description,
-		HomePage:     a.URL,
+		License:      a.License,
+		Repository:   a.Repository,
+		HomePage:     a.HomePage,
 		ManifestFile: "pom.xml",
-	}, nil
+	}
+	// Convert maven.Dependency to deps.Dependency with constraints
+	if len(a.Dependencies) > 0 {
+		pkg.Dependencies = make([]deps.Dependency, len(a.Dependencies))
+		for i, d := range a.Dependencies {
+			pkg.Dependencies[i] = deps.Dependency{
+				Name:       d.Name,
+				Constraint: d.Constraint,
+			}
+		}
+	}
+	return pkg
 }
 
 // NormalizeCoordinate converts filename-safe coordinates to Maven format.
@@ -72,6 +113,8 @@ func newManifest(name string, res deps.Resolver) deps.ManifestParser {
 	switch name {
 	case "pom":
 		return &POMParser{resolver: res}
+	case "gradle":
+		return &GradleParser{resolver: res}
 	default:
 		return nil
 	}
@@ -80,5 +123,6 @@ func newManifest(name string, res deps.Resolver) deps.ManifestParser {
 func manifestParsers(res deps.Resolver) []deps.ManifestParser {
 	return []deps.ManifestParser{
 		&POMParser{resolver: res},
+		&GradleParser{resolver: res},
 	}
 }

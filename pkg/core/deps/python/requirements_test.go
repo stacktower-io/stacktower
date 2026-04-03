@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/matzehuels/stacktower/pkg/core/dag"
 	"github.com/matzehuels/stacktower/pkg/core/deps"
 )
 
@@ -59,7 +58,7 @@ git+https://github.com/user/repo.git  # git URL, should be skipped
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	g := result.Graph.(*dag.DAG)
+	g := result.Graph
 
 	if got := g.NodeCount(); got != 5 {
 		t.Errorf("NodeCount = %d, want 5", got)

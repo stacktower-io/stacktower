@@ -82,11 +82,12 @@ type Block struct {
 	Height float64 `json:"height" bson:"height"`
 
 	// Metadata
-	URL       string     `json:"url,omitempty" bson:"url,omitempty"`
-	Brittle   bool       `json:"brittle,omitempty" bson:"brittle,omitempty"`
-	Auxiliary bool       `json:"auxiliary,omitempty" bson:"auxiliary,omitempty"`
-	Synthetic bool       `json:"synthetic,omitempty" bson:"synthetic,omitempty"`
-	Meta      *BlockMeta `json:"meta,omitempty" bson:"meta,omitempty"`
+	URL          string     `json:"url,omitempty" bson:"url,omitempty"`
+	Brittle      bool       `json:"brittle,omitempty" bson:"brittle,omitempty"`
+	VulnSeverity string     `json:"vuln_severity,omitempty" bson:"vuln_severity,omitempty"` // Max vulnerability severity
+	Auxiliary    bool       `json:"auxiliary,omitempty" bson:"auxiliary,omitempty"`
+	Synthetic    bool       `json:"synthetic,omitempty" bson:"synthetic,omitempty"`
+	Meta         *BlockMeta `json:"meta,omitempty" bson:"meta,omitempty"`
 }
 
 // BlockMeta contains enriched metadata (from GitHub, registries).

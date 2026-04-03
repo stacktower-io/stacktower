@@ -78,13 +78,93 @@ func TestExtractDeps_FiltersMarkers(t *testing.T) {
 		{[]string{"requests", "numpy; extra == 'dev'"}, 1},
 		{[]string{"django>=3.0", "pytest; extra == 'test'"}, 1},
 		{[]string{"flask"}, 1},
+		// python_version markers: should filter deps for older Python versions
+		{[]string{"sniffio>=1.1; python_version < '3.11'"}, 0},        // Excluded: requires Python < 3.11
+		{[]string{"contextvars; python_version < '3.7'"}, 0},          // Excluded: requires Python < 3.7
+		{[]string{"typing-extensions; python_version >= '3.8'"}, 1},   // Included: satisfied on 3.11
+		{[]string{"exceptiongroup>=1.0; python_version < '3.11'"}, 0}, // Excluded: requires Python < 3.11
 	}
 
+	c := testExtractClient()
 	for _, tt := range tests {
-		got := extractDeps(tt.input)
+		got := c.extractDeps(tt.input)
 		if len(got) != tt.expected {
 			t.Errorf("extractDeps(%v): expected %d deps, got %d", tt.input, tt.expected, len(got))
 		}
+	}
+}
+
+func TestExtractDeps_ExtractsConstraints(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          []string
+		wantName       string
+		wantConstraint string
+	}{
+		{
+			name:           "simple constraint",
+			input:          []string{"requests>=2.0"},
+			wantName:       "requests",
+			wantConstraint: ">=2.0",
+		},
+		{
+			name:           "range constraint",
+			input:          []string{"httpx>=0.23.0,<1"},
+			wantName:       "httpx",
+			wantConstraint: ">=0.23.0,<1",
+		},
+		{
+			name:           "exact version",
+			input:          []string{"numpy==1.24.0"},
+			wantName:       "numpy",
+			wantConstraint: "==1.24.0",
+		},
+		{
+			name:           "compatible release",
+			input:          []string{"django~=4.2"},
+			wantName:       "django",
+			wantConstraint: "~=4.2",
+		},
+		{
+			name:           "no constraint",
+			input:          []string{"flask"},
+			wantName:       "flask",
+			wantConstraint: "",
+		},
+		{
+			name:           "with extras",
+			input:          []string{"requests[security]>=2.0"},
+			wantName:       "requests",
+			wantConstraint: ">=2.0",
+		},
+		{
+			name:           "constraint with spaces",
+			input:          []string{"click >= 7.0"},
+			wantName:       "click",
+			wantConstraint: ">= 7.0",
+		},
+		{
+			name:           "complex constraint with marker",
+			input:          []string{"typing-extensions>=4.7,<5; python_version >= '3.8'"},
+			wantName:       "typing-extensions",
+			wantConstraint: ">=4.7,<5",
+		},
+	}
+
+	c := testExtractClient()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps := c.extractDeps(tt.input)
+			if len(deps) != 1 {
+				t.Fatalf("expected 1 dep, got %d", len(deps))
+			}
+			if deps[0].Name != tt.wantName {
+				t.Errorf("name = %q, want %q", deps[0].Name, tt.wantName)
+			}
+			if deps[0].Constraint != tt.wantConstraint {
+				t.Errorf("constraint = %q, want %q", deps[0].Constraint, tt.wantConstraint)
+			}
+		})
 	}
 }
 
@@ -112,7 +192,13 @@ func TestNormalizePkgName(t *testing.T) {
 func testClient(t *testing.T, serverURL string) *Client {
 	t.Helper()
 	return &Client{
-		Client:  integrations.NewClient(cache.NewNullCache(), "pypi:", time.Hour, nil),
-		baseURL: serverURL,
+		Client:        integrations.NewClient(cache.NewNullCache(), "pypi:", time.Hour, nil),
+		baseURL:       serverURL,
+		pythonVersion: DefaultPythonVersion,
 	}
+}
+
+// testExtractClient returns a minimal client for testing extractDeps.
+func testExtractClient() *Client {
+	return &Client{pythonVersion: DefaultPythonVersion}
 }

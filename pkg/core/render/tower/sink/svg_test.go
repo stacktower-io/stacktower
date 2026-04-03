@@ -169,3 +169,14 @@ func TestRenderSVG_MergedDeduplicatesEdgesToSameMaster(t *testing.T) {
 		t.Errorf("Expected 3 edges (A→C, B→C, C→D), got %d", lineCount)
 	}
 }
+
+func TestExtractPopupData_FallsBackToNodeIDDescription(t *testing.T) {
+	n := &dag.Node{ID: "stacktower", Meta: dag.Metadata{"virtual": true}}
+	p := extractPopupData(n)
+	if p == nil {
+		t.Fatal("expected popup data")
+	}
+	if p.Description != "stacktower" {
+		t.Fatalf("popup description = %q, want %q", p.Description, "stacktower")
+	}
+}

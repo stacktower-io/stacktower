@@ -10,14 +10,7 @@ import (
 	"time"
 )
 
-// DefaultClientID is the OAuth App Client ID for Stacktower.
-// This is public and safe to commit - only the Client Secret must be kept private.
-// The Device Flow doesn't require a secret, only the Client ID.
-//
-// To use your own OAuth App, set GITHUB_CLIENT_ID env var.
-const DefaultClientID = "Ov23liyPM58WU6hMeP7E"
-
-// OAuthClient handles GitHub OAuth operations.
+// OAuthClient handles GitHub OAuth operations using the device flow.
 type OAuthClient struct {
 	config     OAuthConfig
 	httpClient *http.Client
@@ -36,7 +29,7 @@ func (c *OAuthClient) AuthorizationURL(state string) string {
 	params := url.Values{
 		"client_id":    {c.config.ClientID},
 		"redirect_uri": {c.config.RedirectURI},
-		"scope":        {"read:user user:email repo"},
+		"scope":        {"read:user user:email read:org repo"},
 		"state":        {state},
 	}
 	return "https://github.com/login/oauth/authorize?" + params.Encode()
@@ -157,6 +150,48 @@ func (c *OAuthClient) PollForToken(ctx context.Context, deviceCode string, inter
 			return token, nil
 		}
 	}
+}
+
+// RevokeGrant revokes the complete OAuth app authorization for a user.
+// This removes the app from the user's "Authorized OAuth Apps" on GitHub,
+// forcing them through the consent flow on next login.
+//
+// Uses: DELETE /applications/{client_id}/grant
+// Auth: Basic client_id:client_secret
+// Body: {"access_token": "..."}
+//
+// See: https://docs.github.com/en/rest/apps/oauth-applications#delete-an-app-authorization
+func (c *OAuthClient) RevokeGrant(ctx context.Context, accessToken string) error {
+	if accessToken == "" {
+		return nil // Nothing to revoke
+	}
+	if c.config.ClientID == "" || c.config.ClientSecret == "" {
+		return fmt.Errorf("OAuth client ID and secret required to revoke grants")
+	}
+
+	body := fmt.Sprintf(`{"access_token":"%s"}`, accessToken)
+	endpoint := fmt.Sprintf("https://api.github.com/applications/%s/grant", c.config.ClientID)
+
+	req, err := http.NewRequestWithContext(ctx, "DELETE", endpoint, strings.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create revoke request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.SetBasicAuth(c.config.ClientID, c.config.ClientSecret)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("send revoke request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 204 No Content = success, 404 = already revoked (both are fine)
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("revoke grant failed: HTTP %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 // checkDeviceToken attempts to exchange the device code for a token.

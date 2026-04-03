@@ -78,7 +78,7 @@
 //	parsers := python.Language.ManifestParsers(nil)
 //	parser, _ := deps.DetectManifest("poetry.lock", parsers...)
 //	result, _ := parser.Parse("poetry.lock", opts)
-//	g := result.Graph.(*dag.DAG)
+//	g := result.Graph
 //
 // Manifest parsers implement [ManifestParser] and vary in completeness:
 //

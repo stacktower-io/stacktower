@@ -10,9 +10,32 @@ import (
 	"github.com/matzehuels/stacktower/pkg/cache"
 )
 
-// httpTimeout is the default timeout for all HTTP requests to registry APIs.
-// Individual registries do not override this value.
-const httpTimeout = 10 * time.Second
+// DefaultTimeout is the default timeout for registry API requests when no
+// registry-specific timeout is configured.
+const DefaultTimeout = 10 * time.Second
+
+// UserAgent is the default User-Agent header for all HTTP requests.
+const UserAgent = "stacktower/1.0"
+
+// DefaultTimeouts provides per-registry HTTP request timeouts.
+// Registries not listed here use [DefaultTimeout] (10s).
+//
+// Timeout values are tuned based on observed API performance:
+//   - Most registries are fast (10s is generous)
+//   - Maven Central can be slow with large POMs (30s)
+//   - GitHub GraphQL batches can take time (20s)
+//   - OSV batch queries scale with size (30s)
+var DefaultTimeouts = map[string]time.Duration{
+	"pypi":      10 * time.Second,
+	"npm":       10 * time.Second,
+	"crates":    10 * time.Second,
+	"rubygems":  10 * time.Second,
+	"packagist": 10 * time.Second,
+	"maven":     30 * time.Second,
+	"goproxy":   15 * time.Second,
+	"github":    20 * time.Second,
+	"osv":       30 * time.Second,
+}
 
 // Sentinel errors - re-exported from cache for API consistency.
 var (
@@ -22,6 +45,10 @@ var (
 
 	// ErrNetwork is returned for HTTP failures (timeouts, connection errors, 5xx responses).
 	ErrNetwork = cache.ErrNetwork
+
+	// ErrUnauthorized is returned when authentication fails (HTTP 401/403).
+	// This typically means the API token is invalid, expired, or revoked.
+	ErrUnauthorized = cache.ErrUnauthorized
 )
 
 // RepoMetrics holds repository-level data fetched from GitHub or GitLab.
@@ -56,13 +83,33 @@ type Contributor struct {
 	Contributions int    `json:"contributions"` // Number of commits. Always positive in valid contributors.
 }
 
-// NewHTTPClient creates an HTTP client with a standard timeout for registry requests.
-// The returned client has a 10-second timeout applied to all requests.
+// NewHTTPClient creates an HTTP client with [DefaultTimeout] for registry requests.
 //
 // The client is safe for concurrent use by multiple goroutines.
 // Returns a new client on every call; clients are not pooled.
 func NewHTTPClient() *http.Client {
-	return &http.Client{Timeout: httpTimeout}
+	return &http.Client{Timeout: DefaultTimeout}
+}
+
+// NewHTTPClientWithTimeout creates an HTTP client with a custom timeout.
+// If timeout is <= 0, [DefaultTimeout] is used.
+//
+// The client is safe for concurrent use by multiple goroutines.
+// Returns a new client on every call; clients are not pooled.
+func NewHTTPClientWithTimeout(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	return &http.Client{Timeout: timeout}
+}
+
+// TimeoutForRegistry returns the configured timeout for a registry.
+// Falls back to [DefaultTimeout] for registries not in [DefaultTimeouts].
+func TimeoutForRegistry(registry string) time.Duration {
+	if t, ok := DefaultTimeouts[registry]; ok {
+		return t
+	}
+	return DefaultTimeout
 }
 
 // NormalizePkgName converts a package name to its canonical form.

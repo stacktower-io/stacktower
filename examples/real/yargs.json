@@ -1,173 +1,373 @@
 {
+  "meta": {
+    "dependency_scope": "prod_only",
+    "include_prerelease": false,
+    "runtime_source": "package",
+    "runtime_version": "20.19.0"
+  },
   "nodes": [
     {
       "id": "ansi-regex",
+      "license": "MIT",
+      "url": "https://github.com/chalk/ansi-regex",
       "meta": {
         "author": "Sindre Sorhus",
         "description": "Regular expression for matching ANSI escape codes",
+        "homepage": "https://github.com/chalk/ansi-regex#readme",
         "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "Regular expression for matching ANSI escape codes",
+        "repo_language": "JavaScript",
+        "repo_last_commit": "2026-02-18",
+        "repo_last_release": "2025-09-08",
+        "repo_license": "MIT",
+        "repo_owner": "chalk",
+        "repo_stars": 204,
+        "repo_url": "https://github.com/chalk/ansi-regex",
         "version": "6.2.2"
       }
     },
     {
       "id": "ansi-styles",
+      "license": "MIT",
+      "url": "https://github.com/chalk/ansi-styles",
       "meta": {
         "author": "Sindre Sorhus",
         "description": "ANSI escape codes for styling strings in the terminal",
+        "homepage": "https://github.com/chalk/ansi-styles#readme",
         "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "ANSI escape codes for styling strings in the terminal",
+        "repo_language": "JavaScript",
+        "repo_last_commit": "2026-02-27",
+        "repo_last_release": "2025-09-08",
+        "repo_license": "MIT",
+        "repo_owner": "chalk",
+        "repo_stars": 453,
+        "repo_topics": [
+          "chalk"
+        ],
+        "repo_url": "https://github.com/chalk/ansi-styles",
         "version": "6.2.3"
       }
     },
     {
       "id": "cliui",
+      "license": "ISC",
+      "url": "https://github.com/yargs/cliui",
       "meta": {
         "author": "Ben Coe",
         "description": "easily create complex multi-column command-line-interfaces",
+        "homepage": "https://github.com/yargs/cliui#readme",
         "license": "ISC",
+        "repo_archived": false,
+        "repo_description": "easily create complex multi-column command-line-interfaces.",
+        "repo_language": "JavaScript",
+        "repo_last_commit": "2026-03-23",
+        "repo_last_release": "2025-03-17",
+        "repo_license": "ISC",
+        "repo_owner": "yargs",
+        "repo_stars": 389,
+        "repo_url": "https://github.com/yargs/cliui",
         "version": "9.0.1"
       }
     },
     {
+      "id": "emoji-regex",
+      "license": "MIT",
+      "url": "https://github.com/mathiasbynens/emoji-regex",
+      "meta": {
+        "author": "Mathias Bynens",
+        "description": "A regular expression to match all Emoji-only symbols as per the Unicode Standard.",
+        "homepage": "https://mths.be/emoji-regex",
+        "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "A regular expression to match all Emoji-only symbols as per the Unicode Standard.",
+        "repo_language": "JavaScript",
+        "repo_last_commit": "2025-10-13",
+        "repo_license": "MIT",
+        "repo_owner": "mathiasbynens",
+        "repo_stars": 1901,
+        "repo_topics": [
+          "emoji",
+          "regex",
+          "regexp",
+          "regular-expression",
+          "unicode"
+        ],
+        "repo_url": "https://github.com/mathiasbynens/emoji-regex",
+        "version": "10.6.0"
+      }
+    },
+    {
       "id": "escalade",
+      "brittle": true,
+      "license": "MIT",
+      "url": "https://github.com/lukeed/escalade",
       "meta": {
         "author": "Luke Edwards",
         "description": "A tiny (183B to 210B) and fast utility to ascend parent directories",
+        "homepage": "https://github.com/lukeed/escalade#readme",
         "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "A tiny (183B to 210B) and fast utility to ascend parent directories",
+        "repo_language": "JavaScript",
+        "repo_last_commit": "2024-08-29",
+        "repo_last_release": "2024-08-29",
+        "repo_license": "MIT",
+        "repo_owner": "lukeed",
+        "repo_stars": 156,
+        "repo_url": "https://github.com/lukeed/escalade",
         "version": "3.2.0"
       }
     },
     {
       "id": "get-caller-file",
+      "brittle": true,
+      "license": "ISC",
+      "url": "https://github.com/stefanpenner/get-caller-file",
       "meta": {
         "author": "Stefan Penner",
         "description": "[![Build Status](https://travis-ci.org/stefanpenner/get-caller-file.svg?branch=master)](https://travis-ci.org/stefanpenner/get-caller-file) [![Build status](https://ci.appveyor.com/api/projects/status/ol2q94g1932cy14a/branch/master?svg=true)](https://ci.a",
+        "homepage": "https://github.com/stefanpenner/get-caller-file#readme",
         "license": "ISC",
+        "repo_archived": false,
+        "repo_language": "TypeScript",
+        "repo_last_commit": "2023-09-27",
+        "repo_license": "ISC",
+        "repo_owner": "stefanpenner",
+        "repo_stars": 37,
+        "repo_url": "https://github.com/stefanpenner/get-caller-file",
         "version": "2.0.5"
       }
     },
     {
       "id": "get-east-asian-width",
+      "license": "MIT",
+      "url": "https://github.com/sindresorhus/get-east-asian-width",
       "meta": {
         "author": "Sindre Sorhus",
         "description": "Determine the East Asian Width of a Unicode character",
+        "homepage": "https://github.com/sindresorhus/get-east-asian-width#readme",
         "license": "MIT",
-        "version": "1.4.0"
+        "repo_archived": false,
+        "repo_description": "Determine the East Asian Width of a Unicode character",
+        "repo_language": "JavaScript",
+        "repo_last_commit": "2026-02-18",
+        "repo_last_release": "2026-02-18",
+        "repo_license": "MIT",
+        "repo_owner": "sindresorhus",
+        "repo_stars": 46,
+        "repo_url": "https://github.com/sindresorhus/get-east-asian-width",
+        "version": "1.5.0"
       }
     },
     {
       "id": "string-width",
+      "license": "MIT",
+      "url": "https://github.com/sindresorhus/string-width",
       "meta": {
         "author": "Sindre Sorhus",
         "description": "Get the visual width of a string - the number of columns required to display it",
+        "homepage": "https://github.com/sindresorhus/string-width#readme",
         "license": "MIT",
-        "version": "8.1.1"
+        "repo_archived": false,
+        "repo_description": "Get the visual width of a string - the number of columns required to display it",
+        "repo_language": "JavaScript",
+        "repo_last_commit": "2026-02-18",
+        "repo_last_release": "2026-02-18",
+        "repo_license": "MIT",
+        "repo_owner": "sindresorhus",
+        "repo_stars": 521,
+        "repo_url": "https://github.com/sindresorhus/string-width",
+        "version": "7.2.0"
       }
     },
     {
       "id": "strip-ansi",
+      "license": "MIT",
+      "url": "https://github.com/chalk/strip-ansi",
       "meta": {
         "author": "Sindre Sorhus",
         "description": "Strip ANSI escape codes from a string",
+        "homepage": "https://github.com/chalk/strip-ansi#readme",
         "license": "MIT",
-        "version": "7.1.2"
+        "repo_archived": false,
+        "repo_description": "Strip ANSI escape codes from a string",
+        "repo_language": "JavaScript",
+        "repo_last_commit": "2026-02-26",
+        "repo_last_release": "2026-02-26",
+        "repo_license": "MIT",
+        "repo_owner": "chalk",
+        "repo_stars": 504,
+        "repo_url": "https://github.com/chalk/strip-ansi",
+        "version": "7.2.0"
       }
     },
     {
       "id": "wrap-ansi",
+      "license": "MIT",
+      "url": "https://github.com/chalk/wrap-ansi",
       "meta": {
         "author": "Sindre Sorhus",
         "description": "Wordwrap a string with ANSI escape codes",
+        "homepage": "https://github.com/chalk/wrap-ansi#readme",
         "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "Wordwrap a string with ANSI escape codes",
+        "repo_language": "JavaScript",
+        "repo_last_commit": "2026-02-20",
+        "repo_last_release": "2026-02-20",
+        "repo_license": "MIT",
+        "repo_owner": "chalk",
+        "repo_stars": 136,
+        "repo_url": "https://github.com/chalk/wrap-ansi",
         "version": "9.0.2"
       }
     },
     {
       "id": "y18n",
+      "license": "ISC",
+      "url": "https://github.com/yargs/y18n",
       "meta": {
         "author": "Ben Coe",
         "description": "the bare-bones internationalization library used by yargs",
+        "homepage": "https://github.com/yargs/y18n",
         "license": "ISC",
+        "repo_archived": false,
+        "repo_description": ":ledger: the bare-bones i18n library used by yargs",
+        "repo_language": "JavaScript",
+        "repo_last_commit": "2026-02-25",
+        "repo_last_release": "2021-04-07",
+        "repo_license": "ISC",
+        "repo_owner": "yargs",
+        "repo_stars": 154,
+        "repo_url": "https://github.com/yargs/y18n",
         "version": "5.0.8"
       }
     },
     {
       "id": "yargs",
+      "license": "MIT",
+      "url": "https://github.com/yargs/yargs",
       "meta": {
         "description": "yargs the modern, pirate-themed, successor to optimist.",
+        "homepage": "https://yargs.js.org/",
         "license": "MIT",
+        "repo_archived": false,
+        "repo_description": " yargs the modern, pirate-themed successor to optimist.",
+        "repo_language": "JavaScript",
+        "repo_last_commit": "2026-03-23",
+        "repo_last_release": "2025-05-27",
+        "repo_license": "MIT",
+        "repo_owner": "yargs",
+        "repo_stars": 11465,
+        "repo_url": "https://github.com/yargs/yargs",
         "version": "18.0.0"
       }
     },
     {
       "id": "yargs-parser",
+      "license": "ISC",
+      "url": "https://github.com/yargs/yargs-parser",
       "meta": {
         "author": "Ben Coe",
         "description": "the mighty option parser used by yargs",
+        "homepage": "https://github.com/yargs/yargs-parser#readme",
         "license": "ISC",
+        "repo_archived": false,
+        "repo_description": ":muscle: the mighty option parser used by yargs",
+        "repo_language": "JavaScript",
+        "repo_last_commit": "2026-03-25",
+        "repo_last_release": "2025-05-26",
+        "repo_license": "ISC",
+        "repo_owner": "yargs",
+        "repo_stars": 519,
+        "repo_url": "https://github.com/yargs/yargs-parser",
         "version": "22.0.0"
       }
     }
   ],
   "edges": [
     {
-      "from": "yargs",
-      "to": "cliui"
-    },
-    {
-      "from": "yargs",
-      "to": "escalade"
-    },
-    {
-      "from": "yargs",
-      "to": "get-caller-file"
-    },
-    {
-      "from": "yargs",
-      "to": "string-width"
-    },
-    {
-      "from": "yargs",
-      "to": "y18n"
-    },
-    {
-      "from": "yargs",
-      "to": "yargs-parser"
-    },
-    {
-      "from": "cliui",
-      "to": "string-width"
-    },
-    {
-      "from": "cliui",
-      "to": "strip-ansi"
-    },
-    {
-      "from": "cliui",
-      "to": "wrap-ansi"
-    },
-    {
       "from": "strip-ansi",
-      "to": "ansi-regex"
+      "to": "ansi-regex",
+      "constraint": "^6.2.2"
     },
     {
-      "from": "wrap-ansi",
-      "to": "strip-ansi"
+      "from": "yargs",
+      "to": "cliui",
+      "constraint": "^9.0.1"
     },
     {
-      "from": "wrap-ansi",
-      "to": "ansi-styles"
+      "from": "yargs",
+      "to": "escalade",
+      "constraint": "^3.1.1"
     },
     {
-      "from": "wrap-ansi",
-      "to": "string-width"
+      "from": "yargs",
+      "to": "get-caller-file",
+      "constraint": "^2.0.5"
+    },
+    {
+      "from": "yargs",
+      "to": "string-width",
+      "constraint": "^7.2.0"
+    },
+    {
+      "from": "yargs",
+      "to": "y18n",
+      "constraint": "^5.0.5"
+    },
+    {
+      "from": "yargs",
+      "to": "yargs-parser",
+      "constraint": "^22.0.0"
+    },
+    {
+      "from": "cliui",
+      "to": "string-width",
+      "constraint": "^7.2.0"
+    },
+    {
+      "from": "cliui",
+      "to": "strip-ansi",
+      "constraint": "^7.1.0"
+    },
+    {
+      "from": "cliui",
+      "to": "wrap-ansi",
+      "constraint": "^9.0.0"
     },
     {
       "from": "string-width",
-      "to": "strip-ansi"
+      "to": "emoji-regex",
+      "constraint": "^10.3.0"
     },
     {
       "from": "string-width",
-      "to": "get-east-asian-width"
+      "to": "get-east-asian-width",
+      "constraint": "^1.0.0"
+    },
+    {
+      "from": "string-width",
+      "to": "strip-ansi",
+      "constraint": "^7.1.0"
+    },
+    {
+      "from": "wrap-ansi",
+      "to": "ansi-styles",
+      "constraint": "^6.2.1"
+    },
+    {
+      "from": "wrap-ansi",
+      "to": "string-width",
+      "constraint": "^7.0.0"
+    },
+    {
+      "from": "wrap-ansi",
+      "to": "strip-ansi",
+      "constraint": "^7.1.0"
     }
   ]
 }

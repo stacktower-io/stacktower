@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/matzehuels/stacktower/pkg/cache"
@@ -22,27 +23,32 @@ type Client struct {
 	baseURL string
 }
 
-// NewClient creates a GitHub API client with optional authentication.
+// NewClient creates a GitHub API client with optional authentication and proactive rate limiting.
 //
 // Parameters:
 //   - backend: Cache backend for HTTP response caching (use storage.NullBackend{} for no caching)
 //   - token: GitHub personal access token (empty string for unauthenticated)
 //   - cacheTTL: How long responses are cached (typical: 1-24 hours)
 //
-// Rate limits:
-//   - Unauthenticated: 60 requests/hour per IP
-//   - Authenticated: 5,000 requests/hour per token
+// Rate limits are configured via integrations.DefaultRateLimits:
+//   - Unauthenticated ("github_unauth"): 60 requests/hour per IP (~0.016 req/s)
+//   - Authenticated ("github"): 5,000 requests/hour per token (~1.4 req/s)
 //
 // Authentication is strongly recommended for production use to avoid rate limiting.
 // The returned Client is safe for concurrent use.
 func NewClient(backend cache.Cache, token string, cacheTTL time.Duration) *Client {
 	headers := map[string]string{"Accept": "application/vnd.github.v3+json"}
+
+	var rl integrations.RateLimit
 	if token != "" {
 		headers["Authorization"] = "Bearer " + token
+		rl = integrations.DefaultRateLimits["github"]
+	} else {
+		rl = integrations.DefaultRateLimits["github_unauth"]
 	}
 
 	return &Client{
-		Client:  integrations.NewClient(backend, "github:", cacheTTL, headers),
+		Client:  integrations.NewClientWithRateLimit(backend, "github:", cacheTTL, headers, rl.RequestsPerSecond, rl.Burst),
 		baseURL: "https://api.github.com",
 	}
 }
@@ -95,7 +101,7 @@ func (c *Client) fetchMetrics(ctx context.Context, owner, repo string, m *integr
 		Description: data.Description,
 		Stars:       data.Stars,
 		SizeKB:      data.Size,
-		License:     data.License.SPDXID,
+		License:     normalizeLicense(data.License.SPDXID),
 		Language:    data.Language,
 		Topics:      data.Topics,
 		Archived:    data.Archived,
@@ -103,12 +109,24 @@ func (c *Client) fetchMetrics(ctx context.Context, owner, repo string, m *integr
 	if data.PushedAt != nil {
 		m.LastCommitAt = data.PushedAt
 	}
-	if rel, err := c.fetchRelease(ctx, owner, repo); err == nil {
-		m.LastReleaseAt = &rel.PublishedAt
-	}
-	if contribs, err := c.fetchContributors(ctx, owner, repo); err == nil {
-		m.Contributors = contribs
-	}
+
+	// Fetch release and contributors in parallel (both are optional/best-effort)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if rel, err := c.fetchRelease(ctx, owner, repo); err == nil {
+			m.LastReleaseAt = &rel.PublishedAt
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if contribs, err := c.fetchContributors(ctx, owner, repo); err == nil {
+			m.Contributors = contribs
+		}
+	}()
+	wg.Wait()
+
 	return nil
 }
 
@@ -150,48 +168,6 @@ func (c *Client) fetchContributors(ctx context.Context, owner, repo string) ([]i
 		}
 	}
 	return result, nil
-}
-
-// SearchPackageRepo searches GitHub code for a manifest file containing a package name.
-//
-// This is useful for finding repository URLs when package metadata doesn't include them.
-//
-// Parameters:
-//   - pkgName: Package name to search for (exact match in manifest file)
-//   - manifestFile: Manifest filename to search in (e.g., "package.json", "Gemfile")
-//
-// Example:
-//
-//	owner, repo, ok := client.SearchPackageRepo(ctx, "fastapi", "pyproject.toml")
-//
-// Returns:
-//   - owner: Repository owner username (empty if not found)
-//   - repo: Repository name (empty if not found)
-//   - ok: true if a match was found, false otherwise
-//
-// Search results are always cached (refresh=false) to conserve GitHub API quota.
-// This method is safe for concurrent use.
-func (c *Client) SearchPackageRepo(ctx context.Context, pkgName, manifestFile string) (owner, repo string, ok bool) {
-	key := fmt.Sprintf("search:%s:%s", manifestFile, pkgName)
-
-	var result searchResult
-	_ = c.Cached(ctx, key, false, &result, func() error {
-		result.Owner, result.Repo, result.Found = c.doSearch(ctx, pkgName, manifestFile)
-		return nil
-	})
-	return result.Owner, result.Repo, result.Found
-}
-
-func (c *Client) doSearch(ctx context.Context, pkgName, manifestFile string) (owner, repo string, ok bool) {
-	query := fmt.Sprintf(`name = "%s" filename:%s`, pkgName, manifestFile)
-	url := fmt.Sprintf("%s/search/code?q=%s&per_page=1", c.baseURL, integrations.URLEncode(query))
-
-	var data searchResponse
-	if err := c.Get(ctx, url, &data); err != nil || len(data.Items) == 0 {
-		return "", "", false
-	}
-	item := data.Items[0]
-	return item.Repository.Owner.Login, item.Repository.Name, true
 }
 
 // ExtractURL extracts GitHub repository owner and name from package URLs.
@@ -236,19 +212,17 @@ type contributorResponse struct {
 	Type          string `json:"type"`
 }
 
-type searchResponse struct {
-	Items []struct {
-		Repository struct {
-			Name  string `json:"name"`
-			Owner struct {
-				Login string `json:"login"`
-			} `json:"owner"`
-		} `json:"repository"`
-	} `json:"items"`
-}
-
-type searchResult struct {
-	Owner string `json:"owner"`
-	Repo  string `json:"repo"`
-	Found bool   `json:"found"`
+// normalizeLicense filters out meaningless license values from the GitHub API.
+// GitHub returns "NOASSERTION" when it can't detect the license from the LICENSE file,
+// which would incorrectly overwrite valid license data from package registries.
+func normalizeLicense(spdxID string) string {
+	switch spdxID {
+	case "NOASSERTION", "OTHER", "":
+		// NOASSERTION = GitHub couldn't determine the license
+		// OTHER = Detected but not a standard SPDX license
+		// Empty = No license info
+		return ""
+	default:
+		return spdxID
+	}
 }

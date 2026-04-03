@@ -103,6 +103,63 @@ func TestNewClient(t *testing.T) {
 	}
 }
 
+func TestNormalizeLicense(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"MIT", "MIT"},
+		{"Apache-2.0", "Apache-2.0"},
+		{"PSF-2.0", "PSF-2.0"},
+		{"NOASSERTION", ""}, // GitHub can't determine license
+		{"OTHER", ""},       // Non-standard license detected
+		{"", ""},            // No license info
+	}
+
+	for _, tt := range tests {
+		got := normalizeLicense(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizeLicense(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestClient_Fetch_NOASSERTION(t *testing.T) {
+	// Test that NOASSERTION license is normalized to empty string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/repos/python/typing_extensions":
+			json.NewEncoder(w).Encode(repoResponse{
+				Stars: 550,
+				License: struct {
+					SPDXID string `json:"spdx_id"`
+				}{SPDXID: "NOASSERTION"},
+			})
+		case "/repos/python/typing_extensions/releases/latest":
+			w.WriteHeader(http.StatusNotFound)
+		case "/repos/python/typing_extensions/contributors":
+			json.NewEncoder(w).Encode([]contributorResponse{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	c := testClient(t, server.URL, "")
+
+	metrics, err := c.Fetch(context.Background(), "python", "typing_extensions", true)
+	if err != nil {
+		t.Fatalf("fetch failed: %v", err)
+	}
+
+	// NOASSERTION should be normalized to empty string
+	if metrics.License != "" {
+		t.Errorf("expected empty license for NOASSERTION, got %q", metrics.License)
+	}
+}
+
 func testClient(t *testing.T, serverURL, token string) *Client {
 	t.Helper()
 	headers := map[string]string{"Accept": "application/vnd.github.v3+json"}

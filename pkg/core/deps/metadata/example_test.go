@@ -18,13 +18,13 @@ func ExampleNewGitHub() {
 	provider := metadata.NewGitHub(cache.NewNullCache(), token, 24*time.Hour)
 
 	// Use with resolver options
-	resolver, _ := python.Language.Resolver(cache.NewNullCache())
 	opts := deps.Options{
 		MetadataProviders: []deps.MetadataProvider{provider},
 		MaxDepth:          5,
 		MaxNodes:          100,
 	}
 
+	resolver, _ := python.Language.Resolver(cache.NewNullCache(), opts)
 	ctx := context.Background()
 	g, err := resolver.Resolve(ctx, "requests", opts)
 	if err != nil {
@@ -74,13 +74,13 @@ func ExampleNewComposite() {
 	composite := metadata.NewComposite(github)
 
 	// Use in resolver options
-	resolver, _ := python.Language.Resolver(cache.NewNullCache())
 	opts := deps.Options{
 		MetadataProviders: []deps.MetadataProvider{composite},
 		MaxDepth:          3,
 		MaxNodes:          50,
 	}
 
+	resolver, _ := python.Language.Resolver(cache.NewNullCache(), opts)
 	ctx := context.Background()
 	g, err := resolver.Resolve(ctx, "flask", opts)
 	if err != nil {

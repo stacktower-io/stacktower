@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/matzehuels/stacktower/pkg/observability"
 )
 
 // Sentinel errors for caching operations.
@@ -14,12 +16,20 @@ var (
 	// ErrNetwork is returned for HTTP failures (timeouts, connection errors, 5xx responses).
 	ErrNetwork = errors.New("network error")
 
+	// ErrUnauthorized is returned when authentication fails (HTTP 401/403).
+	// This typically means the API token is invalid, expired, or revoked.
+	ErrUnauthorized = errors.New("unauthorized")
+
 	// ErrCacheMiss is returned when an item is not found in cache.
 	ErrCacheMiss = errors.New("cache miss")
 )
 
 // RetryableError wraps an error to indicate it should trigger a retry.
 type RetryableError struct{ Err error }
+
+type retryAfterProvider interface {
+	RetryAfterSeconds() int
+}
 
 // Retryable wraps an error as a RetryableError.
 func Retryable(err error) error {
@@ -44,8 +54,14 @@ func IsRetryable(err error) bool {
 // RetryWithBackoff retries fn up to 3 times with exponential backoff.
 // Only errors wrapped with Retryable will trigger retries.
 func RetryWithBackoff(ctx context.Context, fn func() error) error {
+	return RetryWithBackoffRegistry(ctx, "", fn)
+}
+
+// RetryWithBackoffRegistry retries fn up to 3 times with exponential backoff,
+// emitting observability hooks with the registry name for each retry.
+func RetryWithBackoffRegistry(ctx context.Context, registry string, fn func() error) error {
 	const attempts = 3
-	delay := time.Second
+	baseDelay := time.Second
 	var lastErr error
 
 	for i := 0; i < attempts; i++ {
@@ -56,13 +72,26 @@ func RetryWithBackoff(ctx context.Context, fn func() error) error {
 		}
 
 		if i < attempts-1 {
+			delay := baseDelay
+			if retryAfter, ok := retryAfterFromError(lastErr); ok && retryAfter > 0 {
+				delay = time.Duration(retryAfter) * time.Second
+			}
+			observability.RateLimit().OnRetry(ctx, registry, i+1, delay)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-time.After(delay):
-				delay *= 2
+				baseDelay *= 2
 			}
 		}
 	}
 	return lastErr
+}
+
+func retryAfterFromError(err error) (int, bool) {
+	var p retryAfterProvider
+	if errors.As(err, &p) {
+		return p.RetryAfterSeconds(), true
+	}
+	return 0, false
 }

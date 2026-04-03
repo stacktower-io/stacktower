@@ -83,8 +83,16 @@ func TestFetchPackage_Success(t *testing.T) {
 	if info.HomePage != "https://example.com" {
 		t.Errorf("unexpected homepage: %s", info.HomePage)
 	}
-	if len(info.Dependencies) != 1 || info.Dependencies[0] != "vendor/dep" {
-		t.Errorf("unexpected dependencies: %#v", info.Dependencies)
+	if len(info.Dependencies) != 1 {
+		t.Errorf("expected 1 dependency, got %d: %#v", len(info.Dependencies), info.Dependencies)
+	}
+	if len(info.Dependencies) > 0 {
+		if info.Dependencies[0].Name != "vendor/dep" {
+			t.Errorf("expected vendor/dep, got %s", info.Dependencies[0].Name)
+		}
+		if info.Dependencies[0].Constraint != "^0.9.0" {
+			t.Errorf("expected constraint ^0.9.0, got %s", info.Dependencies[0].Constraint)
+		}
 	}
 }
 
@@ -96,6 +104,74 @@ func TestFetchPackage_NotFound(t *testing.T) {
 
 	if _, err := c.FetchPackage(context.Background(), "missing/pkg", true); err == nil {
 		t.Fatalf("expected error for 404, got nil")
+	}
+}
+
+func TestFetchPackageVersion_Success(t *testing.T) {
+	payload := p2Response{Packages: map[string][]p2Version{
+		"vendor/package": {
+			{
+				Name:    "vendor/package",
+				Version: "1.2.4",
+				Require: map[string]string{"php": "^8.2", "vendor/dep": "^2.0"},
+			},
+			{
+				Name:    "vendor/package",
+				Version: "1.2.3",
+				Require: map[string]string{"php": "^8.1", "vendor/dep": "^1.0"},
+			},
+		},
+	}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/p2/vendor/package.json" {
+			_ = json.NewEncoder(w).Encode(payload)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := testClient(t, server.URL)
+
+	info, err := c.FetchPackageVersion(context.Background(), "vendor/package", "1.2.3", true)
+	if err != nil {
+		t.Fatalf("FetchPackageVersion error: %v", err)
+	}
+	if info.Version != "1.2.3" {
+		t.Fatalf("expected version 1.2.3, got %s", info.Version)
+	}
+	if info.RequiredPHP != "^8.1" {
+		t.Fatalf("expected RequiredPHP ^8.1, got %s", info.RequiredPHP)
+	}
+}
+
+func TestListVersionsWithConstraints(t *testing.T) {
+	payload := fullPackageResponse{}
+	payload.Package.Versions = map[string]fullVersion{
+		"1.2.4": {Require: map[string]string{"php": "^8.2", "vendor/dep": "^2.0"}},
+		"1.2.3": {Require: map[string]string{"php": "^8.1", "vendor/dep": "^1.0"}},
+		"1.0.0": {Require: map[string]string{"vendor/dep": "^1.0"}},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/packages/vendor/package.json" {
+			_ = json.NewEncoder(w).Encode(payload)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := testClient(t, server.URL)
+
+	got, err := c.ListVersionsWithConstraints(context.Background(), "vendor/package", true)
+	if err != nil {
+		t.Fatalf("ListVersionsWithConstraints error: %v", err)
+	}
+	if got["1.2.4"] != "^8.2" {
+		t.Fatalf("expected ^8.2 for 1.2.4, got %q", got["1.2.4"])
+	}
+	if got["1.0.0"] != "" {
+		t.Fatalf("expected empty php constraint for 1.0.0, got %q", got["1.0.0"])
 	}
 }
 
@@ -133,25 +209,32 @@ func TestFilterDeps(t *testing.T) {
 		"noslash":              "*",
 	}
 	got := filterDeps(in)
-	if _, ok := got["vendor/dep1"]; !ok {
+
+	// Convert to a map for easy lookup
+	gotMap := make(map[string]string)
+	for _, d := range got {
+		gotMap[d.Name] = d.Constraint
+	}
+
+	if _, ok := gotMap["vendor/dep1"]; !ok {
 		t.Errorf("missing vendor/dep1 in %v", got)
 	}
-	if _, ok := got["vendor/dep2"]; !ok {
+	if _, ok := gotMap["vendor/dep2"]; !ok {
 		t.Errorf("missing vendor/dep2 in %v", got)
 	}
-	if _, ok := got["php"]; ok {
+	if _, ok := gotMap["php"]; ok {
 		t.Errorf("php should be filtered out")
 	}
-	if _, ok := got["ext-json"]; ok {
+	if _, ok := gotMap["ext-json"]; ok {
 		t.Errorf("ext-json should be filtered out")
 	}
-	if _, ok := got["lib-icu"]; ok {
+	if _, ok := gotMap["lib-icu"]; ok {
 		t.Errorf("lib-icu should be filtered out")
 	}
-	if _, ok := got["composer-plugin-api"]; ok {
+	if _, ok := gotMap["composer-plugin-api"]; ok {
 		t.Errorf("composer-plugin-api should be filtered out")
 	}
-	if _, ok := got["composer-runtime-api"]; ok {
+	if _, ok := gotMap["composer-runtime-api"]; ok {
 		t.Errorf("composer-runtime-api should be filtered out")
 	}
 }
@@ -197,10 +280,28 @@ func TestP2Version_UnmarshalJSON(t *testing.T) {
 	}
 }
 
+func TestComposerVersionsEquivalent(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{"2.0", "2.0.0", true},
+		{"v1.1", "1.1.0", true},
+		{"1.0.1", "1.0.0", false},
+		{"1.2.3", "1.2.3", true},
+	}
+	for _, tt := range tests {
+		if got := composerVersionsEquivalent(tt.a, tt.b); got != tt.want {
+			t.Fatalf("composerVersionsEquivalent(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
 func testClient(t *testing.T, serverURL string) *Client {
 	t.Helper()
 	return &Client{
-		Client:  integrations.NewClient(cache.NewNullCache(), "packagist:", time.Hour, nil),
-		baseURL: serverURL,
+		Client:      integrations.NewClient(cache.NewNullCache(), "packagist:", time.Hour, nil),
+		baseURL:     serverURL,
+		registryURL: serverURL,
 	}
 }

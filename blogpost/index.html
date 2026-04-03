@@ -944,78 +944,10 @@
 
                     <p>Not bad for a project that started with an XKCD joke!</p>
 
-                    <h3>Separation of Concerns</h3>
-
-                    <p>With the algorithm solved, everything else became trivial. The core outputs one thing: an ordered
-                        list of nodes per layer. No pixels, no styling. Just the abstract layout.</p>
-
-                    <p>The rendering layer handles the rest independently: flow-based width allocation (wider blocks
-                        support more structure), positioning, and visual styling. I implemented two styles (clean and
-                        hand-drawn) without touching the algorithm. The hard problem stayed separate from the easy one.
-                    </p>
-
-                    <h3>Building the Product</h3>
-
-                    <p>To make this work with actual projects, I built parsers for a growing list of package ecosystems:
-                        <a href="https://pypi.org" target="_blank" rel="noopener">PyPI</a> (Python), <a
-                            href="https://crates.io" target="_blank" rel="noopener">crates.io</a> (Rust), <a
-                            href="https://www.npmjs.com" target="_blank" rel="noopener">npm</a> (Node.js), <a
-                            href="https://pkg.go.dev" target="_blank" rel="noopener">Go modules</a>, and more. Each
-                        parser
-                        hits the registry API, recursively walks the dependency tree, and builds the DAG. The tool also
-                        supports parsing private GitHub repositories directly, so you can visualize your own proprietary
-                        stacks.
-                    </p>
-
-                    <p>GitHub OAuth integration lets you authenticate and fetch metadata for each package: repository
-                        owner, maintainer list, and contributor counts. This enriches the visualization with real-world
-                        context about who actually maintains these packages, including your private dependencies.</p>
-
-                    <p>As the icing on the cake, I vibe-coded an <a href="https://app.stacktower.io" target="_blank"
-                            rel="noopener">interactive web application</a> that wraps the same functionality from the
-                        CLI into a slick webapp with GitHub authentication. No terminal required, just log in and start
-                        rendering towers.</p>
-
-                    <h3>The Nebraska Guy Ranking</h3>
-
-                    <p>Remember the XKCD comic about the random developer in Nebraska holding up a critical piece of
-                        internet infrastructure? I wanted to surface that in the visualization. The Nebraska ranking
-                        algorithm scans the dependency graph and scores each maintainer based on:</p>
-
-                    <ul>
-                        <li><strong>Depth:</strong> Packages deeper in the tower (more dependencies above them) score
-                            higher. They're foundational.</li>
-                        <li><strong>Role weight:</strong> Owners get 3x weight, leads get 1.5x, regular maintainers get
-                            1x.</li>
-                        <li><strong>Shared credit:</strong> If a package has multiple maintainers, the depth score is
-                            divided among them.</li>
-                    </ul>
-
-                    <p>The algorithm walks every node, calculates its depth from the root, divides that by the number of
-                        maintainers, and accumulates weighted scores. The result: a ranked list of the people whose
-                        packages quietly support the entire tower. The Nebraska guy for your stack.</p>
-
-                    <h3>Implementing in Go</h3>
-
-                    <p>I started prototyping this in Python, my usual go-to for <em>"let's just see if this works"</em>
-                        projects. But as soon as I understood the scale of the problem (factorial search spaces,
-                        millions of layout evaluations), I realized I needed something faster. Much faster.</p>
-
-                    <p>I'd been writing Go at work lately and was looking for a side project to sharpen my skills. This
-                        seemed like the perfect excuse. Go hits a sweet spot: it's fast enough for tight algorithmic
-                        loops, but you're not fighting a borrow checker or managing memory manually. You just write code
-                        and it runs.</p>
-
-                    <p>Spoiler: it was absolutely the right call. The performance difference over Python was staggering:
-                        orders of magnitude faster for crossing detection and layout evaluation. Go's goroutines made
-                        parallelizing the search trivial. And the simplicity of the language meant I spent my time on
-                        the actual problem.</p>
-
                     <h3>The Result</h3>
 
-                    <p>After iterating on algorithms, parsers, and rendering pipelines, the pieces finally came
-                        together. The search algorithm finds clean orderings, the metadata enrichment surfaces the
-                        maintainers, and the visual styles bring it all to life.</p>
+                    <p>After iterating on algorithms, parsers, and rendering logic, the pieces finally came
+                        together. The search algorithm finds clean orderings, and the visual style brings it all to life.</p>
 
                     <p>And honestly? I'm pretty damn happy with how it turned out. Here's what it looks like in action
                         for <a href="https://fastapi.tiangolo.com" target="_blank" rel="noopener">FastAPI</a>, a popular

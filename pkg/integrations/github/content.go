@@ -7,10 +7,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	// defaultTimeout is the HTTP client timeout for GitHub API requests.
+	defaultTimeout = 30 * time.Second
+
+	// maxPages is the maximum number of pages to fetch for paginated endpoints.
+	// With 100 items per page, this caps results at 1000 items.
+	maxPages = 10
+
+	// maxConcurrentScans is the maximum concurrent goroutines for scanning repos.
+	maxConcurrentScans = 10
 )
 
 // ContentClient provides access to GitHub repository content.
@@ -21,11 +34,36 @@ type ContentClient struct {
 	baseURL    string
 }
 
+// apiError builds a human-readable error from a GitHub API error response.
+// It extracts the "message" field from the JSON body when available,
+// and maps common status codes to friendly descriptions.
+func apiError(resp *http.Response) error {
+	body, _ := io.ReadAll(resp.Body)
+
+	var parsed struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &parsed) == nil && parsed.Message != "" {
+		return fmt.Errorf("GitHub API: %s (HTTP %d)", parsed.Message, resp.StatusCode)
+	}
+
+	switch resp.StatusCode {
+	case http.StatusUnauthorized:
+		return fmt.Errorf("GitHub API: bad credentials — run 'stacktower github login' to re-authenticate (HTTP 401)")
+	case http.StatusForbidden:
+		return fmt.Errorf("GitHub API: forbidden — token may lack required scopes (HTTP 403)")
+	case http.StatusNotFound:
+		return fmt.Errorf("GitHub API: not found (HTTP 404)")
+	default:
+		return fmt.Errorf("GitHub API error (HTTP %d)", resp.StatusCode)
+	}
+}
+
 // NewContentClient creates a new content client with the given access token.
 func NewContentClient(token string) *ContentClient {
 	return &ContentClient{
 		token:      token,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: defaultTimeout},
 		baseURL:    "https://api.github.com",
 	}
 }
@@ -45,8 +83,7 @@ func (c *ContentClient) FetchUser(ctx context.Context) (*User, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitHub API error (%d): %s", resp.StatusCode, string(body))
+		return nil, apiError(resp)
 	}
 
 	var user User
@@ -54,7 +91,108 @@ func (c *ContentClient) FetchUser(ctx context.Context) (*User, error) {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
+	// If the user has no public email, try to fetch their primary verified email
+	// via GET /user/emails (requires the user:email scope).
+	if user.Email == "" {
+		if email, err := c.fetchPrimaryEmail(ctx); err == nil && email != "" {
+			user.Email = email
+		}
+	}
+
 	return &user, nil
+}
+
+// fetchPrimaryEmail retrieves the user's primary verified email address.
+// GitHub only exposes emails through GET /user/emails, not through GET /user
+// (which only returns the email if the user has set it as public).
+func (c *ContentClient) fetchPrimaryEmail(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/user/emails", nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", apiError(resp)
+	}
+
+	var emails []struct {
+		Email    string `json:"email"`
+		Primary  bool   `json:"primary"`
+		Verified bool   `json:"verified"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&emails); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+
+	// Return the primary verified email
+	for _, e := range emails {
+		if e.Primary && e.Verified {
+			return e.Email, nil
+		}
+	}
+	// Fall back to any verified email
+	for _, e := range emails {
+		if e.Verified {
+			return e.Email, nil
+		}
+	}
+
+	return "", nil
+}
+
+// FetchUserOrgs retrieves the authenticated user's active GitHub organization memberships.
+// Returns only orgs where the membership state is "active" (ignores pending invitations).
+// Each result includes the user's role in the org ("admin" or "member").
+func (c *ContentClient) FetchUserOrgs(ctx context.Context) ([]OrgMembership, error) {
+	var all []OrgMembership
+	page := 1
+
+	for {
+		url := fmt.Sprintf("%s/user/memberships/orgs?state=active&per_page=100&page=%d", c.baseURL, page)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		c.setHeaders(req)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("send request: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			err := apiError(resp)
+			resp.Body.Close()
+			return nil, err
+		}
+
+		var memberships []OrgMembership
+		if err := json.NewDecoder(resp.Body).Decode(&memberships); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("decode response: %w", err)
+		}
+		resp.Body.Close()
+
+		if len(memberships) == 0 {
+			break
+		}
+
+		all = append(all, memberships...)
+		page++
+
+		if page > maxPages {
+			break // Safety limit
+		}
+	}
+
+	return all, nil
 }
 
 // FetchUserRepos retrieves all of the authenticated user's repositories.
@@ -78,9 +216,9 @@ func (c *ContentClient) FetchUserRepos(ctx context.Context) ([]Repo, error) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			err := apiError(resp)
 			resp.Body.Close()
-			return nil, fmt.Errorf("GitHub API error (%d): %s", resp.StatusCode, string(body))
+			return nil, err
 		}
 
 		var repos []Repo
@@ -98,7 +236,7 @@ func (c *ContentClient) FetchUserRepos(ctx context.Context) ([]Repo, error) {
 		page++
 
 		// Safety limit to avoid infinite loops
-		if page > 10 {
+		if page > maxPages {
 			break
 		}
 	}
@@ -107,8 +245,12 @@ func (c *ContentClient) FetchUserRepos(ctx context.Context) ([]Repo, error) {
 }
 
 // ListContents lists files and directories in a repository path.
-func (c *ContentClient) ListContents(ctx context.Context, owner, repo, path string) ([]ContentItem, error) {
+// If ref is non-empty, it specifies a branch, tag, or commit SHA.
+func (c *ContentClient) ListContents(ctx context.Context, owner, repo, path, ref string) ([]ContentItem, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s", c.baseURL, owner, repo, path)
+	if ref != "" {
+		url += "?ref=" + ref
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -122,8 +264,7 @@ func (c *ContentClient) ListContents(ctx context.Context, owner, repo, path stri
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitHub API error (%d): %s", resp.StatusCode, string(body))
+		return nil, apiError(resp)
 	}
 
 	var items []apiContentResponse
@@ -146,8 +287,12 @@ func (c *ContentClient) ListContents(ctx context.Context, owner, repo, path stri
 
 // FetchFile retrieves the content of a file from a repository.
 // The content is returned as a string (decoded from base64).
-func (c *ContentClient) FetchFile(ctx context.Context, owner, repo, path string) (*FileContent, error) {
+// If ref is non-empty, it specifies a branch, tag, or commit SHA.
+func (c *ContentClient) FetchFile(ctx context.Context, owner, repo, path, ref string) (*FileContent, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s", c.baseURL, owner, repo, path)
+	if ref != "" {
+		url += "?ref=" + ref
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -161,8 +306,7 @@ func (c *ContentClient) FetchFile(ctx context.Context, owner, repo, path string)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitHub API error (%d): %s", resp.StatusCode, string(body))
+		return nil, apiError(resp)
 	}
 
 	var fileResp apiContentResponse
@@ -185,8 +329,12 @@ func (c *ContentClient) FetchFile(ctx context.Context, owner, repo, path string)
 
 // FetchFileRaw retrieves the raw content of a file from a repository.
 // This is more efficient for large files as it doesn't use base64 encoding.
-func (c *ContentClient) FetchFileRaw(ctx context.Context, owner, repo, path string) (string, error) {
+// If ref is non-empty, it specifies a branch, tag, or commit SHA.
+func (c *ContentClient) FetchFileRaw(ctx context.Context, owner, repo, path, ref string) (string, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s", c.baseURL, owner, repo, path)
+	if ref != "" {
+		url += "?ref=" + ref
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
@@ -201,8 +349,7 @@ func (c *ContentClient) FetchFileRaw(ctx context.Context, owner, repo, path stri
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("GitHub API error (%d): %s", resp.StatusCode, string(body))
+		return "", apiError(resp)
 	}
 
 	content, err := io.ReadAll(resp.Body)
@@ -216,8 +363,9 @@ func (c *ContentClient) FetchFileRaw(ctx context.Context, owner, repo, path stri
 // DetectManifests finds manifest files in a repository's root directory.
 // The patterns map filename -> language name (e.g., "go.mod" -> "go").
 // Use deps.SupportedManifests(languages) to get patterns from the deps package.
-func (c *ContentClient) DetectManifests(ctx context.Context, owner, repo string, patterns map[string]string) ([]ManifestFile, error) {
-	items, err := c.ListContents(ctx, owner, repo, "")
+// If ref is non-empty, it specifies a branch, tag, or commit SHA.
+func (c *ContentClient) DetectManifests(ctx context.Context, owner, repo, ref string, patterns map[string]string) ([]ManifestFile, error) {
+	items, err := c.ListContents(ctx, owner, repo, "", ref)
 	if err != nil {
 		return nil, err
 	}
@@ -266,8 +414,7 @@ func (c *ContentClient) SearchCode(ctx context.Context, owner, repo, query strin
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitHub API error (%d): %s", resp.StatusCode, string(body))
+		return nil, apiError(resp)
 	}
 
 	var searchResp codeSearchResponse
@@ -310,8 +457,7 @@ func (c *ContentClient) GetTree(ctx context.Context, owner, repo, branch string)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitHub API error (%d): %s", resp.StatusCode, string(body))
+		return nil, apiError(resp)
 	}
 
 	var treeResp treeResponse
@@ -348,8 +494,7 @@ func (c *ContentClient) GetRepoInfo(ctx context.Context, owner, repo string) (*R
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitHub API error (%d): %s", resp.StatusCode, string(body))
+		return nil, apiError(resp)
 	}
 
 	var repoResp apiRepoResponse
@@ -366,20 +511,274 @@ func (c *ContentClient) GetRepoInfo(ctx context.Context, owner, repo string) (*R
 		Stars:         repoResp.Stars,
 		Forks:         repoResp.Forks,
 		OpenIssues:    repoResp.OpenIssues,
-		License:       repoResp.License.SPDXID,
+		License:       normalizeLicense(repoResp.License.SPDXID),
 		Topics:        repoResp.Topics,
 		Archived:      repoResp.Archived,
+		Private:       repoResp.Private,
 	}, nil
 }
 
+// ListBranches retrieves branches for a repository.
+// Results are capped at maxPages * 100 items; large repos may be truncated.
+func (c *ContentClient) ListBranches(ctx context.Context, owner, repo string) ([]Branch, error) {
+	var allBranches []Branch
+	page := 1
+
+	for {
+		url := fmt.Sprintf("%s/repos/%s/%s/branches?per_page=100&page=%d", c.baseURL, owner, repo, page)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		c.setHeaders(req)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("send request: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			err := apiError(resp)
+			resp.Body.Close()
+			return nil, err
+		}
+
+		var branches []apiBranchResponse
+		if err := json.NewDecoder(resp.Body).Decode(&branches); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("decode response: %w", err)
+		}
+		resp.Body.Close()
+
+		if len(branches) == 0 {
+			break
+		}
+
+		for _, b := range branches {
+			allBranches = append(allBranches, Branch{
+				Name:      b.Name,
+				Commit:    b.Commit.SHA,
+				Protected: b.Protected,
+			})
+		}
+
+		page++
+		if page > maxPages {
+			break // Safety limit
+		}
+	}
+
+	return allBranches, nil
+}
+
+// ListTags retrieves tags for a repository.
+// Results are capped at maxPages * 100 items; large repos may be truncated.
+func (c *ContentClient) ListTags(ctx context.Context, owner, repo string) ([]Tag, error) {
+	var allTags []Tag
+	page := 1
+
+	for {
+		url := fmt.Sprintf("%s/repos/%s/%s/tags?per_page=100&page=%d", c.baseURL, owner, repo, page)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		c.setHeaders(req)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("send request: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			err := apiError(resp)
+			resp.Body.Close()
+			return nil, err
+		}
+
+		var tags []apiTagResponse
+		if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("decode response: %w", err)
+		}
+		resp.Body.Close()
+
+		if len(tags) == 0 {
+			break
+		}
+
+		for _, t := range tags {
+			allTags = append(allTags, Tag{
+				Name:   t.Name,
+				Commit: t.Commit.SHA,
+			})
+		}
+
+		page++
+		if page > maxPages {
+			break // Safety limit
+		}
+	}
+
+	return allTags, nil
+}
+
+// ResolveVersionToRef finds the git ref that best matches a package version.
+// It tries common tag patterns: bare version ("3.1.2"), "v"-prefixed ("v3.1.2"),
+// and repo-prefixed variants ("flask-3.1.2", "flask_3.1.2").
+// Falls back to the repository's default branch if no tag matches.
+//
+// This is useful for mapping a package version (from PyPI, npm, etc.) to the
+// corresponding git ref for source code analysis.
+//
+// Parameters:
+//   - owner: Repository owner (e.g., "pallets")
+//   - repo: Repository name (e.g., "flask")
+//   - version: Package version to match (e.g., "3.1.2")
+//
+// Returns the matching tag name, or the default branch if no tag matches.
+func (c *ContentClient) ResolveVersionToRef(ctx context.Context, owner, repo, version string) (string, error) {
+	tags, err := c.ListTags(ctx, owner, repo)
+	if err != nil {
+		return "", fmt.Errorf("list tags: %w", err)
+	}
+
+	if version != "" {
+		// Build tag set for fast lookup
+		tagSet := make(map[string]bool, len(tags))
+		for _, t := range tags {
+			tagSet[t.Name] = true
+		}
+
+		// Try common tag patterns in preference order
+		repoLower := strings.ToLower(repo)
+		candidates := []string{
+			version,
+			"v" + version,
+			repoLower + "-" + version,
+			repoLower + "_" + version,
+			repoLower + "/v" + version,
+		}
+
+		for _, c := range candidates {
+			if tagSet[c] {
+				return c, nil
+			}
+		}
+	}
+
+	// No matching tag found — fall back to default branch
+	info, err := c.GetRepoInfo(ctx, owner, repo)
+	if err != nil {
+		return "main", nil // best-effort fallback
+	}
+	if info.DefaultBranch != "" {
+		return info.DefaultBranch, nil
+	}
+	return "main", nil
+}
+
+// GetReadme retrieves the README file for a repository.
+// If ref is non-empty, it specifies a branch, tag, or commit SHA.
+// Returns nil, nil if no README is found.
+func (c *ContentClient) GetReadme(ctx context.Context, owner, repo, ref string) (*FileContent, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/readme", c.baseURL, owner, repo)
+	if ref != "" {
+		url += "?ref=" + ref
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 404 means no README found - not an error
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, apiError(resp)
+	}
+
+	var readmeResp apiContentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&readmeResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	// Decode base64 content
+	content, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(readmeResp.Content, "\n", ""))
+	if err != nil {
+		return nil, fmt.Errorf("decode content: %w", err)
+	}
+
+	return &FileContent{
+		Path:    readmeResp.Path,
+		Size:    readmeResp.Size,
+		Content: string(content),
+	}, nil
+}
+
+// DetectManifestsRecursive finds all manifest files in a repository using the Git tree API.
+// This is useful for monorepos with nested manifest files.
+// The patterns map filename -> language name (e.g., "go.mod" -> "go").
+// If ref is non-empty, it specifies a branch, tag, or commit SHA.
+func (c *ContentClient) DetectManifestsRecursive(ctx context.Context, owner, repo, ref string, patterns map[string]string) ([]ManifestFile, error) {
+	if ref == "" {
+		ref = "HEAD"
+	}
+
+	entries, err := c.GetTree(ctx, owner, repo, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var manifests []ManifestFile
+	for _, entry := range entries {
+		if entry.Type != "blob" {
+			continue // Skip directories
+		}
+
+		// Extract filename from path
+		name := entry.Path
+		if idx := strings.LastIndex(entry.Path, "/"); idx >= 0 {
+			name = entry.Path[idx+1:]
+		}
+
+		if lang, ok := patterns[name]; ok {
+			manifests = append(manifests, ManifestFile{
+				Path:     entry.Path,
+				Language: lang,
+				Name:     name,
+			})
+		}
+	}
+
+	return manifests, nil
+}
+
 func urlEncode(s string) string {
-	// Simple URL encoding for search queries
-	replacer := strings.NewReplacer(
-		" ", "+",
-		":", "%3A",
-		"/", "%2F",
-	)
-	return replacer.Replace(s)
+	return url.QueryEscape(s)
+}
+
+// Branch represents a Git branch in a repository.
+type Branch struct {
+	Name      string `json:"name"`
+	Commit    string `json:"commit"` // SHA of the branch HEAD
+	Protected bool   `json:"protected"`
+}
+
+// Tag represents a Git tag in a repository.
+type Tag struct {
+	Name   string `json:"name"`
+	Commit string `json:"commit"` // SHA of the tagged commit
 }
 
 // CodeSearchResult represents a code search match.
@@ -409,6 +808,7 @@ type RepoInfo struct {
 	License       string   `json:"license"`
 	Topics        []string `json:"topics"`
 	Archived      bool     `json:"archived"`
+	Private       bool     `json:"private"`
 }
 
 type codeSearchResponse struct {
@@ -429,6 +829,21 @@ type treeResponse struct {
 		Size int    `json:"size"`
 	} `json:"tree"`
 	Truncated bool `json:"truncated"`
+}
+
+type apiBranchResponse struct {
+	Name   string `json:"name"`
+	Commit struct {
+		SHA string `json:"sha"`
+	} `json:"commit"`
+	Protected bool `json:"protected"`
+}
+
+type apiTagResponse struct {
+	Name   string `json:"name"`
+	Commit struct {
+		SHA string `json:"sha"`
+	} `json:"commit"`
 }
 
 // DetectLanguageFromManifest determines the language from a manifest filename.
@@ -499,7 +914,7 @@ func (c *ContentClient) ScanReposForManifests(ctx context.Context, manifestPatte
 	var wg sync.WaitGroup
 
 	// Semaphore for concurrency limit (10 parallel requests)
-	sem := make(chan struct{}, 10)
+	sem := make(chan struct{}, maxConcurrentScans)
 
 	for i, r := range repos {
 		wg.Add(1)
@@ -511,7 +926,7 @@ func (c *ContentClient) ScanReposForManifests(ctx context.Context, manifestPatte
 			parts := strings.SplitN(repo.FullName, "/", 2)
 			var manifests []ManifestFile
 			if len(parts) == 2 {
-				manifests, _ = c.DetectManifests(ctx, parts[0], parts[1], manifestPatterns)
+				manifests, _ = c.DetectManifests(ctx, parts[0], parts[1], "", manifestPatterns)
 			}
 			results[idx] = repoResult{idx: idx, repo: repo, manifests: manifests}
 		}(i, r)
@@ -526,4 +941,69 @@ func (c *ContentClient) ScanReposForManifests(ctx context.Context, manifestPatte
 	}
 
 	return rwm, nil
+}
+
+// =============================================================================
+// GitHub App Installation
+// =============================================================================
+
+// AppInstallation represents a GitHub App installation accessible to the user.
+type AppInstallation struct {
+	ID      int64  `json:"id"`
+	AppID   int64  `json:"app_id"`
+	AppSlug string `json:"app_slug"`
+	Account struct {
+		Login string `json:"login"`
+		Type  string `json:"type"` // "User" or "Organization"
+	} `json:"account"`
+	RepositorySelection string `json:"repository_selection"` // "all" or "selected"
+}
+
+// GetAppInstallations lists all GitHub App installations accessible to the authenticated user.
+// This can be used to check if the user has installed a specific GitHub App.
+func (c *ContentClient) GetAppInstallations(ctx context.Context) ([]AppInstallation, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/user/installations", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, apiError(resp)
+	}
+
+	var result struct {
+		TotalCount    int               `json:"total_count"`
+		Installations []AppInstallation `json:"installations"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return result.Installations, nil
+}
+
+// HasAppInstallation checks if the user has installed a GitHub App with the given slug.
+// Returns the installation if found, or nil if not installed.
+func (c *ContentClient) HasAppInstallation(ctx context.Context, appSlug string) (*AppInstallation, error) {
+	installations, err := c.GetAppInstallations(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, inst := range installations {
+		if inst.AppSlug == appSlug {
+			return &inst, nil
+		}
+	}
+
+	return nil, nil
 }

@@ -1,6 +1,10 @@
 package transform
 
-import "github.com/matzehuels/stacktower/pkg/core/dag"
+import (
+	"fmt"
+
+	"github.com/matzehuels/stacktower/pkg/core/dag"
+)
 
 // Normalize prepares a DAG for tower rendering by applying a sequence of
 // transformations that satisfy the layout's structural constraints.
@@ -28,15 +32,15 @@ import "github.com/matzehuels/stacktower/pkg/core/dag"
 //
 // # Nil Handling
 //
-// Normalize panics if g is nil. The DAG must be non-nil, but may be empty
-// (zero nodes). An empty DAG is returned unchanged with zero metrics.
+// Normalize returns an error if g is nil. An empty DAG is returned unchanged
+// with zero metrics.
 //
 // # Performance
 //
 // Complexity is O(V²·E) in the worst case due to transitive reduction, where
 // V is the number of nodes and E is the number of edges. For typical
 // dependency graphs with limited fan-out, performance is near-linear.
-func Normalize(g *dag.DAG) *TransformResult {
+func Normalize(g *dag.DAG) (*TransformResult, error) {
 	return NormalizeWithOptions(g, NormalizeOptions{})
 }
 
@@ -62,14 +66,25 @@ func Normalize(g *dag.DAG) *TransformResult {
 //
 // # Nil Handling
 //
-// NormalizeWithOptions panics if g is nil. An empty DAG returns zero metrics.
+// NormalizeWithOptions returns an error if g is nil. An empty DAG returns
+// zero metrics.
 //
 // # Performance
 //
 // See [Normalize]. Skipping transitive reduction reduces worst-case complexity
 // from O(V²·E) to O(V·E).
-func NormalizeWithOptions(g *dag.DAG, opts NormalizeOptions) *TransformResult {
-	result := &TransformResult{}
+func NormalizeWithOptions(g *dag.DAG, opts NormalizeOptions) (result *TransformResult, err error) {
+	if g == nil {
+		return nil, fmt.Errorf("normalize: DAG must not be nil")
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("normalize: internal error during graph transformation: %v", r)
+		}
+	}()
+
+	result = &TransformResult{}
 
 	if !opts.SkipCycleBreaking {
 		result.CyclesRemoved = BreakCycles(g)
@@ -95,5 +110,5 @@ func NormalizeWithOptions(g *dag.DAG, opts NormalizeOptions) *TransformResult {
 
 	result.MaxRow = g.MaxRow()
 
-	return result
+	return result, nil
 }

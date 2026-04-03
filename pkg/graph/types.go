@@ -36,8 +36,9 @@ const (
 
 // Internal metadata keys for serialization.
 const (
-	metaLabel   = "_label"   // Stores display label for round-trip fidelity
-	metaRepoURL = "repo_url" // Repository URL extraction
+	metaLabel    = "_label"   // Stores display label for round-trip fidelity
+	metaRepoURL  = "repo_url" // Repository URL extraction
+	metaHomePage = "homepage" // Homepage URL fallback when no repo_url
 )
 
 // =============================================================================
@@ -50,8 +51,9 @@ const (
 // The format is human-readable and designed for round-trip fidelity:
 // import → transform → export → re-import produces identical results.
 type Graph struct {
-	Nodes []Node `json:"nodes" bson:"nodes"`
-	Edges []Edge `json:"edges" bson:"edges"`
+	Meta  map[string]any `json:"meta,omitempty" bson:"meta,omitempty"` // Graph-level metadata (runtime version, dependency scope, etc.)
+	Nodes []Node         `json:"nodes" bson:"nodes"`
+	Edges []Edge         `json:"edges" bson:"edges"`
 }
 
 // =============================================================================
@@ -61,14 +63,18 @@ type Graph struct {
 // Node is the unified node type for all serialization contexts.
 // Used in both Graph and Layout types for consistency.
 type Node struct {
-	ID       string         `json:"id" bson:"id"`
-	Label    string         `json:"label,omitempty" bson:"label,omitempty"`     // Display label (defaults to ID)
-	Row      int            `json:"row,omitempty" bson:"row,omitempty"`         // Layer/rank assignment
-	Kind     string         `json:"kind,omitempty" bson:"kind,omitempty"`       // "subdivider", "auxiliary", or empty
-	Brittle  bool           `json:"brittle,omitempty" bson:"brittle,omitempty"` // At-risk package flag
-	MasterID string         `json:"master_id,omitempty" bson:"master_id,omitempty"`
-	URL      string         `json:"url,omitempty" bson:"url,omitempty"` // Repository URL
-	Meta     map[string]any `json:"meta,omitempty" bson:"meta,omitempty"`
+	ID           string         `json:"id" bson:"id"`
+	Label        string         `json:"label,omitempty" bson:"label,omitempty"`                 // Display label (defaults to ID)
+	Row          int            `json:"row,omitempty" bson:"row,omitempty"`                     // Layer/rank assignment
+	Kind         string         `json:"kind,omitempty" bson:"kind,omitempty"`                   // "subdivider", "auxiliary", or empty
+	Brittle      bool           `json:"brittle,omitempty" bson:"brittle,omitempty"`             // At-risk package flag
+	VulnSeverity string         `json:"vuln_severity,omitempty" bson:"vuln_severity,omitempty"` // Max vulnerability severity ("critical","high","medium","low")
+	LicenseRisk  string         `json:"license_risk,omitempty" bson:"license_risk,omitempty"`   // License risk classification ("copyleft","weak-copyleft","unknown","proprietary")
+	License      string         `json:"license,omitempty" bson:"license,omitempty"`             // License identifier/SPDX (e.g., "MIT", "Apache-2.0")
+	LicenseText  string         `json:"license_text,omitempty" bson:"license_text,omitempty"`   // Full license text for custom/non-standard licenses (for LLM analysis)
+	MasterID     string         `json:"master_id,omitempty" bson:"master_id,omitempty"`
+	URL          string         `json:"url,omitempty" bson:"url,omitempty"` // Repository URL
+	Meta         map[string]any `json:"meta,omitempty" bson:"meta,omitempty"`
 }
 
 // IsSubdivider returns true if this is a subdivider node.
@@ -91,8 +97,9 @@ func (n *Node) DisplayLabel() string {
 
 // Edge represents a directed edge in the dependency graph.
 type Edge struct {
-	From string `json:"from" bson:"from"`
-	To   string `json:"to" bson:"to"`
+	From       string `json:"from" bson:"from"`
+	To         string `json:"to" bson:"to"`
+	Constraint string `json:"constraint,omitempty" bson:"constraint,omitempty"` // Version constraint (e.g., "^4.17.0", ">=2.0")
 }
 
 // =============================================================================
@@ -116,23 +123,44 @@ func FromDAG(g *dag.DAG) Graph {
 
 	out := Graph{
 		Nodes: make([]Node, len(nodes)),
-		Edges: make([]Edge, len(g.Edges())),
+		Edges: make([]Edge, len(g.EdgesIter())),
+	}
+
+	// Include graph-level metadata if present
+	if meta := g.Meta(); len(meta) > 0 {
+		out.Meta = make(map[string]any, len(meta))
+		for k, v := range meta {
+			out.Meta[k] = v
+		}
 	}
 
 	for i, n := range nodes {
 		out.Nodes[i] = nodeFromDAG(n)
 	}
 
-	for i, e := range g.Edges() {
-		out.Edges[i] = Edge{From: e.From, To: e.To}
+	for i, e := range g.EdgesIter() {
+		out.Edges[i] = edgeFromDAG(&e)
 	}
 
 	return out
 }
 
+// edgeFromDAG converts a dag.Edge to a serialization Edge.
+// Extracts constraint from edge metadata if present.
+func edgeFromDAG(e *dag.Edge) Edge {
+	edge := Edge{From: e.From, To: e.To}
+	if e.Meta != nil {
+		if constraint, ok := e.Meta["constraint"].(string); ok {
+			edge.Constraint = constraint
+		}
+	}
+	return edge
+}
+
 // ToDAG converts a Graph to a DAG.
 // Returns an error if the structure violates DAG constraints.
 // Label is stored in metadata for round-trip fidelity when non-empty.
+// Constraint is stored in edge metadata for round-trip fidelity when non-empty.
 func ToDAG(gj Graph) (*dag.DAG, error) {
 	d := dag.New(nil)
 
@@ -151,14 +179,36 @@ func ToDAG(gj Graph) (*dag.DAG, error) {
 		if nj.Label != "" {
 			n.Meta[metaLabel] = nj.Label
 		}
+		// Store license data in metadata for round-trip fidelity
+		if nj.License != "" {
+			n.Meta["license"] = nj.License
+		}
+		if nj.LicenseText != "" {
+			n.Meta["license_text"] = nj.LicenseText
+		}
+		if nj.LicenseRisk != "" {
+			n.Meta["license_risk"] = nj.LicenseRisk
+		}
 		if err := d.AddNode(n); err != nil {
 			return nil, fmt.Errorf("add node %s: %w", nj.ID, err)
 		}
 	}
 
 	for _, ej := range gj.Edges {
-		if err := d.AddEdge(dag.Edge{From: ej.From, To: ej.To}); err != nil {
+		edge := dag.Edge{From: ej.From, To: ej.To}
+		// Store constraint in edge metadata for round-trip fidelity
+		if ej.Constraint != "" {
+			edge.Meta = dag.Metadata{"constraint": ej.Constraint}
+		}
+		if err := d.AddEdge(edge); err != nil {
 			return nil, fmt.Errorf("add edge %s→%s: %w", ej.From, ej.To, err)
+		}
+	}
+
+	// Restore graph-level metadata
+	if gj.Meta != nil {
+		for k, v := range gj.Meta {
+			d.Meta()[k] = v
 		}
 	}
 
@@ -206,12 +256,35 @@ func nodeFromDAG(n *dag.Node) Node {
 
 	// Extract fields from metadata
 	if n.Meta != nil {
-		if url, ok := n.Meta[metaRepoURL].(string); ok {
+		// Prefer repo_url (GitHub), fallback to homepage for packages without repos
+		if url, ok := n.Meta[metaRepoURL].(string); ok && url != "" {
 			node.URL = url
+		} else if hp, ok := n.Meta[metaHomePage].(string); ok && hp != "" {
+			node.URL = hp
 		}
 		// Restore label for round-trip fidelity
 		if label, ok := n.Meta[metaLabel].(string); ok {
 			node.Label = label
+		}
+		// Propagate vulnerability severity (key matches security.MetaVulnSeverity)
+		if vs, ok := n.Meta["vuln_severity"].(string); ok {
+			node.VulnSeverity = vs
+		}
+		// Propagate license risk (key matches security.MetaLicenseRisk)
+		if lr, ok := n.Meta["license_risk"].(string); ok && lr != "permissive" {
+			node.LicenseRisk = lr
+		}
+		// Propagate license identifier (key matches security.MetaLicense)
+		if lic, ok := n.Meta["license"].(string); ok {
+			node.License = lic
+		}
+		// Propagate license text for custom/non-standard licenses (key matches security.MetaLicenseText)
+		// Only include if license_risk indicates it needs review (proprietary/unknown)
+		if licText, ok := n.Meta["license_text"].(string); ok && licText != "" {
+			// Only include text for non-standard licenses to keep payloads manageable
+			if node.LicenseRisk == "proprietary" || node.LicenseRisk == "unknown" || node.LicenseRisk == "copyleft" {
+				node.LicenseText = licText
+			}
 		}
 	}
 

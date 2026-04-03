@@ -45,26 +45,29 @@ make cover      # Tests with coverage
 Stacktower follows a clean layered architecture. See the [pkg.go.dev documentation](https://pkg.go.dev/github.com/matzehuels/stacktower) for detailed API docs.
 
 ```
-internal/cli/          # Command-line interface
-pkg/dag/               # Core DAG data structure
-├── transform/         # Graph normalization (transitive reduction, subdivision)
-└── perm/              # PQ-tree and permutation algorithms
-pkg/deps/              # Dependency resolution from registries
-├── python/            # Python: PyPI + poetry.lock + requirements.txt
-├── rust/              # Rust: crates.io + Cargo.toml
-├── javascript/        # JavaScript: npm + package.json
-├── ruby/              # Ruby: RubyGems + Gemfile
-├── php/               # PHP: Packagist + composer.json
-├── java/              # Java: Maven Central + pom.xml
-├── golang/            # Go: Go Module Proxy + go.mod
-└── metadata/          # GitHub/GitLab enrichment providers
-pkg/integrations/      # Registry API clients (npm, pypi, crates, etc.)
-pkg/render/tower/      # Tower visualization
-├── ordering/          # Barycentric and optimal ordering algorithms
-├── layout/            # Block position computation
-├── sink/              # Output formats (SVG, JSON, PDF, PNG)
-└── styles/            # Visual styles (handdrawn, simple)
-pkg/io/                # JSON import/export
+internal/cli/                  # Command-line interface
+pkg/core/dag/                  # Core DAG data structure
+├── transform/                 # Graph normalization (transitive reduction, subdivision)
+└── perm/                      # PQ-tree and permutation algorithms
+pkg/core/deps/                 # Dependency resolution from registries
+├── python/                    # Python: PyPI + poetry.lock + requirements.txt
+├── rust/                      # Rust: crates.io + Cargo.toml
+├── javascript/                # JavaScript: npm + package.json
+├── ruby/                      # Ruby: RubyGems + Gemfile
+├── php/                       # PHP: Packagist + composer.json
+├── java/                      # Java: Maven Central + pom.xml
+├── golang/                    # Go: Go Module Proxy + go.mod
+└── metadata/                  # GitHub/GitLab enrichment providers
+pkg/integrations/              # Registry API clients (npm, pypi, crates, etc.)
+pkg/core/render/tower/         # Tower visualization
+├── ordering/                  # Barycentric and optimal ordering algorithms
+├── layout/                    # Block position computation
+├── sink/                      # Output formats (SVG, JSON, PDF, PNG)
+└── styles/                    # Visual styles (handdrawn, simple)
+pkg/graph/                     # JSON import/export
+pkg/pipeline/                  # Parse → layout → render orchestration
+pkg/security/                  # Vulnerability scanning and license analysis
+pkg/cache/                     # Caching interfaces and implementations
 ```
 
 ## Adding a New Language
@@ -110,7 +113,7 @@ var Language = &deps.Language{
 
 3. **Register in CLI** in `internal/cli/parse.go`
 
-See [`pkg/deps`](https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/deps) for detailed documentation.
+See [`pkg/core/deps`](https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/core/deps) for detailed documentation.
 
 ## Adding a Manifest Parser
 
@@ -132,7 +135,7 @@ func (p *MyLockParser) Parse(path string, opts deps.Options) (*deps.ManifestResu
 
 ## Adding a New Output Format
 
-Output formats are "sinks" in `pkg/render/tower/sink/`. Each sink takes a `layout.Layout` and renders it to bytes.
+Output formats are "sinks" in `pkg/core/render/tower/sink/`. Each sink takes a `layout.Layout` and renders it to bytes.
 
 1. **Create a sink file** in `pkg/render/tower/sink/<format>.go`:
 
@@ -148,7 +151,7 @@ func RenderMyFormat(l layout.Layout, opts ...MyFormatOption) ([]byte, error) {
 
 2. **Register in CLI** in `internal/cli/render.go`
 
-See [`pkg/render/tower/sink`](https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/render/tower/sink) for existing implementations.
+See [`pkg/core/render/tower/sink`](https://pkg.go.dev/github.com/matzehuels/stacktower/pkg/core/render/tower/sink) for existing implementations.
 
 ## Questions?
 

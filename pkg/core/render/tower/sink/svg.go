@@ -12,6 +12,7 @@ import (
 	"github.com/matzehuels/stacktower/pkg/core/render/tower/layout"
 	"github.com/matzehuels/stacktower/pkg/core/render/tower/styles"
 	"github.com/matzehuels/stacktower/pkg/fonts"
+	"github.com/matzehuels/stacktower/pkg/security"
 )
 
 const blockInteractionCSS = `
@@ -25,9 +26,10 @@ const blockInteractionJS = `
     function highlight(pkgs) {
       document.querySelectorAll('.block').forEach(b => b.classList.toggle('highlight', pkgs.includes(b.id.replace('block-', ''))));
       document.querySelectorAll('.block-text').forEach(t => t.classList.toggle('highlight', pkgs.includes(t.dataset.block)));
+      document.querySelectorAll('.license-flag, .license-stripe, .vuln-flag').forEach(f => f.classList.toggle('highlight', pkgs.includes(f.dataset.block)));
     }
     function clearHighlight() {
-      document.querySelectorAll('.block, .block-text').forEach(el => el.classList.remove('highlight'));
+      document.querySelectorAll('.block, .block-text, .license-flag, .license-stripe, .vuln-flag').forEach(el => el.classList.remove('highlight'));
     }
     document.querySelectorAll('.block').forEach(el => {
       el.addEventListener('mouseenter', () => highlight([el.id.replace('block-', '')]));
@@ -41,12 +43,13 @@ const blockInteractionJS = `
 type SVGOption func(*svgRenderer)
 
 type svgRenderer struct {
-	graph     *dag.DAG
-	style     styles.Style
-	showEdges bool
-	merged    bool
-	nebraska  []feature.NebraskaRanking
-	popups    bool
+	graph      *dag.DAG
+	style      styles.Style
+	showEdges  bool
+	merged     bool
+	nebraska   []feature.NebraskaRanking
+	popups     bool
+	flagsOnTop bool
 }
 
 func WithGraph(g *dag.DAG) SVGOption     { return func(r *svgRenderer) { r.graph = g } }
@@ -57,6 +60,11 @@ func WithNebraska(rankings []feature.NebraskaRanking) SVGOption {
 	return func(r *svgRenderer) { r.nebraska = rankings }
 }
 func WithPopups() SVGOption { return func(r *svgRenderer) { r.popups = true } }
+
+// WithFlagsOnTop controls whether security flags (license, vuln) are rendered
+// in a separate pass after all blocks, ensuring they appear on top.
+// Default is true. Set to false to render flags with their blocks.
+func WithFlagsOnTop(on bool) SVGOption { return func(r *svgRenderer) { r.flagsOnTop = on } }
 
 func RenderSVG(l layout.Layout, opts ...SVGOption) []byte {
 	r := newSVGRenderer(opts...)
@@ -73,35 +81,40 @@ func RenderSVG(l layout.Layout, opts ...SVGOption) []byte {
 
 	totalWidth, totalHeight := calculateDimensions(l, r.nebraska)
 
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %.1f %.1f" width="%.0f" height="%.0f">`+"\n",
+	// Pre-size buffer to reduce reallocations: ~500 bytes per block, ~100 per edge
+	estimatedSize := len(blocks)*500 + len(edges)*100 + 8192
+	buf := bytes.NewBuffer(make([]byte, 0, estimatedSize))
+	fmt.Fprintf(buf, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %.1f %.1f" width="%.0f" height="%.0f">`+"\n",
 		totalWidth, totalHeight, totalWidth, totalHeight)
 
-	r.style.RenderDefs(&buf)
-	renderContent(&buf, &r, blocks, edges)
-	renderBlockInteraction(&buf)
+	r.style.RenderDefs(buf)
+	renderContent(buf, &r, blocks, edges)
+	renderBlockInteraction(buf)
 
 	if len(r.nebraska) > 0 {
-		renderNebraskaPanel(&buf, l.FrameWidth, l.FrameHeight, r.nebraska)
-		renderNebraskaScript(&buf)
+		renderNebraskaPanel(buf, l.FrameWidth, l.FrameHeight, r.nebraska)
+		renderNebraskaScript(buf)
 	}
 
 	if r.popups {
 		for _, b := range blocks {
-			r.style.RenderPopup(&buf, b)
+			r.style.RenderPopup(buf, b)
 		}
-		renderPopupScript(&buf)
+		renderPopupScript(buf)
 	}
 
 	// Add watermark
-	renderWatermark(&buf, l.FrameWidth)
+	renderWatermark(buf, l.FrameWidth)
 
 	buf.WriteString("</svg>\n")
 	return buf.Bytes()
 }
 
 func newSVGRenderer(opts ...SVGOption) svgRenderer {
-	r := svgRenderer{style: styles.Simple{}}
+	r := svgRenderer{
+		style:      styles.Simple{},
+		flagsOnTop: true, // Default: render flags on top of all blocks
+	}
 	for _, opt := range opts {
 		opt(&r)
 	}
@@ -133,6 +146,10 @@ func renderContent(buf *bytes.Buffer, r *svgRenderer, blocks []styles.Block, edg
 
 	for _, b := range blocks {
 		r.style.RenderBlock(buf, b)
+		if !r.flagsOnTop {
+			// Render flags inline with each block
+			r.style.RenderFlags(buf, b)
+		}
 	}
 	for _, e := range edges {
 		r.style.RenderEdge(buf, e)
@@ -142,6 +159,12 @@ func renderContent(buf *bytes.Buffer, r *svgRenderer, blocks []styles.Block, edg
 			continue
 		}
 		r.style.RenderText(buf, b)
+	}
+	if r.flagsOnTop {
+		// Render flags last so they always appear on top of all blocks
+		for _, b := range blocks {
+			r.style.RenderFlags(buf, b)
+		}
 	}
 
 	buf.WriteString("  </g>\n")
@@ -172,8 +195,22 @@ func buildBlocks(l layout.Layout, g *dag.DAG, withPopups bool) []styles.Block {
 		}
 		if g != nil {
 			if n, ok := g.Node(id); ok && n.Meta != nil {
-				blk.URL, _ = n.Meta[metadata.RepoURL].(string)
+				// Prefer repo_url (GitHub), fallback to homepage for packages without repos
+				if url, ok := n.Meta[metadata.RepoURL].(string); ok && url != "" {
+					blk.URL = url
+				} else if hp, ok := n.Meta[metadata.HomePage].(string); ok && hp != "" {
+					blk.URL = hp
+				}
 				blk.Brittle = feature.IsBrittle(n)
+				if vs, ok := n.Meta[security.MetaVulnSeverity].(string); ok {
+					blk.VulnSeverity = vs
+				}
+				if lic, ok := n.Meta["license"].(string); ok {
+					blk.License = lic
+				}
+				if lr, ok := n.Meta[security.MetaLicenseRisk].(string); ok {
+					blk.LicenseRisk = lr
+				}
 				if withPopups {
 					blk.Popup = extractPopupData(n)
 				}
@@ -195,8 +232,8 @@ func buildEdges(l layout.Layout, g *dag.DAG, merged bool) []styles.Edge {
 }
 
 func buildSimpleEdges(l layout.Layout, g *dag.DAG) []styles.Edge {
-	edges := make([]styles.Edge, 0, len(g.Edges()))
-	for _, e := range g.Edges() {
+	edges := make([]styles.Edge, 0, len(g.EdgesIter()))
+	for _, e := range g.EdgesIter() {
 		src, okS := l.Blocks[e.From]
 		dst, okD := l.Blocks[e.To]
 		if !okS || !okD {
@@ -235,7 +272,7 @@ func buildMergedEdges(l layout.Layout, g *dag.DAG) []styles.Edge {
 	seen := make(map[edgeKey]struct{})
 	var edges []styles.Edge
 
-	for _, e := range g.Edges() {
+	for _, e := range g.EdgesIter() {
 		fromMaster, toMaster := masterOf(e.From), masterOf(e.To)
 		if fromMaster == toMaster {
 			continue

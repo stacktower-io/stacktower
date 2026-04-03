@@ -48,10 +48,4 @@
 //
 // [ExtractURL] parses GitHub repository URLs from package metadata,
 // handling various URL formats (with/without .git, trailing slashes, etc.).
-//
-// # Package Search
-//
-// [SearchPackageRepo] searches GitHub code for manifest files containing
-// a package name, useful for finding repository URLs when not provided
-// by the package registry.
 package github

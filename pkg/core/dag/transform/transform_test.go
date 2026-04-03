@@ -31,7 +31,10 @@ func buildDiamondDAG() *dag.DAG {
 
 func TestNormalize_EmptyGraph_ReturnsEmpty(t *testing.T) {
 	g := dag.New(nil)
-	result := Normalize(g)
+	result, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if g.NodeCount() != 0 {
 		t.Errorf("expected 0 nodes, got %d", g.NodeCount())
 	}
@@ -42,7 +45,10 @@ func TestNormalize_EmptyGraph_ReturnsEmpty(t *testing.T) {
 
 func TestNormalize_SimpleGraph_AppliesPipeline(t *testing.T) {
 	g := buildSimpleDAG()
-	result := Normalize(g)
+	result, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if g.NodeCount() == 0 {
 		t.Error("expected non-empty result")
 	}
@@ -358,7 +364,10 @@ func TestNormalize_CompleteWorkflow(t *testing.T) {
 	_ = g.AddEdge(dag.Edge{From: "a", To: "c"})
 	_ = g.AddEdge(dag.Edge{From: "c", To: "d"})
 
-	result := Normalize(g)
+	result, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if g.EdgeCount() != 3 {
 		t.Errorf("expected 3 edges after reduction, got %d", g.EdgeCount())
@@ -391,7 +400,10 @@ func TestNormalize_ReturnsResult(t *testing.T) {
 	g := dag.New(nil)
 	_ = g.AddNode(dag.Node{ID: "a"})
 
-	result := Normalize(g)
+	result, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if result == nil {
 		t.Error("Normalize should return a non-nil TransformResult")
@@ -409,7 +421,10 @@ func TestNormalize_IntegrationWithSubdivision(t *testing.T) {
 	_ = g.AddEdge(dag.Edge{From: "a", To: "c"})
 	_ = g.AddEdge(dag.Edge{From: "b", To: "c"})
 
-	result := Normalize(g)
+	result, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	nodeA, _ := g.Node("a")
 	nodeB, _ := g.Node("b")

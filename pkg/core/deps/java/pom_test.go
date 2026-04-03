@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/matzehuels/stacktower/pkg/core/dag"
 	"github.com/matzehuels/stacktower/pkg/core/deps"
 )
 
@@ -81,7 +80,7 @@ func TestPOMParser_Parse(t *testing.T) {
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	g := result.Graph.(*dag.DAG)
+	g := result.Graph
 
 	// Should have project root + 2 compile dependencies
 	if got := g.NodeCount(); got != 3 {
@@ -135,5 +134,118 @@ func TestExtractDependencies(t *testing.T) {
 	deps := extractDependencies(pom)
 	if len(deps) != 1 {
 		t.Errorf("expected 1 dep, got %d: %v", len(deps), deps)
+	}
+}
+
+func TestNormalizeJavaVersion(t *testing.T) {
+	tests := []struct {
+		version string
+		want    string
+	}{
+		{"1.8", "8"},
+		{"1.7", "7"},
+		{"11", "11"},
+		{"17", "17"},
+		{"21", "21"},
+		{"1.8.0", "8.0"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			if got := normalizeJavaVersion(tt.version); got != tt.want {
+				t.Errorf("normalizeJavaVersion(%q) = %q, want %q", tt.version, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPOMParser_RuntimeVersion(t *testing.T) {
+	dir := t.TempDir()
+	pomFile := filepath.Join(dir, "pom.xml")
+	content := `<?xml version="1.0" encoding="UTF-8"?>
+<project>
+  <groupId>com.example</groupId>
+  <artifactId>my-app</artifactId>
+  <version>1.0.0</version>
+  
+  <properties>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+  </properties>
+  
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-core</artifactId>
+      <version>5.3.0</version>
+    </dependency>
+  </dependencies>
+</project>`
+
+	if err := os.WriteFile(pomFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	parser := &POMParser{}
+	result, err := parser.Parse(pomFile, deps.Options{})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if result.RuntimeVersion != "17" {
+		t.Errorf("RuntimeVersion = %q, want %q", result.RuntimeVersion, "17")
+	}
+	if result.RuntimeConstraint != ">=17" {
+		t.Errorf("RuntimeConstraint = %q, want %q", result.RuntimeConstraint, ">=17")
+	}
+}
+
+func TestPOMParser_RuntimeVersion_Legacy18(t *testing.T) {
+	dir := t.TempDir()
+	pomFile := filepath.Join(dir, "pom.xml")
+	content := `<?xml version="1.0" encoding="UTF-8"?>
+<project>
+  <groupId>com.example</groupId>
+  <artifactId>my-app</artifactId>
+  <version>1.0.0</version>
+  
+  <properties>
+    <maven.compiler.source>1.8</maven.compiler.source>
+    <maven.compiler.target>1.8</maven.compiler.target>
+  </properties>
+  
+  <dependencies/>
+</project>`
+
+	if err := os.WriteFile(pomFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	parser := &POMParser{}
+	result, err := parser.Parse(pomFile, deps.Options{})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if result.RuntimeVersion != "8" {
+		t.Errorf("RuntimeVersion = %q, want %q (1.8 should normalize to 8)", result.RuntimeVersion, "8")
+	}
+	if result.RuntimeConstraint != ">=8" {
+		t.Errorf("RuntimeConstraint = %q, want %q", result.RuntimeConstraint, ">=8")
+	}
+}
+
+func TestPOMParser_Parse_InvalidXML(t *testing.T) {
+	dir := t.TempDir()
+	pomFile := filepath.Join(dir, "pom.xml")
+	content := `<project><groupId>com.example</groupId>`
+	if err := os.WriteFile(pomFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	parser := &POMParser{}
+	if _, err := parser.Parse(pomFile, deps.Options{}); err == nil {
+		t.Fatal("expected parse error for malformed XML")
 	}
 }

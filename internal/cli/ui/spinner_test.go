@@ -1,4 +1,4 @@
-package cli
+package ui
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 )
 
 func TestSpinnerBasic(t *testing.T) {
-	s := newSpinner("Testing...")
+	s := NewSpinner("Testing...")
 	s.Start()
 	time.Sleep(100 * time.Millisecond)
 	s.Stop()
@@ -20,7 +20,7 @@ func TestSpinnerBasic(t *testing.T) {
 func TestSpinnerWithContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	s := newSpinnerWithContext(ctx, "Testing with context...")
+	s := NewSpinnerWithContext(ctx, "Testing with context...")
 	s.Start()
 
 	// Cancel the context
@@ -39,7 +39,7 @@ func TestSpinnerWithTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	s := newSpinnerWithContext(ctx, "Testing with timeout...")
+	s := NewSpinnerWithContext(ctx, "Testing with timeout...")
 	s.Start()
 
 	// Wait for timeout
@@ -52,7 +52,7 @@ func TestSpinnerWithTimeout(t *testing.T) {
 }
 
 func TestSpinnerStopIsIdempotent(t *testing.T) {
-	s := newSpinner("Testing idempotent stop...")
+	s := NewSpinner("Testing idempotent stop...")
 	s.Start()
 
 	// Stop multiple times should not panic
@@ -62,21 +62,21 @@ func TestSpinnerStopIsIdempotent(t *testing.T) {
 }
 
 func TestSpinnerStopWithSuccess(t *testing.T) {
-	s := newSpinner("Testing success...")
+	s := NewSpinner("Testing success...")
 	s.Start()
 	time.Sleep(50 * time.Millisecond)
 	s.StopWithSuccess("Done!")
 }
 
 func TestSpinnerStopWithError(t *testing.T) {
-	s := newSpinner("Testing error...")
+	s := NewSpinner("Testing error...")
 	s.Start()
 	time.Sleep(50 * time.Millisecond)
 	s.StopWithError("Failed!")
 }
 
 func TestNewSpinnerWithContextNilParent(t *testing.T) {
-	s := newSpinnerWithContext(context.Background(), "Test")
+	s := NewSpinnerWithContext(context.Background(), "Test")
 	s.Start()
 	s.Stop()
 }

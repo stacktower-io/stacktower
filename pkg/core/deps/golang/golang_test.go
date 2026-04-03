@@ -6,6 +6,7 @@ import (
 
 	"github.com/matzehuels/stacktower/pkg/cache"
 	"github.com/matzehuels/stacktower/pkg/core/deps"
+	"github.com/matzehuels/stacktower/pkg/integrations/goproxy"
 )
 
 func TestLanguageDefinition(t *testing.T) {
@@ -151,7 +152,7 @@ func TestNewResolverCreatesResolver(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	resolver, err := newResolver(cache.NewNullCache(), time.Hour)
+	resolver, err := newResolver(cache.NewNullCache(), deps.Options{CacheTTL: time.Hour})
 	if err != nil {
 		t.Fatalf("newResolver() error: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestLanguageResolverMethod(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	resolver, err := Language.Resolver(cache.NewNullCache())
+	resolver, err := Language.Resolver(cache.NewNullCache(), deps.Options{})
 	if err != nil {
 		t.Fatalf("Resolver() error: %v", err)
 	}
@@ -186,7 +187,7 @@ func TestLanguageRegistryMethod(t *testing.T) {
 	}
 
 	// Test default registry
-	resolver, err := Language.Registry(cache.NewNullCache(), "goproxy")
+	resolver, err := Language.Registry(cache.NewNullCache(), "goproxy", deps.Options{})
 	if err != nil {
 		t.Fatalf("Registry(goproxy) error: %v", err)
 	}
@@ -195,7 +196,7 @@ func TestLanguageRegistryMethod(t *testing.T) {
 	}
 
 	// Test alias
-	resolver, err = Language.Registry(cache.NewNullCache(), "proxy")
+	resolver, err = Language.Registry(cache.NewNullCache(), "proxy", deps.Options{})
 	if err != nil {
 		t.Fatalf("Registry(proxy) error: %v", err)
 	}
@@ -204,7 +205,7 @@ func TestLanguageRegistryMethod(t *testing.T) {
 	}
 
 	// Test unknown registry
-	_, err = Language.Registry(cache.NewNullCache(), "unknown")
+	_, err = Language.Registry(cache.NewNullCache(), "unknown", deps.Options{})
 	if err == nil {
 		t.Error("Registry(unknown) should return error")
 	}
@@ -273,6 +274,109 @@ func TestInferRepoURL(t *testing.T) {
 			got := inferRepoURL(tt.modulePath)
 			if got != tt.want {
 				t.Errorf("inferRepoURL(%q) = %q, want %q", tt.modulePath, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGoProxyModuleToDepsPkg_UsesDiscoveredRepository(t *testing.T) {
+	pkg := goproxyModuleToDepsPkg(&goproxy.ModuleInfo{
+		Path:       "gopkg.in/yaml.v3",
+		Version:    "v3.0.1",
+		Repository: "https://github.com/go-yaml/yaml",
+	})
+	if pkg.Repository != "https://github.com/go-yaml/yaml" {
+		t.Fatalf("Repository = %q, want discovered github repo", pkg.Repository)
+	}
+}
+
+func TestGoProxyModuleToDepsPkg_MirrorsGoogleSourceRepository(t *testing.T) {
+	pkg := goproxyModuleToDepsPkg(&goproxy.ModuleInfo{
+		Path:       "golang.org/x/crypto",
+		Version:    "v0.30.0",
+		Repository: "https://go.googlesource.com/crypto",
+	})
+	if pkg.Repository != "https://github.com/golang/crypto" {
+		t.Fatalf("Repository = %q, want github mirror", pkg.Repository)
+	}
+}
+
+func TestGoProxyModuleToDepsPkg_FallsBackToGolangXMirrorWhenRepositoryMissing(t *testing.T) {
+	pkg := goproxyModuleToDepsPkg(&goproxy.ModuleInfo{
+		Path:    "golang.org/x/net",
+		Version: "v0.31.0",
+	})
+	if pkg.Repository != "https://github.com/golang/net" {
+		t.Fatalf("Repository = %q, want github mirror fallback", pkg.Repository)
+	}
+}
+
+func TestMirrorGoogleSourceToGitHub(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "go host simple repo",
+			in:   "https://go.googlesource.com/crypto",
+			want: "https://github.com/golang/crypto",
+		},
+		{
+			name: "go host plus path",
+			in:   "https://go.googlesource.com/net/+/refs/heads/master",
+			want: "https://github.com/golang/net",
+		},
+		{
+			name: "other googlesource host",
+			in:   "https://android.googlesource.com/platform/tools/base",
+			want: "https://github.com/platform/base",
+		},
+		{
+			name: "non googlesource host",
+			in:   "https://github.com/golang/crypto",
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mirrorGoogleSourceToGitHub(tt.in)
+			if got != tt.want {
+				t.Fatalf("mirrorGoogleSourceToGitHub(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsGo117OrLater(t *testing.T) {
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		{"1.17", true},
+		{"1.18", true},
+		{"1.21", true},
+		{"1.22", true},
+		{"1.25", true},
+		{"1.16", false},
+		{"1.15", false},
+		{"1.14", false},
+		{"1.11", false},
+		{"1.0", false},
+		{"1.17.0", true},
+		{"1.16.5", false},
+		{"1.21.3", true},
+		{"", false},
+		{"invalid", false},
+		{"2.0", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			got := isGo117OrLater(tt.version)
+			if got != tt.want {
+				t.Errorf("isGo117OrLater(%q) = %v, want %v", tt.version, got, tt.want)
 			}
 		})
 	}

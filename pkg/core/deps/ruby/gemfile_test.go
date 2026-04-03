@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/matzehuels/stacktower/pkg/core/dag"
 	"github.com/matzehuels/stacktower/pkg/core/deps"
 )
 
@@ -56,16 +55,21 @@ end
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	g := result.Graph.(*dag.DAG)
+	g := result.Graph
 
-	// project root + 4 gems
-	if got := g.NodeCount(); got != 5 {
-		t.Errorf("NodeCount = %d, want 5", got)
+	// project root + 2 runtime gems
+	if got := g.NodeCount(); got != 3 {
+		t.Errorf("NodeCount = %d, want 3", got)
 	}
 
-	for _, dep := range []string{"rails", "puma", "rspec-rails", "factory_bot_rails"} {
+	for _, dep := range []string{"rails", "puma"} {
 		if _, ok := g.Node(dep); !ok {
 			t.Errorf("expected node %q not found", dep)
+		}
+	}
+	for _, dep := range []string{"rspec-rails", "factory_bot_rails"} {
+		if _, ok := g.Node(dep); ok {
+			t.Errorf("did not expect dev/test gem %q in prod_only scope", dep)
 		}
 	}
 }
@@ -103,5 +107,84 @@ gem 'rails'  # duplicate should be ignored
 
 	if len(gems) != 2 {
 		t.Errorf("expected 2 gems, got %d: %v", len(gems), gems)
+	}
+}
+
+func TestExtractRubyVersion(t *testing.T) {
+	tests := []struct {
+		constraint string
+		want       string
+	}{
+		{"3.2.0", "3.2.0"},
+		{"~> 3.0", "3.0"},
+		{">= 2.7", "2.7"},
+		{"~> 3.1.0", "3.1.0"},
+		{">= 2.7.0, < 4.0", "2.7.0"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.constraint, func(t *testing.T) {
+			if got := extractRubyVersion(tt.constraint); got != tt.want {
+				t.Errorf("extractRubyVersion(%q) = %q, want %q", tt.constraint, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGemfile_RuntimeVersion(t *testing.T) {
+	dir := t.TempDir()
+	gemfile := filepath.Join(dir, "Gemfile")
+	content := `source 'https://rubygems.org'
+
+ruby '3.2.0'
+
+gem 'rails', '~> 7.0'
+gem 'puma', '>= 5.0'
+`
+
+	if err := os.WriteFile(gemfile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	parser := &Gemfile{}
+	result, err := parser.Parse(gemfile, deps.Options{})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if result.RuntimeVersion != "3.2.0" {
+		t.Errorf("RuntimeVersion = %q, want %q", result.RuntimeVersion, "3.2.0")
+	}
+	if result.RuntimeConstraint != "3.2.0" {
+		t.Errorf("RuntimeConstraint = %q, want %q", result.RuntimeConstraint, "3.2.0")
+	}
+}
+
+func TestGemfile_RuntimeVersion_Constraint(t *testing.T) {
+	dir := t.TempDir()
+	gemfile := filepath.Join(dir, "Gemfile")
+	content := `source 'https://rubygems.org'
+
+ruby '>= 3.0'
+
+gem 'rails'
+`
+
+	if err := os.WriteFile(gemfile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	parser := &Gemfile{}
+	result, err := parser.Parse(gemfile, deps.Options{})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if result.RuntimeVersion != "3.0" {
+		t.Errorf("RuntimeVersion = %q, want %q", result.RuntimeVersion, "3.0")
+	}
+	if result.RuntimeConstraint != ">= 3.0" {
+		t.Errorf("RuntimeConstraint = %q, want %q", result.RuntimeConstraint, ">= 3.0")
 	}
 }

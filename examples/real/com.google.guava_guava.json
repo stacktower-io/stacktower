@@ -1,9 +1,17 @@
 {
+  "meta": {
+    "dependency_scope": "prod_only",
+    "include_prerelease": false,
+    "runtime_source": "default",
+    "runtime_version": "17"
+  },
   "nodes": [
     {
       "id": "com.google.errorprone:error_prone_annotations",
+      "license": "Apache 2.0",
       "meta": {
-        "version": "2.39.0"
+        "license": "Apache 2.0",
+        "version": "2.9.0"
       }
     },
     {
@@ -14,7 +22,24 @@
     },
     {
       "id": "com.google.guava:guava",
+      "license": "Apache-2.0",
+      "url": "https://github.com/google/guava",
       "meta": {
+        "homepage": "https://github.com/google/guava",
+        "license": "Apache-2.0",
+        "repo_archived": false,
+        "repo_description": "Google core libraries for Java",
+        "repo_language": "Java",
+        "repo_last_commit": "2026-03-23",
+        "repo_last_release": "2025-09-17",
+        "repo_license": "Apache-2.0",
+        "repo_owner": "google",
+        "repo_stars": 51513,
+        "repo_topics": [
+          "guava",
+          "java"
+        ],
+        "repo_url": "https://github.com/google/guava",
         "version": "33.4.8-jre"
       }
     },
@@ -26,13 +51,50 @@
     },
     {
       "id": "com.google.j2objc:j2objc-annotations",
+      "license": "Apache-2.0",
+      "url": "https://github.com/google/j2objc",
       "meta": {
-        "version": "3.0.0"
+        "homepage": "https://github.com/google/j2objc/",
+        "license": "Apache-2.0",
+        "repo_archived": false,
+        "repo_description": "A Java to iOS Objective-C translation tool and runtime.",
+        "repo_language": "Java",
+        "repo_last_commit": "2026-03-27",
+        "repo_license": "Apache-2.0",
+        "repo_owner": "google",
+        "repo_stars": 6045,
+        "repo_url": "https://github.com/google/j2objc",
+        "version": "3.1"
       }
     },
     {
       "id": "org.jspecify:jspecify",
+      "license": "Apache-2.0",
+      "url": "https://github.com/jspecify/jspecify",
       "meta": {
+        "homepage": "http://jspecify.org/",
+        "license": "Apache-2.0",
+        "repo_archived": false,
+        "repo_description": "An artifact of fully-specified annotations to power static-analysis checks, beginning with nullness analysis.",
+        "repo_language": "Java",
+        "repo_last_commit": "2026-03-30",
+        "repo_last_release": "2024-07-17",
+        "repo_license": "Apache-2.0",
+        "repo_owner": "jspecify",
+        "repo_stars": 1069,
+        "repo_topics": [
+          "java",
+          "static-analysis",
+          "kotlin",
+          "android",
+          "annotations",
+          "bugfinding",
+          "jvm-languages",
+          "null",
+          "nullability-analysis",
+          "standard-library"
+        ],
+        "repo_url": "https://github.com/jspecify/jspecify",
         "version": "1.0.0"
       }
     }
@@ -40,11 +102,13 @@
   "edges": [
     {
       "from": "com.google.guava:guava",
-      "to": "com.google.guava:failureaccess"
+      "to": "com.google.guava:failureaccess",
+      "constraint": "1.0.3"
     },
     {
       "from": "com.google.guava:guava",
-      "to": "com.google.guava:listenablefuture"
+      "to": "com.google.guava:listenablefuture",
+      "constraint": "9999.0-empty-to-avoid-conflict-with-guava"
     },
     {
       "from": "com.google.guava:guava",

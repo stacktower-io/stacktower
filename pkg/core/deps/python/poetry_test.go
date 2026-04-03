@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/matzehuels/stacktower/pkg/core/dag"
 	"github.com/matzehuels/stacktower/pkg/core/deps"
 )
 
@@ -62,6 +61,14 @@ category = "main"
 optional = false
 python-versions = ">=3.8"
 
+[[package]]
+name = "pytest"
+version = "8.3.0"
+description = "pytest dev dependency"
+category = "dev"
+optional = false
+python-versions = ">=3.8"
+
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
@@ -77,7 +84,7 @@ content-hash = "abc123"
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	g := result.Graph.(*dag.DAG)
+	g := result.Graph
 
 	if got := g.NodeCount(); got != 4 {
 		t.Errorf("NodeCount = %d, want 4", got)
@@ -100,6 +107,9 @@ content-hash = "abc123"
 	if len(projectChildren) != 1 {
 		t.Errorf("__project__ has %d children, want 1", len(projectChildren))
 	}
+	if _, ok := g.Node("pytest"); ok {
+		t.Error("did not expect dev dependency pytest in prod_only scope")
+	}
 }
 
 func TestPoetryLock_Type(t *testing.T) {
@@ -113,5 +123,26 @@ func TestPoetryLock_IncludesTransitive(t *testing.T) {
 	parser := &PoetryLock{}
 	if !parser.IncludesTransitive() {
 		t.Error("IncludesTransitive() = false, want true")
+	}
+}
+
+func TestPoetryLock_AllScopeIncludesDevPackages(t *testing.T) {
+	dir := t.TempDir()
+	lockFile := filepath.Join(dir, "poetry.lock")
+	content := `[[package]]
+name = "pytest"
+version = "8.3.0"
+category = "dev"
+`
+	if err := os.WriteFile(lockFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	parser := &PoetryLock{}
+	result, err := parser.Parse(lockFile, deps.Options{DependencyScope: deps.DependencyScopeAll})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if _, ok := result.Graph.Node("pytest"); !ok {
+		t.Error("expected pytest in all dependency scope")
 	}
 }

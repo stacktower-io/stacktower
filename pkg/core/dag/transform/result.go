@@ -2,9 +2,10 @@ package transform
 
 // TransformResult contains metrics about transformations applied to a DAG.
 //
-// TransformResult is returned by [Normalize] and [NormalizeWithOptions] to
-// provide visibility into what transformations occurred. This is useful for
-// logging, debugging, and understanding graph complexity.
+// TransformResult is returned (alongside an error) by [Normalize] and
+// [NormalizeWithOptions] to provide visibility into what transformations
+// occurred. This is useful for logging, debugging, and understanding graph
+// complexity.
 type TransformResult struct {
 	// CyclesRemoved is the number of back-edges removed by cycle breaking.
 	// Zero indicates the input was already acyclic.

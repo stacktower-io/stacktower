@@ -1,0 +1,8 @@
+# Example requirements.txt with copyleft licenses + known vulnerabilities
+# Useful for testing license flags and vulnerability coloring together
+
+paramiko==3.3.1
+pylint>=3.0.0
+requests>=2.28.0
+Jinja2==3.1.2
+cryptography==41.0.4

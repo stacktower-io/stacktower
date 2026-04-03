@@ -64,7 +64,3 @@ perf.data*
 graphs/*.json
 !graphs/.gitkeep
 
-# Legacy Rust code (if still relevant)
-/_legacy/target/
-**/*.rs.bk
-Cargo.lock

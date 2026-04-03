@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/matzehuels/stacktower/pkg/core/dag"
+	"github.com/matzehuels/stacktower/pkg/security"
 )
 
 func TestToDOT_Basic(t *testing.T) {
@@ -119,6 +120,50 @@ func TestFmtAttrs_Subdivider(t *testing.T) {
 	}
 	if !strings.Contains(joined, "lightgrey") {
 		t.Error("fmtAttrs() subdivider missing lightgrey fill")
+	}
+}
+
+func TestFmtAttrs_VulnerabilityUsesBackgroundColor(t *testing.T) {
+	n := dag.Node{
+		ID:   "vuln-node",
+		Kind: dag.NodeKindRegular,
+		Meta: dag.Metadata{
+			security.MetaVulnSeverity: "high",
+		},
+	}
+
+	attrs := fmtAttrs(n, "pkg-a")
+	joined := strings.Join(attrs, " ")
+	if strings.Contains(joined, "⚑") {
+		t.Fatalf("fmtAttrs() should not add flag label for vulnerabilities: %v", attrs)
+	}
+	if !strings.Contains(joined, `fillcolor="#c2410c"`) {
+		t.Fatalf("fmtAttrs() vuln node missing dark orange background: %v", attrs)
+	}
+	if !strings.Contains(joined, `fontcolor="white"`) {
+		t.Fatalf("fmtAttrs() vuln node missing readable text color: %v", attrs)
+	}
+}
+
+func TestFmtAttrs_LicenseRiskUsesBackgroundColor(t *testing.T) {
+	n := dag.Node{
+		ID:   "license-node",
+		Kind: dag.NodeKindRegular,
+		Meta: dag.Metadata{
+			security.MetaLicenseRisk: string(security.LicenseRiskCopyleft),
+		},
+	}
+
+	attrs := fmtAttrs(n, "pkg-b")
+	joined := strings.Join(attrs, " ")
+	if strings.Contains(joined, "⚑") {
+		t.Fatalf("fmtAttrs() should not add flag label for license risk: %v", attrs)
+	}
+	if !strings.Contains(joined, `fillcolor="#9333ea"`) {
+		t.Fatalf("fmtAttrs() license-risk node missing purple background: %v", attrs)
+	}
+	if !strings.Contains(joined, `fontcolor="white"`) {
+		t.Fatalf("fmtAttrs() license-risk node missing readable text color: %v", attrs)
 	}
 }
 

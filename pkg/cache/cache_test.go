@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -197,5 +198,48 @@ func TestRetryWithBackoffContextCancel(t *testing.T) {
 	})
 	if err != context.Canceled {
 		t.Errorf("Should return context error: %v", err)
+	}
+}
+
+type retryAfterErr struct {
+	err        error
+	retryAfter int
+}
+
+func (e *retryAfterErr) Error() string          { return e.err.Error() }
+func (e *retryAfterErr) Unwrap() error          { return e.err }
+func (e *retryAfterErr) RetryAfterSeconds() int { return e.retryAfter }
+
+func TestRetryWithBackoffRegistryHonorsRetryAfter(t *testing.T) {
+	ctx := context.Background()
+	start := time.Now()
+	calls := 0
+
+	err := RetryWithBackoffRegistry(ctx, "test", func() error {
+		calls++
+		if calls == 1 {
+			return Retryable(&retryAfterErr{err: ErrNetwork, retryAfter: 1})
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected success after retry, got %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 calls, got %d", calls)
+	}
+	if elapsed := time.Since(start); elapsed < 900*time.Millisecond {
+		t.Fatalf("expected retry delay to honor retry-after, elapsed=%v", elapsed)
+	}
+}
+
+func TestRetryAfterFromError(t *testing.T) {
+	err := Retryable(&retryAfterErr{err: errors.New("rate limited"), retryAfter: 42})
+	got, ok := retryAfterFromError(err)
+	if !ok {
+		t.Fatalf("expected retry-after to be detected")
+	}
+	if got != 42 {
+		t.Fatalf("retry-after=%d, want 42", got)
 	}
 }

@@ -137,29 +137,19 @@ func ExampleOptions_limits() {
 	// Refresh: true
 }
 
-func ExampleNewRegistry() {
-	// NewRegistry wraps a Fetcher with concurrent crawling logic.
-	// In real usage, you would pass a registry-specific fetcher:
+func ExampleNewPubGrubResolver() {
+	// NewPubGrubResolver wraps a Fetcher with SAT-solver-based resolution.
+	// In real usage, you would pass a registry-specific fetcher and
+	// constraint parser:
 	//
-	//   import (
-	//       "github.com/matzehuels/stacktower/pkg/core/deps"
-	//       "github.com/matzehuels/stacktower/pkg/integrations/pypi"
-	//   )
+	//   resolver, err := deps.NewPubGrubResolver("pypi", fetcher, parser)
+	//   g, err := resolver.Resolve(ctx, "requests", deps.Options{})
 	//
-	//   client := pypi.NewClient(24 * time.Hour)
-	//   fetcher := pypi.NewFetcher(client)
-	//   resolver := deps.NewRegistry("pypi", fetcher)
-	//
-	//   ctx := context.Background()
-	//   g, err := resolver.Resolve(ctx, "requests", deps.Options{
-	//       MaxDepth: 5,
-	//       MaxNodes: 100,
-	//   })
-	//
-	// The resolver uses a worker pool to fetch packages concurrently,
-	// respecting the MaxDepth and MaxNodes limits.
+	// The resolver uses PubGrub for proper version constraint solving
+	// with conflict detection and backtracking, then enriches metadata
+	// in parallel.
 
-	fmt.Println("NewRegistry creates a concurrent dependency resolver")
+	fmt.Println("NewPubGrubResolver creates a SAT-solver dependency resolver")
 	// Output:
-	// NewRegistry creates a concurrent dependency resolver
+	// NewPubGrubResolver creates a SAT-solver dependency resolver
 }

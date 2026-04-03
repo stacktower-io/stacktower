@@ -52,6 +52,7 @@ import (
 
 	"github.com/matzehuels/stacktower/pkg/cache"
 	"github.com/matzehuels/stacktower/pkg/core/dag"
+	"github.com/matzehuels/stacktower/pkg/core/deps"
 	"github.com/matzehuels/stacktower/pkg/core/render/tower/ordering"
 	"github.com/matzehuels/stacktower/pkg/graph"
 )
@@ -126,19 +127,26 @@ var ValidVizTypes = map[string]bool{
 // This struct supports JSON serialization for API requests.
 type Options struct {
 	// Parse options
-	Language         string `json:"language"`
-	Package          string `json:"package,omitempty"`
-	Manifest         string `json:"manifest,omitempty"`
-	ManifestFilename string `json:"manifest_filename,omitempty"`
-	Owner            string `json:"owner,omitempty"`     // GitHub owner (user/org)
-	Repo             string `json:"repo,omitempty"`      // GitHub repository name
-	Ref              string `json:"ref,omitempty"`       // Git ref (branch/tag)
-	Path             string `json:"path,omitempty"`      // Path within repo
-	RootName         string `json:"root_name,omitempty"` // Custom name for root node (replaces __project__)
-	MaxDepth         int    `json:"max_depth,omitempty"`
-	MaxNodes         int    `json:"max_nodes,omitempty"`
-	SkipEnrich       bool   `json:"skip_enrich,omitempty"` // Skip metadata enrichment (default: false = enrich)
-	Refresh          bool   `json:"refresh,omitempty"`
+	Language          string `json:"language"`
+	Package           string `json:"package,omitempty"`
+	Version           string `json:"version,omitempty"` // Specific package version (e.g., "2.31.0")
+	Manifest          string `json:"manifest,omitempty"`
+	ManifestFilename  string `json:"manifest_filename,omitempty"`
+	ManifestPath      string `json:"manifest_path,omitempty"` // Optional on-disk path used when parser needs workspace context
+	Owner             string `json:"owner,omitempty"`         // GitHub owner (user/org)
+	Repo              string `json:"repo,omitempty"`          // GitHub repository name
+	Ref               string `json:"ref,omitempty"`           // Git ref (branch/tag)
+	Path              string `json:"path,omitempty"`          // Path within repo
+	RootName          string `json:"root_name,omitempty"`     // Custom name for root node (replaces __project__)
+	MaxDepth          int    `json:"max_depth,omitempty"`
+	MaxNodes          int    `json:"max_nodes,omitempty"`
+	Workers           int    `json:"workers,omitempty"`            // Concurrent fetch workers (0 = default 20)
+	SkipEnrich        bool   `json:"skip_enrich,omitempty"`        // Skip metadata enrichment (default: false = enrich)
+	FetchContributors bool   `json:"fetch_contributors,omitempty"` // Fetch GitHub contributors (slower, enables Nebraska rankings)
+	Refresh           bool   `json:"refresh,omitempty"`
+	DependencyScope   string `json:"dependency_scope,omitempty"`   // Dependency scope policy: prod_only (default) or all
+	IncludePrerelease bool   `json:"include_prerelease,omitempty"` // Include prerelease versions (alpha/beta/rc/dev/etc.)
+	RuntimeVersion    string `json:"runtime_version,omitempty"`    // Target runtime version for marker evaluation (e.g., "3.11" for Python)
 
 	// Layout options
 	VizType   string  `json:"viz_type,omitempty"`
@@ -151,11 +159,17 @@ type Options struct {
 	Seed      uint64  `json:"seed,omitempty"`
 
 	// Render options
-	Formats   []string `json:"formats,omitempty"`
-	Style     string   `json:"style,omitempty"`
-	ShowEdges bool     `json:"show_edges,omitempty"`
-	Nebraska  bool     `json:"nebraska,omitempty"` // Show Nebraska ranking panel in SVG (data is always computed)
-	Popups    bool     `json:"popups,omitempty"`
+	Formats    []string `json:"formats,omitempty"`
+	Style      string   `json:"style,omitempty"`
+	ShowEdges  bool     `json:"show_edges,omitempty"`
+	Nebraska   bool     `json:"nebraska,omitempty"` // Show Nebraska ranking panel in SVG (data is always computed)
+	Popups     bool     `json:"popups,omitempty"`
+	FlagsOnTop bool     `json:"flags_on_top,omitempty"` // Render security flags (license/vuln) on top of all blocks
+
+	// Security options
+	SecurityScan bool `json:"security_scan,omitempty"` // Run vulnerability scan during parse
+	ShowVulns    bool `json:"show_vulns,omitempty"`    // Include vulnerability data in rendered output
+	ShowLicenses bool `json:"show_licenses,omitempty"` // Analyze and show license compliance data in rendered output
 
 	// Runtime options (not serialized)
 	Logger      *log.Logger      `json:"-"`
@@ -185,6 +199,14 @@ type Result struct {
 
 	// CacheInfo tracks which stages hit the cache.
 	CacheInfo CacheInfo
+
+	// RuntimeVersion is the target runtime version used for resolution.
+	// For Python: "3.11", for Node.js: "20", etc.
+	RuntimeVersion string
+
+	// RuntimeSource indicates where the runtime version came from.
+	// Values: "manifest" (detected from file), "cli" (user specified), "default" (language default)
+	RuntimeSource string
 }
 
 // Stats contains pipeline execution statistics.
@@ -279,6 +301,12 @@ func (o *Options) ValidateForParse() error {
 	if o.MaxNodes == 0 {
 		o.MaxNodes = DefaultMaxNodes
 	}
+	if o.DependencyScope == "" {
+		o.DependencyScope = deps.DependencyScopeProdOnly
+	}
+	if o.DependencyScope != deps.DependencyScopeProdOnly && o.DependencyScope != deps.DependencyScopeAll {
+		return fmt.Errorf("invalid dependency_scope: %q (must be one of: %s, %s)", o.DependencyScope, deps.DependencyScopeProdOnly, deps.DependencyScopeAll)
+	}
 
 	// Logger default
 	if o.Logger == nil {
@@ -323,6 +351,66 @@ func (o *Options) SetRenderDefaults() {
 	}
 	if o.Logger == nil {
 		o.Logger = log.NewWithOptions(io.Discard, log.Options{})
+	}
+}
+
+// =============================================================================
+// Presets - Consumer-Specific Defaults
+// =============================================================================
+
+// Preset names for ApplyPreset.
+const (
+	// PresetCLI applies defaults optimized for interactive CLI usage.
+	// Enables: Randomize, Merge, Normalize, Popups, ShowVulns, ShowLicenses.
+	PresetCLI = "cli"
+
+	// PresetAPI applies defaults optimized for API/programmatic usage.
+	// Uses minimal defaults suitable for embedding in web applications.
+	PresetAPI = "api"
+
+	// PresetWorker applies defaults optimized for background worker processing.
+	// Similar to API but may include additional options for batch processing.
+	PresetWorker = "worker"
+)
+
+// ApplyPreset applies consumer-specific defaults on top of base pipeline defaults.
+// This should be called after setting Language/Package but before validation.
+//
+// Presets:
+//   - "cli": Interactive CLI with rich visualizations (randomize, merge, popups, vulns, licenses)
+//   - "api": Minimal defaults for programmatic/web usage
+//   - "worker": Background processing defaults (similar to API)
+//
+// Unknown presets are silently ignored (base defaults apply).
+func (o *Options) ApplyPreset(preset string) {
+	o.SetLayoutDefaults()
+	o.SetRenderDefaults()
+
+	switch preset {
+	case PresetCLI:
+		o.Randomize = true
+		o.Merge = true
+		o.Normalize = true
+		o.Popups = true
+		o.ShowVulns = true
+		o.ShowLicenses = true
+		o.FlagsOnTop = true
+	case PresetAPI:
+		o.Randomize = false
+		o.Merge = false
+		o.Normalize = false
+		o.Popups = false
+		o.ShowVulns = false
+		o.ShowLicenses = false
+		o.FlagsOnTop = true
+	case PresetWorker:
+		o.Randomize = false
+		o.Merge = false
+		o.Normalize = false
+		o.Popups = false
+		o.ShowVulns = false
+		o.ShowLicenses = false
+		o.FlagsOnTop = true
 	}
 }
 
@@ -377,12 +465,15 @@ func (o *Options) LayoutKeyOpts() cache.LayoutKeyOpts {
 // ArtifactKeyOpts returns cache key options for artifact rendering.
 func (o *Options) ArtifactKeyOpts(format string) cache.ArtifactKeyOpts {
 	return cache.ArtifactKeyOpts{
-		Format:    format,
-		Style:     o.Style,
-		ShowEdges: o.ShowEdges,
-		Popups:    o.Popups,
-		Nebraska:  o.Nebraska,
-		Merge:     o.Merge,
-		Normalize: o.Normalize,
+		Format:       format,
+		Style:        o.Style,
+		ShowEdges:    o.ShowEdges,
+		Popups:       o.Popups,
+		Nebraska:     o.Nebraska,
+		Merge:        o.Merge,
+		Normalize:    o.Normalize,
+		ShowVulns:    o.ShowVulns,
+		ShowLicenses: o.ShowLicenses,
+		FlagsOnTop:   o.FlagsOnTop,
 	}
 }

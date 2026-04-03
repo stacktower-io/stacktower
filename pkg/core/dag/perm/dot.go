@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/goccy/go-graphviz"
 )
+
+// graphvizMu serializes access to the graphviz WASM runtime.
+// The go-graphviz WASM backend is NOT thread-safe.
+var graphvizMu sync.Mutex
 
 // ToDOT returns a Graphviz DOT representation of the tree structure.
 //
@@ -103,6 +108,10 @@ func (t *PQTree) writeDOTNode(buf *bytes.Buffer, n *pqNode, id int, labels []str
 //	os.WriteFile("tree.svg", svg, 0644)
 func (t *PQTree) RenderSVG(labels []string) ([]byte, error) {
 	dot := t.ToDOT(labels)
+
+	// Serialize all graphviz WASM calls to prevent memory corruption
+	graphvizMu.Lock()
+	defer graphvizMu.Unlock()
 
 	gv, err := graphviz.New(context.Background())
 	if err != nil {
