@@ -73,11 +73,6 @@ func extractPackageJSONInfo(dir string) packageJSONInfo {
 	return packageJSONInfo{Name: pkg.Name, NodeEngine: pkg.Engines.Node}
 }
 
-// extractPackageJSONName reads the package name from package.json in the same directory.
-func extractPackageJSONName(dir string) string {
-	return extractPackageJSONInfo(dir).Name
-}
-
 // packageLockFile represents package-lock.json structure (v2/v3)
 type packageLockFile struct {
 	Name            string                       `json:"name"`

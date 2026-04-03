@@ -58,19 +58,18 @@ func TestNewCache(t *testing.T) {
 	})
 }
 
-
 func TestCLI_SetQuiet(t *testing.T) {
 	cli := New(os.Stderr, LogInfo)
-	
+
 	if cli.Quiet {
 		t.Error("CLI should not be quiet by default")
 	}
-	
+
 	cli.SetQuiet(true)
 	if !cli.Quiet {
 		t.Error("CLI.Quiet should be true after SetQuiet(true)")
 	}
-	
+
 	cli.SetQuiet(false)
 	if cli.Quiet {
 		t.Error("CLI.Quiet should be false after SetQuiet(false)")
@@ -79,12 +78,12 @@ func TestCLI_SetQuiet(t *testing.T) {
 
 func TestCLI_SetLogLevel(t *testing.T) {
 	cli := New(os.Stderr, LogInfo)
-	
+
 	cli.SetLogLevel(LogDebug)
 	if cli.Logger.GetLevel() != LogDebug {
 		t.Errorf("Logger level = %v, want %v", cli.Logger.GetLevel(), LogDebug)
 	}
-	
+
 	cli.SetLogLevel(LogInfo)
 	if cli.Logger.GetLevel() != LogInfo {
 		t.Errorf("Logger level = %v, want %v", cli.Logger.GetLevel(), LogInfo)

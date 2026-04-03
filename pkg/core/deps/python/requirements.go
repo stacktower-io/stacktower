@@ -16,9 +16,6 @@ import (
 // Examples: "requests", "requests>=2.28.0", "numpy==1.24.0", "flask~=2.0"
 var depRE = regexp.MustCompile(`^([a-zA-Z0-9][-a-zA-Z0-9._]*)\s*(.*)`)
 
-// Kept for backward compatibility
-var depNameRE = regexp.MustCompile(`^([a-zA-Z0-9][-a-zA-Z0-9._]*)`)
-
 // Requirements parses requirements.txt files. By default, it only provides
 // direct dependencies. If a [deps.Resolver] is provided, it can resolve
 // the full transitive closure.

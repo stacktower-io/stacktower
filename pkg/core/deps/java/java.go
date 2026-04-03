@@ -65,14 +65,6 @@ func (f fetcher) ListVersions(ctx context.Context, name string, refresh bool) ([
 	return f.client.ListVersions(ctx, coord, refresh)
 }
 
-// checkCompatibility is a no-op for Maven artifacts because the Maven Central API
-// doesn't expose per-artifact Java version requirements. The Java version (target/source
-// compatibility) is only available when parsing local pom.xml or build.gradle files.
-// Runtime checking for Java happens at the manifest parsing level, not the registry level.
-func (f fetcher) checkCompatibility(_ *maven.ArtifactInfo, _ string) error {
-	return nil
-}
-
 func mavenArtifactToDepsPkg(a *maven.ArtifactInfo) *deps.Package {
 	pkg := &deps.Package{
 		Name:         a.Coordinate(),

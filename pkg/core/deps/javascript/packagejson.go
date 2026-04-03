@@ -89,21 +89,6 @@ func extractPackageDepsWithConstraints(pkg packageFile, scope string) []deps.Dep
 	return result
 }
 
-// extractPackageDeps is kept for backward compatibility
-func extractPackageDeps(pkg packageFile) []string {
-	var result []string
-	for name := range pkg.Dependencies {
-		result = append(result, name)
-	}
-	for name := range pkg.DevDependencies {
-		result = append(result, name)
-	}
-	for name := range pkg.PeerDependencies {
-		result = append(result, name)
-	}
-	return result
-}
-
 type packageFile struct {
 	Name             string            `json:"name"`
 	Version          string            `json:"version"`

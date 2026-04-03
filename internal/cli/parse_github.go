@@ -232,7 +232,7 @@ func (c *CLI) runParseGitHub(ctx context.Context, args []string, flags *parseFla
 	start := time.Now()
 	opts := flags.Options
 	opts.Language = lang.Name
-	opts.Manifest = string(content)
+	opts.Manifest = content
 	opts.ManifestFilename = filepath.Base(tmpFile)
 	opts.ManifestPath = tmpFile
 	opts.SkipEnrich = !flags.enrich

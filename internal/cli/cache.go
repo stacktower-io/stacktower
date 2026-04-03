@@ -43,11 +43,11 @@ func (c *CLI) cacheClearCommand() *cobra.Command {
 			}
 
 			count := 0
-		err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				slog.Debug("cache walk: skipping path", "path", path, "error", err)
-				return nil
-			}
+			err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					slog.Debug("cache walk: skipping path", "path", path, "error", err)
+					return nil
+				}
 				if path == dir {
 					return nil
 				}

@@ -115,21 +115,6 @@ func parseCargoDependency(name string, spec any) deps.Dependency {
 	return dep
 }
 
-// extractCargoDeps is kept for backward compatibility
-func extractCargoDeps(cargo cargoFile) []string {
-	var names []string
-	for name := range cargo.Dependencies {
-		names = append(names, name)
-	}
-	for name := range cargo.DevDependencies {
-		names = append(names, name)
-	}
-	for name := range cargo.BuildDependencies {
-		names = append(names, name)
-	}
-	return names
-}
-
 type cargoFile struct {
 	Package struct {
 		Name        string `toml:"name"`

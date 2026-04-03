@@ -112,23 +112,6 @@ func extractComposerDepsWithVersions(comp composerFile, scope string) []deps.Dep
 	return result
 }
 
-// extractComposerDeps is kept for backward compatibility
-func extractComposerDeps(comp composerFile) []string {
-	var names []string
-	for name := range comp.Require {
-		if isPHPRequirement(name) {
-			continue
-		}
-		names = append(names, name)
-	}
-	for name := range comp.RequireDev {
-		if isPHPRequirement(name) {
-			continue
-		}
-		names = append(names, name)
-	}
-	return names
-}
 
 func isPHPRequirement(name string) bool {
 	return name == "php" || strings.HasPrefix(name, "php-") || strings.HasPrefix(name, "ext-")

@@ -14,7 +14,7 @@ import (
 	"github.com/matzehuels/stacktower/pkg/integrations/github"
 )
 
-// Shared TUI chrome
+// TUIHints contains shared TUI chrome for navigation hints.
 const TUIHints = "↑/↓ navigate  ⏎ select  q quit"
 
 // List styles
@@ -446,7 +446,7 @@ func (m RefListModel) View() string {
 	b.WriteString("\n")
 
 	if m.Filter != "" {
-		b.WriteString(fmt.Sprintf("  filter: %s\n", StyleHighlight.Render(m.Filter)))
+		fmt.Fprintf(&b, "  filter: %s\n", StyleHighlight.Render(m.Filter))
 	}
 	b.WriteString("\n")
 

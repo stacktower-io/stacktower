@@ -324,7 +324,7 @@ func isRepoURL(url string) bool {
 }
 
 func (c *Client) fetchPOM(ctx context.Context, url string) (*pomProject, error) {
-	text, err := c.Client.GetText(ctx, url)
+	text, err := c.GetText(ctx, url)
 	if err != nil {
 		return nil, err
 	}

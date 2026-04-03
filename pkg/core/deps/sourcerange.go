@@ -74,8 +74,6 @@ func (d *PyprojectDetector) DetectSections(content string) []SourceRange {
 	pep621DepsRE := regexp.MustCompile(`^\s*dependencies\s*=\s*\[`)
 	// PEP 621 optional-dependencies: key = [...] inside [project.optional-dependencies]
 	optionalDepsEntryRE := regexp.MustCompile(`^\s*([a-zA-Z][-a-zA-Z0-9._]*)\s*=\s*\[`)
-	// Poetry: [tool.poetry.dependencies] section entries (key = "value" or key = {version = ...})
-	poetryDepEntryRE := regexp.MustCompile(`^\s*[a-zA-Z][-a-zA-Z0-9._]*\s*=\s*`)
 	// Flit: requires = [...]
 	flitRequiresRE := regexp.MustCompile(`^\s*requires\s*=\s*\[`)
 
@@ -251,8 +249,6 @@ func (d *PyprojectDetector) DetectSections(content string) []SourceRange {
 						currentTableSection = m[1]
 					}
 				}
-			} else if !poetryDepEntryRE.MatchString(line) && !strings.HasPrefix(trimmed, "#") {
-				// Non-dependency line (but not a comment), might be end of deps
 			}
 		}
 	}

@@ -126,7 +126,7 @@ func ListVersions(ctx context.Context, c cache.Cache, opts ListOptions) (*ListRe
 	return result, nil
 }
 
-// ListVersionsRunner is a convenience method on Runner that uses its cache.
+// ListVersions is a convenience method on Runner that uses its cache.
 func (r *Runner) ListVersions(ctx context.Context, opts ListOptions) (*ListResult, error) {
 	return ListVersions(ctx, r.Cache, opts)
 }

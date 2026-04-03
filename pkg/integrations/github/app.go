@@ -415,7 +415,7 @@ func (c *AppClient) fetchPrimaryEmail(ctx context.Context, userToken string) (st
 	return "", nil
 }
 
-// DeviceCodeResponse contains the response from requesting a device code.
+// AppDeviceCodeResponse contains the response from requesting a device code.
 type AppDeviceCodeResponse struct {
 	DeviceCode      string `json:"device_code"`
 	UserCode        string `json:"user_code"`

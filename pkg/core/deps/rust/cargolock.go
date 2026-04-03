@@ -74,11 +74,6 @@ func extractCargoTomlInfo(dir string) cargoTomlInfo {
 	return cargoTomlInfo{Name: cargo.Package.Name, RustVersion: cargo.Package.RustVersion}
 }
 
-// extractCargoTomlName reads the package name from Cargo.toml in the same directory.
-func extractCargoTomlName(dir string) string {
-	return extractCargoTomlInfo(dir).Name
-}
-
 // cargoLockFile represents the Cargo.lock file structure
 type cargoLockFile struct {
 	Version  int                `toml:"version"` // Lock file version (1, 2, or 3)

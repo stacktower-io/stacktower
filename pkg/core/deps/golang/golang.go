@@ -292,14 +292,6 @@ func (f fetcher) FetchVersion(ctx context.Context, name, version string, refresh
 	return goproxyModuleToDepsPkg(m), nil
 }
 
-// checkCompatibility is a no-op for Go modules because the Go module proxy API
-// doesn't expose per-module Go version requirements. The Go version directive
-// is only available when parsing local go.mod files (see GoModParser).
-// Runtime checking for Go happens at the manifest parsing level, not the registry level.
-func (f fetcher) checkCompatibility(_ *goproxy.ModuleInfo, _ string) error {
-	return nil
-}
-
 // ListVersions implements deps.VersionLister for constraint-based resolution.
 func (f fetcher) ListVersions(ctx context.Context, name string, refresh bool) ([]string, error) {
 	return f.client.ListVersions(ctx, name, refresh)

@@ -143,7 +143,6 @@ func (r *Runner) Execute(ctx context.Context, opts Options) (*Result, error) {
 	return result, nil
 }
 
-// ParseWithCacheInfo resolves dependencies with caching and returns cache hit info.
 // ParseResultWithCacheInfo contains the parsed dependency graph plus metadata.
 type ParseResultWithCacheInfo struct {
 	Graph          *dag.DAG
@@ -471,14 +470,6 @@ func (r *Runner) pipelineHooksCtx(ctx context.Context) observability.PipelineHoo
 		return r.Hooks.Pipeline
 	}
 	return observability.Pipeline()
-}
-
-// securityHooks returns the runner's security hooks or falls back to global hooks.
-func (r *Runner) securityHooks() observability.SecurityHooks {
-	if r.Hooks != nil && r.Hooks.Security != nil {
-		return r.Hooks.Security
-	}
-	return observability.Security()
 }
 
 // NewOptimalOrderer creates an optimal search orderer with progress reporting

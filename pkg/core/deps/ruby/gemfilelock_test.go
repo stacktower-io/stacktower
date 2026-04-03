@@ -216,7 +216,7 @@ BUNDLED WITH
 		t.Errorf("actionpack version = %q, want %q", v, "7.1.0")
 	}
 
-	node, ok = g.Node("activesupport")
+	_, ok = g.Node("activesupport")
 	if !ok {
 		t.Error("Node 'activesupport' from GEM source not found")
 	}

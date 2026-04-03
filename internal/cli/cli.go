@@ -79,10 +79,10 @@ func (c *CLI) SetQuiet(q bool) {
 // RootCommand creates the root cobra command with all subcommands registered.
 func (c *CLI) RootCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:          "stacktower",
-		Short:        "Stacktower visualizes dependency graphs as towers",
-		Long:         `Stacktower is a CLI tool for visualizing complex dependency graphs as tiered tower structures, making it easier to understand layering and flow.`,
-		Version:      buildinfo.Version,
+		Use:           "stacktower",
+		Short:         "Stacktower visualizes dependency graphs as towers",
+		Long:          `Stacktower is a CLI tool for visualizing complex dependency graphs as tiered tower structures, making it easier to understand layering and flow.`,
+		Version:       buildinfo.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
