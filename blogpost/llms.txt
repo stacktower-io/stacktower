@@ -34,7 +34,7 @@ It fetches dependency data from package registries and maintainer information fr
 
 ## Links
 
-- Source Code: https://github.com/matzehuels/stacktower
+- Source Code: https://github.com/stacktower-io/stacktower
 - Author: Matthias Huels (https://huels.ai)
 - Original Inspiration: XKCD #2347 (https://xkcd.com/2347/)
 
