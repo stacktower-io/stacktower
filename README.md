@@ -526,6 +526,187 @@ CACHE_DIR=$(stacktower cache path)
 
 ---
 
+## `stacktower why`
+
+Find all dependency paths from the root to a target package. Answers "why is this package in my dependency tree?"
+
+```bash
+stacktower why <graph.json|-> <package> [package...] [flags]
+```
+
+### Why Options
+
+| Flag             | Description                                          |
+| ---------------- | ---------------------------------------------------- |
+| `-f`, `--format` | Output format: `text` (default), `json`              |
+| `-o`, `--output` | Output file (stdout if empty)                        |
+| `--max-paths N`  | Maximum paths to display per target (default: 10)    |
+| `--shortest`     | Show only the shortest path(s)                       |
+
+### Why Examples
+
+```bash
+stacktower why flask.json markupsafe
+stacktower why flask.json markupsafe -f json
+stacktower why flask.json markupsafe --shortest
+
+# Multiple targets
+stacktower why flask.json markupsafe click jinja2
+
+# Piped from parse
+stacktower parse python flask | stacktower why - markupsafe
+```
+
+**Output:**
+
+```
+markupsafe 3.0.3
+
+  flask → markupsafe
+  flask → jinja2 → markupsafe
+  flask → werkzeug → markupsafe
+
+3 paths found (shortest: depth 1)
+```
+
+---
+
+## `stacktower stats`
+
+Produce a dependency health report from a parsed graph. Answers "how healthy is my dependency tree?"
+
+```bash
+stacktower stats <graph.json|-> [flags]
+```
+
+### Stats Options
+
+| Flag             | Description                         |
+| ---------------- | ----------------------------------- |
+| `-f`, `--format` | Output format: `text` (default), `json` |
+| `-o`, `--output` | Output file (stdout if empty)       |
+
+### Stats Examples
+
+```bash
+stacktower stats flask.json
+stacktower stats flask.json -f json
+
+# Piped from parse (with security scan for vuln data)
+stacktower parse python flask --security-scan | stacktower stats -
+```
+
+**Output:**
+
+```
+flask 3.1.3  ·  python
+
+Overview
+  8 packages · 9 edges · depth 2
+  6 direct · 1 transitive
+
+Maintenance
+  3 single-maintainer packages (43%)
+  1 brittle packages: pycparser
+  Median last commit: 47 days ago
+
+Licenses
+  7 permissive (MIT: 4, Apache-2.0: 2, BSD-3-Clause: 1)
+  1 unknown
+
+Vulnerabilities
+  0 critical · 1 high · 2 medium · 0 low
+  Affected: werkzeug (high), jinja2 (medium)
+
+Top load-bearing packages (most reverse dependencies)
+  1. markupsafe           — 3 dependents
+  2. typing-extensions    — 2 dependents
+```
+
+---
+
+## `stacktower diff`
+
+Compare two dependency graphs and report what changed: added, removed, updated packages, and new vulnerabilities.
+
+```bash
+stacktower diff <before.json> <after.json|-> [flags]
+```
+
+### Diff Options
+
+| Flag               | Description                                        |
+| ------------------ | -------------------------------------------------- |
+| `-f`, `--format`   | Output format: `text` (default), `json`            |
+| `-o`, `--output`   | Output file (stdout if empty)                      |
+| `--fail-on-vuln`   | Exit 3 if new vulnerabilities were introduced (CI) |
+
+### Diff Examples
+
+```bash
+# Compare two saved graphs
+stacktower diff flask-old.json flask.json
+stacktower diff flask-old.json flask.json -f json
+
+# Pipe the "new" graph from stdin
+stacktower parse python flask | stacktower diff flask-old.json -
+
+# Fail in CI if new vulnerabilities appear
+stacktower diff old.json new.json --fail-on-vuln
+```
+
+**Output:**
+
+```
+flask  2.0.0 → 3.1.3
+
++ 1 added    - 0 removed    ~ 2 updated    = 5 unchanged
+
+Added
+  + blinker 1.9.0
+
+Updated
+  ~ flask                2.0.0 → 3.1.3
+  ~ jinja2               3.1.2 → 3.1.6
+```
+
+---
+
+## `stacktower sbom`
+
+Export the dependency graph as a standards-compliant Software Bill of Materials in CycloneDX or SPDX format.
+
+```bash
+stacktower sbom <graph.json|-> [flags]
+```
+
+### SBOM Options
+
+| Flag               | Description                                              |
+| ------------------ | -------------------------------------------------------- |
+| `-f`, `--format`   | SBOM format: `cyclonedx` (default), `spdx`              |
+| `-o`, `--output`   | Output file (stdout if empty)                            |
+| `--encoding`       | Serialization: `json` (default), `xml` (CycloneDX only) |
+| `--spec-version`   | Specification version (default: latest supported)        |
+
+### SBOM Examples
+
+```bash
+# CycloneDX (default)
+stacktower sbom flask.json -o flask.cdx.json
+stacktower sbom flask.json -f cyclonedx --encoding xml -o flask.cdx.xml
+
+# SPDX
+stacktower sbom flask.json -f spdx -o flask.spdx.json
+
+# Piped from parse (with security scan for vuln data in SBOM)
+stacktower parse python flask --security-scan | stacktower sbom - -o flask.cdx.json
+```
+
+The generated SBOM includes package identifiers (purls), license data, dependency relationships, and vulnerability findings when the graph was parsed with `--security-scan`.
+
+---
+
 ## `stacktower github`
 
 GitHub authentication and app installation commands.
@@ -748,17 +929,19 @@ Stacktower uses stable exit codes for automation and CI:
 | `0` | Success |
 | `1` | Runtime/system failure (network, registry/API, render/pipeline errors) |
 | `2` | Invalid usage or input (unsupported language, invalid package/manifest arguments) |
+| `3` | New vulnerabilities detected (`diff --fail-on-vuln`) |
 | `130` | Interrupted (`Ctrl+C` / termination signal) |
 
 ## How It Works
 
 1. **Parse** — Fetch package metadata from registries or local manifest files
 2. **Scan** _(optional)_ — Query OSV.dev for known vulnerabilities and annotate nodes by severity
-3. **Reduce** — Remove transitive edges to show only direct dependencies
-4. **Layer** — Assign each package to a row based on its depth
-5. **Order** — Minimize edge crossings using branch-and-bound with PQ-tree pruning
-6. **Layout** — Compute block widths proportional to downstream dependents
-7. **Render** — Generate output in SVG, JSON, PDF, or PNG format, with vulnerability colours when available
+3. **Analyze** _(optional)_ — Trace dependency paths (`why`), compute health stats (`stats`), diff graphs (`diff`), or export SBOM (`sbom`)
+4. **Reduce** — Remove transitive edges to show only direct dependencies
+5. **Layer** — Assign each package to a row based on its depth
+6. **Order** — Minimize edge crossings using branch-and-bound with PQ-tree pruning
+7. **Layout** — Compute block widths proportional to downstream dependents
+8. **Render** — Generate output in SVG, JSON, PDF, or PNG format, with vulnerability colours when available
 
 The ordering step is where the magic happens. Stacktower uses an optimal search algorithm that guarantees minimum crossings for small-to-medium graphs. For larger graphs, it gracefully falls back after a configurable timeout.
 
@@ -804,6 +987,7 @@ Key packages:
 - [`pkg/core/deps`](https://pkg.go.dev/github.com/stacktower-io/stacktower/pkg/core/deps) — Dependency resolution from registries
 - [`pkg/pipeline`](https://pkg.go.dev/github.com/stacktower-io/stacktower/pkg/pipeline) — Complete parse → layout → render pipeline
 - [`pkg/security`](https://pkg.go.dev/github.com/stacktower-io/stacktower/pkg/security) — Vulnerability scanning via OSV.dev
+- [`pkg/sbom`](https://pkg.go.dev/github.com/stacktower-io/stacktower/pkg/sbom) — SBOM generation (CycloneDX, SPDX)
 
 ## Contributing
 

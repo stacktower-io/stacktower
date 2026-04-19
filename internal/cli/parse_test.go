@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacktower-io/stacktower/pkg/core/dag"
 	"github.com/stacktower-io/stacktower/pkg/core/deps/languages"
 )
 
@@ -235,6 +236,56 @@ func TestValidatePackageName_SecurityBoundaries(t *testing.T) {
 			// Just ensure it doesn't panic
 			_ = validatePackageName(tt.pkgName)
 		})
+	}
+}
+
+func TestSuggestOutputName(t *testing.T) {
+	tests := []struct {
+		name    string
+		rootID  string
+		version string
+		ref     string
+		want    string
+	}{
+		{"registry with version", "flask", "3.1.0", "", "flask-3.1.0.json"},
+		{"github with ref tag", "myrepo", "", "v2.0.0", "myrepo-v2.0.0.json"},
+		{"github with branch", "myrepo", "", "main", "myrepo-main.json"},
+		{"github with slash in ref", "myrepo", "", "feature/foo", "myrepo-feature-foo.json"},
+		{"no version or ref", "flask", "", "", "flask.json"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := dag.New(nil)
+			meta := dag.Metadata{}
+			if tt.version != "" {
+				meta["version"] = tt.version
+			}
+			g.AddNode(dag.Node{ID: tt.rootID, Row: 0, Meta: meta})
+
+			got := suggestOutputName(g, tt.ref)
+			if got != tt.want {
+				t.Errorf("suggestOutputName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSanitizeFilenameSegment(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"v2.0.0", "v2.0.0"},
+		{"feature/branch", "feature-branch"},
+		{"refs/tags/v1", "refs-tags-v1"},
+		{"some:thing", "some-thing"},
+	}
+	for _, tt := range tests {
+		got := sanitizeFilenameSegment(tt.input)
+		if got != tt.want {
+			t.Errorf("sanitizeFilenameSegment(%q) = %q, want %q", tt.input, got, tt.want)
+		}
 	}
 }
 

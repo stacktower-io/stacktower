@@ -111,6 +111,10 @@ func (c *CLI) RootCommand() *cobra.Command {
 	root.AddCommand(c.pqtreeCommand())
 	root.AddCommand(c.githubCommand())
 	root.AddCommand(c.completionCommand())
+	root.AddCommand(c.whyCommand())
+	root.AddCommand(c.statsCommand())
+	root.AddCommand(c.diffCommand())
+	root.AddCommand(c.sbomCommand())
 
 	return root
 }

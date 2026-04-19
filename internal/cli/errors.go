@@ -11,6 +11,8 @@ const (
 	ExitCodeFailure = 1
 	// ExitCodeUsage indicates invalid input/usage from the caller.
 	ExitCodeUsage = 2
+	// ExitCodeVuln signals that new vulnerabilities were detected (used by diff --fail-on-vuln).
+	ExitCodeVuln = 3
 	// ExitCodeInterrupted follows shell convention for SIGINT/SIGTERM.
 	ExitCodeInterrupted = 130
 )
@@ -91,6 +93,11 @@ func ExitCodeForError(err error) int {
 	}
 	if errors.Is(err, context.Canceled) {
 		return ExitCodeInterrupted
+	}
+
+	var vulnErr *VulnError
+	if errors.As(err, &vulnErr) {
+		return ExitCodeVuln
 	}
 
 	var cliErr *CLIError

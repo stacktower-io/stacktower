@@ -224,7 +224,7 @@ func (c *CLI) runParseGitHub(ctx context.Context, args []string, flags *parseFla
 		flags.name = repo
 	}
 	if flags.output == "" {
-		flags.output = repo + ".json"
+		flags.output = repo + "-" + sanitizeFilenameSegment(selectedRef) + ".json"
 	}
 
 	ui.PrintNewline()
@@ -266,6 +266,7 @@ func (c *CLI) runParseGitHub(ctx context.Context, args []string, flags *parseFla
 		Elapsed:        time.Since(start),
 		RuntimeVersion: result.RuntimeVersion,
 		RuntimeSource:  result.RuntimeSource,
+		Ref:            selectedRef,
 	})
 }
 

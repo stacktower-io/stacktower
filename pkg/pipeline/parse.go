@@ -111,6 +111,7 @@ func Parse(ctx context.Context, c cache.Cache, opts Options) (*ParseResult, erro
 	// Store parse options in graph metadata so they persist through caching
 	filteredGraph.Meta()["runtime_version"] = runtimeVersion
 	filteredGraph.Meta()["runtime_source"] = runtimeSource
+	filteredGraph.Meta()["language"] = opts.Language
 	filteredGraph.Meta()["dependency_scope"] = opts.DependencyScope
 	filteredGraph.Meta()["include_prerelease"] = opts.IncludePrerelease
 

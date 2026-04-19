@@ -284,6 +284,7 @@ type finishParseOpts struct {
 	Elapsed        time.Duration
 	RuntimeVersion string
 	RuntimeSource  string
+	Ref            string // git ref (branch/tag) for GitHub-parsed packages
 }
 
 // finishParse writes output and prints summary.
@@ -371,8 +372,46 @@ func finishParse(opts finishParseOpts) error {
 		return graph.WriteGraph(g, os.Stdout)
 	}
 
-	ui.PrintNextStep("Save as JSON", fmt.Sprintf("stacktower parse %s %s -o deps.json", langName, source))
+	suggested := suggestOutputName(g, opts.Ref)
+	ui.PrintNextStep("Save as JSON", fmt.Sprintf("stacktower parse %s %s -o %s", langName, source, suggested))
 	return nil
+}
+
+// suggestOutputName builds a descriptive filename from the graph's root node.
+// For registry packages it produces "flask-3.1.0.json"; for GitHub-parsed
+// packages with a ref it produces "repo-v2.0.0.json". Falls back to
+// "root.json" when no version/ref data is available.
+func suggestOutputName(g *dag.DAG, ref string) string {
+	roots := ui.FindRoots(g)
+	if len(roots) == 0 {
+		return "deps.json"
+	}
+	root := roots[0]
+
+	// Prefer git ref (branch/tag) when available (GitHub flow)
+	if ref != "" {
+		return root + "-" + sanitizeFilenameSegment(ref) + ".json"
+	}
+
+	// Fall back to resolved version from node metadata
+	if n, ok := g.Node(root); ok && n.Meta != nil {
+		if v, ok := n.Meta["version"].(string); ok && v != "" {
+			return root + "-" + sanitizeFilenameSegment(v) + ".json"
+		}
+	}
+
+	return root + ".json"
+}
+
+// sanitizeFilenameSegment replaces filesystem-unfriendly characters in a
+// version or ref string so it can safely appear in a filename.
+func sanitizeFilenameSegment(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == ':' || r == ' ' {
+			return '-'
+		}
+		return r
+	}, s)
 }
 
 // looksLikeFile returns true if arg appears to be a file path.

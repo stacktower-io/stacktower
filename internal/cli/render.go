@@ -306,10 +306,7 @@ func writeArtifacts(p artifactWriteParams) error {
 }
 
 func readRenderInput(input string) (*dag.DAG, error) {
-	if input == "-" {
-		return graph.ReadGraph(os.Stdin)
-	}
-	return graph.ReadGraphFile(input)
+	return loadGraph(input)
 }
 
 // deriveBasePath computes the base path for output files.
