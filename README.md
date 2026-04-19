@@ -21,8 +21,6 @@ Inspired by [XKCD #2347](https://xkcd.com/2347/), Stacktower renders dependency 
 
 ---
 
-> ⚠️ **Note:** The ordering algorithms are still experimental and may not produce nicely stacked towers for projects with a large number of dependencies. Results can vary. We're actively working on improvements.
-
 ## Installation
 
 ### Homebrew (macOS/Linux)
