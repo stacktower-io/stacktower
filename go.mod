@@ -1,6 +1,6 @@
 module github.com/stacktower-io/stacktower
 
-go 1.25.8
+go 1.25.9
 
 require (
 	github.com/BurntSushi/toml v1.5.0
