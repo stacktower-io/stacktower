@@ -491,7 +491,7 @@ stacktower visualize <layout.json> [flags]
 | Flag               | Description                                                              |
 | ------------------ | ------------------------------------------------------------------------ |
 | `-o`, `--output`   | Output file or base path for multiple formats                            |
-| `-f`, `--format`   | Output format(s): `svg` (default), `pdf`, `png` (comma-separated)        |
+| `-f`, `--format`   | Output format(s): `svg` (default), `json`, `pdf`, `png` (comma-separated)|
 | `--style`          | Visual style: `handdrawn` (default), `simple`                            |
 | `--edges`          | Show dependency edges (tower)                                            |
 | `--popups`         | Show hover popups with metadata (default: true)                          |
