@@ -28,15 +28,15 @@ type spdxCreationInfo struct {
 }
 
 type spdxPackage struct {
-	SPDXID           string             `json:"SPDXID"`
-	Name             string             `json:"name"`
-	VersionInfo      string             `json:"versionInfo,omitempty"`
-	DownloadLocation string             `json:"downloadLocation"`
-	FilesAnalyzed    bool               `json:"filesAnalyzed"`
-	LicenseConcluded string             `json:"licenseConcluded,omitempty"`
-	LicenseDeclared  string             `json:"licenseDeclared,omitempty"`
-	CopyrightText    string             `json:"copyrightText"`
-	ExternalRefs     []spdxExternalRef  `json:"externalRefs,omitempty"`
+	SPDXID           string            `json:"SPDXID"`
+	Name             string            `json:"name"`
+	VersionInfo      string            `json:"versionInfo,omitempty"`
+	DownloadLocation string            `json:"downloadLocation"`
+	FilesAnalyzed    bool              `json:"filesAnalyzed"`
+	LicenseConcluded string            `json:"licenseConcluded,omitempty"`
+	LicenseDeclared  string            `json:"licenseDeclared,omitempty"`
+	CopyrightText    string            `json:"copyrightText"`
+	ExternalRefs     []spdxExternalRef `json:"externalRefs,omitempty"`
 }
 
 type spdxExternalRef struct {

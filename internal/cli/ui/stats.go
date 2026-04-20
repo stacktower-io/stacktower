@@ -23,10 +23,10 @@ type StatsReport struct {
 	Language string
 
 	// Overview
-	TotalPackages int
-	TotalEdges    int
-	MaxDepth      int
-	DirectDeps    int
+	TotalPackages  int
+	TotalEdges     int
+	MaxDepth       int
+	DirectDeps     int
 	TransitiveDeps int
 
 	// Maintenance

@@ -13,20 +13,20 @@ import (
 // CycloneDX BOM types (CycloneDX 1.6 JSON/XML schema)
 
 type cdxBOM struct {
-	XMLName      xml.Name          `json:"-" xml:"bom"`
-	BOMFormat    string            `json:"bomFormat" xml:"-"`
-	SpecVersion  string            `json:"specVersion" xml:"version,attr"`
-	SerialNumber string            `json:"serialNumber" xml:"serialNumber,attr"`
-	Version      int               `json:"version" xml:"version"`
-	Metadata     cdxMetadata       `json:"metadata" xml:"metadata"`
-	Components   []cdxComponent    `json:"components" xml:"components>component"`
-	Dependencies []cdxDependency   `json:"dependencies" xml:"dependencies>dependency"`
-	Vulns        []cdxVuln         `json:"vulnerabilities,omitempty" xml:"vulnerabilities>vulnerability,omitempty"`
+	XMLName      xml.Name        `json:"-" xml:"bom"`
+	BOMFormat    string          `json:"bomFormat" xml:"-"`
+	SpecVersion  string          `json:"specVersion" xml:"version,attr"`
+	SerialNumber string          `json:"serialNumber" xml:"serialNumber,attr"`
+	Version      int             `json:"version" xml:"version"`
+	Metadata     cdxMetadata     `json:"metadata" xml:"metadata"`
+	Components   []cdxComponent  `json:"components" xml:"components>component"`
+	Dependencies []cdxDependency `json:"dependencies" xml:"dependencies>dependency"`
+	Vulns        []cdxVuln       `json:"vulnerabilities,omitempty" xml:"vulnerabilities>vulnerability,omitempty"`
 }
 
 type cdxMetadata struct {
-	Timestamp string       `json:"timestamp" xml:"timestamp"`
-	Tools     *cdxTools    `json:"tools,omitempty" xml:"tools,omitempty"`
+	Timestamp string        `json:"timestamp" xml:"timestamp"`
+	Tools     *cdxTools     `json:"tools,omitempty" xml:"tools,omitempty"`
 	Component *cdxComponent `json:"component,omitempty" xml:"component,omitempty"`
 }
 
@@ -35,13 +35,13 @@ type cdxTools struct {
 }
 
 type cdxComponent struct {
-	Type       string             `json:"type" xml:"type,attr"`
-	Name       string             `json:"name" xml:"name"`
-	Version    string             `json:"version,omitempty" xml:"version,omitempty"`
-	BOMRef     string             `json:"bom-ref,omitempty" xml:"bom-ref,attr,omitempty"`
-	PURL       string             `json:"purl,omitempty" xml:"purl,omitempty"`
-	Licenses   []cdxLicenseChoice `json:"licenses,omitempty" xml:"licenses>license,omitempty"`
-	ExtRefs    []cdxExtRef        `json:"externalReferences,omitempty" xml:"externalReferences>reference,omitempty"`
+	Type     string             `json:"type" xml:"type,attr"`
+	Name     string             `json:"name" xml:"name"`
+	Version  string             `json:"version,omitempty" xml:"version,omitempty"`
+	BOMRef   string             `json:"bom-ref,omitempty" xml:"bom-ref,attr,omitempty"`
+	PURL     string             `json:"purl,omitempty" xml:"purl,omitempty"`
+	Licenses []cdxLicenseChoice `json:"licenses,omitempty" xml:"licenses>license,omitempty"`
+	ExtRefs  []cdxExtRef        `json:"externalReferences,omitempty" xml:"externalReferences>reference,omitempty"`
 }
 
 type cdxLicenseChoice struct {

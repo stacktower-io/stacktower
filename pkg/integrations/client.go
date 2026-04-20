@@ -20,9 +20,11 @@ import (
 	"github.com/stacktower-io/stacktower/pkg/observability"
 )
 
-// MaxResponseSize is the maximum allowed HTTP response body size (10MB).
+// MaxResponseSize is the maximum allowed HTTP response body size (25MB).
 // Responses larger than this are rejected to prevent memory exhaustion.
-const MaxResponseSize = 10 * 1024 * 1024
+// Set to 25MB to accommodate large PyPI project metadata (e.g., pydantic-core
+// has >10MB of release file metadata across all platforms/versions).
+const MaxResponseSize = 25 * 1024 * 1024
 
 // Client provides shared HTTP functionality for all registry API clients.
 // It handles caching, retry logic, request deduplication, proactive rate limiting,
@@ -218,7 +220,15 @@ func (c *Client) GetWithHeaders(ctx context.Context, url string, headers map[str
 	// Limit response size to prevent memory exhaustion from large/malicious responses
 	limited := &io.LimitedReader{R: body, N: MaxResponseSize + 1}
 	if err := json.NewDecoder(limited).Decode(v); err != nil {
-		return err
+		if limited.N <= 0 {
+			return fmt.Errorf("response exceeds maximum size of %d bytes", MaxResponseSize)
+		}
+		// EOF-family errors during body read indicate a truncated response
+		// (connection dropped, server closed early). Treat as retryable network error.
+		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+			return cache.Retryable(fmt.Errorf("%w: %s: %v", ErrNetwork, url, err))
+		}
+		return fmt.Errorf("decode response from %s: %w", url, err)
 	}
 	if limited.N <= 0 {
 		return fmt.Errorf("response exceeds maximum size of %d bytes", MaxResponseSize)
@@ -254,6 +264,9 @@ func (c *Client) GetText(ctx context.Context, url string) (string, error) {
 	limited := io.LimitReader(body, MaxResponseSize+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
+		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+			return "", cache.Retryable(fmt.Errorf("%w: %s: %v", ErrNetwork, url, err))
+		}
 		return "", err
 	}
 	if len(data) > MaxResponseSize {
@@ -279,7 +292,13 @@ func (c *Client) PostJSON(ctx context.Context, url string, body any, v any) erro
 	// Limit response size to prevent memory exhaustion
 	limited := &io.LimitedReader{R: respBody, N: MaxResponseSize + 1}
 	if err := json.NewDecoder(limited).Decode(v); err != nil {
-		return err
+		if limited.N <= 0 {
+			return fmt.Errorf("response exceeds maximum size of %d bytes", MaxResponseSize)
+		}
+		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+			return cache.Retryable(fmt.Errorf("%w: %s: %v", ErrNetwork, url, err))
+		}
+		return fmt.Errorf("decode response from %s: %w", url, err)
 	}
 	if limited.N <= 0 {
 		return fmt.Errorf("response exceeds maximum size of %d bytes", MaxResponseSize)

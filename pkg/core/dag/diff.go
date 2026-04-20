@@ -51,8 +51,14 @@ func Diff(before, after *DAG) *DiffResult {
 		After:  buildDiffSummary(after),
 	}
 
-	beforeNodes := collectDiffNodes(before)
-	afterNodes := collectDiffNodes(after)
+	// Exclude roots — they are the packages being compared, not dependencies.
+	excludeIDs := map[string]bool{
+		result.Before.RootID: true,
+		result.After.RootID:  true,
+	}
+
+	beforeNodes := collectDiffNodes(before, excludeIDs)
+	afterNodes := collectDiffNodes(after, excludeIDs)
 
 	// Added: in after but not in before
 	for id, an := range afterNodes {
@@ -113,10 +119,10 @@ func buildDiffSummary(g *DAG) DiffSummary {
 	}
 }
 
-func collectDiffNodes(g *DAG) map[string]*Node {
+func collectDiffNodes(g *DAG, exclude map[string]bool) map[string]*Node {
 	m := make(map[string]*Node)
 	for _, n := range g.Nodes() {
-		if n.IsSynthetic() || n.ID == "__project__" {
+		if n.IsSynthetic() || n.ID == "__project__" || exclude[n.ID] {
 			continue
 		}
 		m[n.ID] = n

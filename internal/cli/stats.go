@@ -70,17 +70,17 @@ type statsMaintenanceJSON struct {
 }
 
 type statsLicensesJSON struct {
-	Summary    map[string]int `json:"summary"`
-	Breakdown  map[string]int `json:"breakdown"`
-	Compliant  bool           `json:"compliant"`
+	Summary   map[string]int `json:"summary"`
+	Breakdown map[string]int `json:"breakdown"`
+	Compliant bool           `json:"compliant"`
 }
 
 type statsVulnsJSON struct {
-	Critical int                  `json:"critical"`
-	High     int                  `json:"high"`
-	Medium   int                  `json:"medium"`
-	Low      int                  `json:"low"`
-	Affected []statsAffectedJSON  `json:"affected"`
+	Critical int                 `json:"critical"`
+	High     int                 `json:"high"`
+	Medium   int                 `json:"medium"`
+	Low      int                 `json:"low"`
+	Affected []statsAffectedJSON `json:"affected"`
 }
 
 type statsAffectedJSON struct {

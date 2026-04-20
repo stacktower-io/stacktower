@@ -13,8 +13,8 @@ import (
 
 func (c *CLI) diffCommand() *cobra.Command {
 	var (
-		format    string
-		output    string
+		format     string
+		output     string
 		failOnVuln bool
 	)
 
@@ -38,8 +38,8 @@ were introduced (useful in CI pipelines).`,
 }
 
 type diffJSON struct {
-	Before    diffSideJSON   `json:"before"`
-	After     diffSideJSON   `json:"after"`
+	Before    diffSideJSON     `json:"before"`
+	After     diffSideJSON     `json:"after"`
 	Added     []diffEntryJSON  `json:"added"`
 	Removed   []diffEntryJSON  `json:"removed"`
 	Updated   []diffUpdateJSON `json:"updated"`

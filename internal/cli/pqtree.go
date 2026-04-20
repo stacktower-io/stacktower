@@ -17,8 +17,8 @@ func (c *CLI) pqtreeCommand() *cobra.Command {
 	var labels string
 
 	cmd := &cobra.Command{
-		Use:   "pqtree [constraints...]",
-		Short: "Experimental: render a PQ-tree with optional constraints",
+		Use:    "pqtree [constraints...]",
+		Short:  "Experimental: render a PQ-tree with optional constraints",
 		Hidden: true,
 		Long: `Render a PQ-tree visualization showing valid permutations.
 
