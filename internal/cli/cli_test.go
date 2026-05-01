@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacktower-io/stacktower/internal/cli/ui"
 	"github.com/stacktower-io/stacktower/pkg/cache"
 )
 
@@ -59,25 +60,33 @@ func TestNewCache(t *testing.T) {
 }
 
 func TestCLI_SetQuiet(t *testing.T) {
-	cli := New(os.Stderr, LogInfo)
+	resetCLIForTesting()
+	cli, err := New(os.Stderr, LogInfo)
+	if err != nil {
+		t.Fatalf("cli.New: %v", err)
+	}
 
-	if cli.Quiet {
+	if ui.IsQuiet() {
 		t.Error("CLI should not be quiet by default")
 	}
 
 	cli.SetQuiet(true)
-	if !cli.Quiet {
-		t.Error("CLI.Quiet should be true after SetQuiet(true)")
+	if !ui.IsQuiet() {
+		t.Error("ui.IsQuiet() should be true after SetQuiet(true)")
 	}
 
 	cli.SetQuiet(false)
-	if cli.Quiet {
-		t.Error("CLI.Quiet should be false after SetQuiet(false)")
+	if ui.IsQuiet() {
+		t.Error("ui.IsQuiet() should be false after SetQuiet(false)")
 	}
 }
 
 func TestCLI_SetLogLevel(t *testing.T) {
-	cli := New(os.Stderr, LogInfo)
+	resetCLIForTesting()
+	cli, err := New(os.Stderr, LogInfo)
+	if err != nil {
+		t.Fatalf("cli.New: %v", err)
+	}
 
 	cli.SetLogLevel(LogDebug)
 	if cli.Logger.GetLevel() != LogDebug {

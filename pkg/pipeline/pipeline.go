@@ -54,6 +54,7 @@ import (
 	"github.com/stacktower-io/stacktower/pkg/core/dag"
 	"github.com/stacktower-io/stacktower/pkg/core/deps"
 	"github.com/stacktower-io/stacktower/pkg/core/render/tower/ordering"
+	sterrors "github.com/stacktower-io/stacktower/pkg/errors"
 	"github.com/stacktower-io/stacktower/pkg/graph"
 )
 
@@ -71,6 +72,16 @@ const (
 	// DefaultMaxNodes is the maximum number of nodes to fetch.
 	// This matches deps.DefaultMaxNodes (5000) to maintain consistency.
 	DefaultMaxNodes = 5000
+
+	// MaxAllowedDepth is the hard upper bound on MaxDepth. Traversals
+	// deeper than this are rejected to prevent runaway work and to keep
+	// visualisation output tractable.
+	MaxAllowedDepth = 100
+
+	// MaxAllowedNodes is the hard upper bound on MaxNodes. Larger graphs
+	// are rejected because they lead to excessive memory use during
+	// resolution and layout computation.
+	MaxAllowedNodes = 50000
 
 	// DefaultWidth is the default frame width in pixels.
 	DefaultWidth = 800.0
@@ -99,25 +110,31 @@ const (
 	FormatJSON = "json"
 )
 
-// ValidFormats is the set of supported output formats.
-var ValidFormats = map[string]bool{
+var validFormats = map[string]bool{
 	FormatSVG:  true,
 	FormatPNG:  true,
 	FormatPDF:  true,
 	FormatJSON: true,
 }
 
-// ValidStyles is the set of supported visual styles.
-var ValidStyles = map[string]bool{
+var validStyles = map[string]bool{
 	graph.StyleSimple:    true,
 	graph.StyleHanddrawn: true,
 }
 
-// ValidVizTypes is the set of supported visualization types.
-var ValidVizTypes = map[string]bool{
+var validVizTypes = map[string]bool{
 	graph.VizTypeTower:    true,
 	graph.VizTypeNodelink: true,
 }
+
+// IsValidFormat reports whether f is a supported output format.
+func IsValidFormat(f string) bool { return validFormats[f] }
+
+// IsValidStyle reports whether s is a supported visual style.
+func IsValidStyle(s string) bool { return validStyles[s] }
+
+// IsValidVizType reports whether t is a supported visualization type.
+func IsValidVizType(t string) bool { return validVizTypes[t] }
 
 // =============================================================================
 // Options - Pipeline Configuration
@@ -231,7 +248,7 @@ type CacheInfo struct {
 
 // ValidateFormat checks that a format is valid.
 func ValidateFormat(format string) error {
-	if !ValidFormats[format] {
+	if !validFormats[format] {
 		return fmt.Errorf("invalid format: %q (must be one of: svg, png, pdf, json)", format)
 	}
 	return nil
@@ -249,7 +266,7 @@ func ValidateFormats(formats []string) error {
 
 // ValidateStyle checks that a style is valid.
 func ValidateStyle(style string) error {
-	if !ValidStyles[style] {
+	if !validStyles[style] {
 		return fmt.Errorf("invalid style: %q (must be one of: simple, handdrawn)", style)
 	}
 	return nil
@@ -257,7 +274,7 @@ func ValidateStyle(style string) error {
 
 // ValidateVizType checks that a visualization type is valid.
 func ValidateVizType(vizType string) error {
-	if !ValidVizTypes[vizType] {
+	if !validVizTypes[vizType] {
 		return fmt.Errorf("invalid viz_type: %q (must be one of: tower, nodelink)", vizType)
 	}
 	return nil
@@ -282,7 +299,9 @@ func (o *Options) ValidateAndSetDefaults() error {
 	return nil
 }
 
-// ValidateForParse checks required fields for parsing.
+// ValidateForParse checks required fields for parsing and enforces safety
+// bounds on MaxDepth/MaxNodes. Zero values are promoted to defaults; negative
+// values and values exceeding MaxAllowedDepth/MaxAllowedNodes are rejected.
 func (o *Options) ValidateForParse() error {
 	if o.Language == "" {
 		return fmt.Errorf("language is required")
@@ -293,14 +312,30 @@ func (o *Options) ValidateForParse() error {
 	if o.Manifest != "" && o.ManifestFilename == "" {
 		return fmt.Errorf("manifest_filename is required")
 	}
+	if o.Manifest != "" {
+		if err := sterrors.ValidateManifestFilename(o.ManifestFilename); err != nil {
+			return fmt.Errorf("invalid manifest_filename: %w", err)
+		}
+	}
 
-	// Parse defaults
-	if o.MaxDepth == 0 {
+	switch {
+	case o.MaxDepth < 0:
+		return fmt.Errorf("max_depth must be at least 1 (got %d)", o.MaxDepth)
+	case o.MaxDepth == 0:
 		o.MaxDepth = DefaultMaxDepth
+	case o.MaxDepth > MaxAllowedDepth:
+		return fmt.Errorf("max_depth cannot exceed %d (got %d) to prevent excessive traversal", MaxAllowedDepth, o.MaxDepth)
 	}
-	if o.MaxNodes == 0 {
+
+	switch {
+	case o.MaxNodes < 0:
+		return fmt.Errorf("max_nodes must be at least 1 (got %d)", o.MaxNodes)
+	case o.MaxNodes == 0:
 		o.MaxNodes = DefaultMaxNodes
+	case o.MaxNodes > MaxAllowedNodes:
+		return fmt.Errorf("max_nodes cannot exceed %d (got %d) to prevent memory issues", MaxAllowedNodes, o.MaxNodes)
 	}
+
 	if o.DependencyScope == "" {
 		o.DependencyScope = deps.DependencyScopeProdOnly
 	}
@@ -308,7 +343,6 @@ func (o *Options) ValidateForParse() error {
 		return fmt.Errorf("invalid dependency_scope: %q (must be one of: %s, %s)", o.DependencyScope, deps.DependencyScopeProdOnly, deps.DependencyScopeAll)
 	}
 
-	// Logger default
 	if o.Logger == nil {
 		o.Logger = log.NewWithOptions(io.Discard, log.Options{})
 	}

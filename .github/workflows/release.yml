@@ -23,6 +23,14 @@ jobs:
           go-version-file: "go.mod"
           cache: true
 
+      - name: Validate required GitHub App variables
+        env:
+          STACKTOWER_GITHUB_APP_CLIENT_ID: ${{ vars.STACKTOWER_GITHUB_APP_CLIENT_ID }}
+          STACKTOWER_GITHUB_APP_SLUG: ${{ vars.STACKTOWER_GITHUB_APP_SLUG }}
+        run: |
+          test -n "${STACKTOWER_GITHUB_APP_CLIENT_ID}" || (echo "Missing required org/repo variable: STACKTOWER_GITHUB_APP_CLIENT_ID" && exit 1)
+          test -n "${STACKTOWER_GITHUB_APP_SLUG}" || (echo "Missing required org/repo variable: STACKTOWER_GITHUB_APP_SLUG" && exit 1)
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -31,3 +39,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          STACKTOWER_GITHUB_APP_CLIENT_ID: ${{ vars.STACKTOWER_GITHUB_APP_CLIENT_ID }}
+          STACKTOWER_GITHUB_APP_SLUG: ${{ vars.STACKTOWER_GITHUB_APP_SLUG }}

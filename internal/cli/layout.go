@@ -38,30 +38,24 @@ Supports both tower (-t tower) and nodelink (-t nodelink) visualization types.
 Results are cached locally for faster subsequent runs.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateRenderStyle(opts.Style); err != nil {
+				return err
+			}
+			if err := validateOrderingTimeout(orderTimeout); err != nil {
+				return err
+			}
 			return c.runLayout(cmd.Context(), args[0], opts, output, noCache, orderTimeout)
 		},
 	}
 
-	// Common flags
 	cmd.Flags().StringVarP(&output, "output", "o", "", "output file (default: <input>.layout.json)")
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "disable caching")
-
-	// Layout flags
-	cmd.Flags().StringVarP(&opts.VizType, "type", "t", opts.VizType, "visualization type: tower (default), nodelink")
-	cmd.Flags().BoolVar(&opts.Normalize, "normalize", opts.Normalize, "apply graph normalization")
-	cmd.Flags().Float64Var(&opts.Width, "width", opts.Width, "frame width")
-	cmd.Flags().Float64Var(&opts.Height, "height", opts.Height, "frame height")
-	cmd.Flags().StringVar(&opts.Ordering, "ordering", opts.Ordering, "ordering algorithm: optimal (default), barycentric")
-	cmd.Flags().BoolVar(&opts.Randomize, "randomize", opts.Randomize, "randomize block widths (tower)")
-	cmd.Flags().BoolVar(&opts.Merge, "merge", opts.Merge, "merge subdivider blocks (tower)")
-	cmd.Flags().BoolVar(&opts.Nebraska, "nebraska", opts.Nebraska, "show Nebraska maintainer ranking (tower)")
-	cmd.Flags().IntVar(&orderTimeout, "ordering-timeout", defaultOrderTimeout, "timeout in seconds for optimal ordering search")
+	addLayoutFlags(cmd, &opts, &orderTimeout)
+	// 'style' is shared with visualize but at the layout stage it only
+	// affects style defaults baked into the layout; it stays here to
+	// preserve existing CLI UX (users can already pass --style to layout).
 	cmd.Flags().StringVar(&opts.Style, "style", opts.Style, "visual style: handdrawn (default), simple")
-
-	// Security flags
-	cmd.Flags().BoolVar(&opts.ShowVulns, "show-vulns", opts.ShowVulns, "show vulnerability severity colours (requires scanned graph)")
-	cmd.Flags().BoolVar(&opts.ShowLicenses, "show-licenses", opts.ShowLicenses, "show license compliance indicators (copyleft/unknown borders)")
-	cmd.Flags().BoolVar(&opts.FlagsOnTop, "flags-on-top", opts.FlagsOnTop, "render security flags on top of all blocks")
+	addSecurityFlags(cmd, &opts)
 
 	return cmd
 }
@@ -70,9 +64,13 @@ Results are cached locally for faster subsequent runs.`,
 func (c *CLI) runLayout(ctx context.Context, input string, opts pipeline.Options, output string, noCache bool, orderTimeout int) error {
 	start := time.Now()
 
-	g, err := graph.ReadGraphFile(input)
+	g, err := loadGraph(input)
 	if err != nil {
-		return WrapSystemError(err, fmt.Sprintf("failed to load graph %s", input), "Check that the file exists and is valid JSON.")
+		hint := "Check that the file exists and is valid JSON."
+		if input == "-" {
+			hint = "Pipe valid graph JSON to stdin."
+		}
+		return WrapSystemError(err, fmt.Sprintf("failed to load graph %s", input), hint)
 	}
 
 	runner, err := c.newRunner(noCache, false)
@@ -83,7 +81,7 @@ func (c *CLI) runLayout(ctx context.Context, input string, opts pipeline.Options
 
 	opts.Logger = c.Logger
 	if opts.NeedsOptimalOrderer() {
-		opts.Orderer = c.newOptimalOrderer(orderTimeout)
+		opts.Orderer = c.newOptimalOrderer(ctx, orderTimeout)
 	}
 
 	workGraph, err := runner.PrepareGraph(g, opts)
@@ -92,6 +90,10 @@ func (c *CLI) runLayout(ctx context.Context, input string, opts pipeline.Options
 	}
 
 	spinner := ui.NewSpinnerWithContext(ctx, fmt.Sprintf("Computing %s layout...", opts.VizType))
+	if opts.NeedsOptimalOrderer() {
+		c.AttachOrderingSpinner(spinner)
+		defer c.AttachOrderingSpinner(nil)
+	}
 	spinner.Start()
 
 	layout, cacheHit, err := runner.GenerateLayoutWithCacheInfo(ctx, workGraph, opts)

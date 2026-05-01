@@ -5,7 +5,10 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/mattn/go-runewidth"
 
 	"github.com/stacktower-io/stacktower/pkg/core/deps"
 )
@@ -68,7 +71,7 @@ func PrintSuccess(format string, args ...any) {
 // PrintError prints an error message to stderr. Never suppressed.
 func PrintError(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintln(os.Stderr, StyleIconError.Render(IconError)+" "+msg)
+	fmt.Fprintln(os.Stderr, StyleIconError.Render(IconError)+" "+StyleError.Render(msg))
 }
 
 // PrintWarning prints a warning message to stderr. Never suppressed.
@@ -163,11 +166,12 @@ func FormatDuration(d time.Duration) string {
 
 // RenderStats holds curated render output info.
 type RenderStats struct {
-	Layers     int
-	Crossings  int
-	Ordering   string
-	Style      string
-	Dimensions string
+	Layers      int
+	Crossings   int
+	OrderingRan bool // true when layout ordering was computed (not just visualization)
+	Ordering    string
+	Style       string
+	Dimensions  string
 }
 
 // PrintRenderStats prints a curated summary of the render operation.
@@ -179,10 +183,12 @@ func PrintRenderStats(s RenderStats) {
 		StyleNumber.Render(fmt.Sprintf("%d", s.Layers)) + StyleDim.Render(" layers"),
 	}
 
-	if s.Crossings == 0 {
-		parts = append(parts, StyleSuccess.Render("0")+StyleDim.Render(" crossings"))
-	} else {
-		parts = append(parts, StyleWarning.Render(fmt.Sprintf("%d", s.Crossings))+StyleDim.Render(" crossings"))
+	if s.OrderingRan {
+		if s.Crossings == 0 {
+			parts = append(parts, StyleSuccess.Render("0")+StyleDim.Render(" crossings"))
+		} else {
+			parts = append(parts, StyleWarning.Render(fmt.Sprintf("%d", s.Crossings))+StyleDim.Render(" crossings"))
+		}
 	}
 
 	parts = append(parts, StyleDim.Render(s.Ordering))
@@ -199,17 +205,31 @@ func JoinDot(parts []string) string {
 
 // =============================================================================
 // Section Headers
+//
+// The CLI has two canonical section styles, intentionally visually distinct:
+//
+//   PrintHeader    — a bold title with a full-width underline on the next
+//                    line. Use for TOP-LEVEL section banners that open a
+//                    command's output (e.g. "Cache", "whoami").
+//
+//   PrintSeparator — a short "─── title ───" divider with vertical padding.
+//                    Use to delimit INLINE sub-sections within a single
+//                    command's output (e.g. "Dependency Tree" inside
+//                    `parse`).
+//
+// Keep new callers in one of these two modes — ad-hoc `Bold(title)` prints
+// drift over time and make the output look inconsistent.
 // =============================================================================
 
-// PrintHeader prints a styled section header to stderr. Used for multi-phase
-// commands (e.g. GitHub flow) and informational displays (e.g. whoami).
-// Suppressed in quiet mode.
+// PrintHeader prints a styled top-level section header to stderr. Used for
+// multi-phase commands (e.g. GitHub flow) and informational displays (e.g.
+// whoami). Suppressed in quiet mode.
 func PrintHeader(title string) {
 	if quietMode {
 		return
 	}
 	fmt.Fprintln(os.Stderr, StyleTitle.Render(title))
-	fmt.Fprintln(os.Stderr, StyleDim.Render(strings.Repeat("─", len(title)+2)))
+	fmt.Fprintln(os.Stderr, StyleDim.Render(strings.Repeat("─", runewidth.StringWidth(title)+2)))
 }
 
 // =============================================================================
@@ -253,8 +273,89 @@ func PrintNewline() {
 	fmt.Fprintln(os.Stderr)
 }
 
-// SupportedManifestList returns a comma-separated list of all supported manifest filenames.
+// PrintSeparator prints a styled inline separator ("─── Title ───") on its
+// own line, padded with blank lines above and below. Use this to delimit
+// sub-sections WITHIN a single command's output (not as a top-level banner —
+// use PrintHeader for that). Suppressed in quiet mode.
+func PrintSeparator(title string) {
+	if quietMode {
+		return
+	}
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, StyleDim.Render("─── "+title+" ───"))
+	fmt.Fprintln(os.Stderr)
+}
+
+// FormatRuntimeSource returns a human-readable parenthesized label for the
+// given runtime-source tag as emitted by the pipeline (e.g. "cli",
+// "manifest", "package", "default"). Unknown values return the empty string.
+func FormatRuntimeSource(source string) string {
+	switch source {
+	case "cli":
+		return "(from --runtime-version)"
+	case "manifest":
+		return "(from manifest)"
+	case "package":
+		return "(from package)"
+	case "default":
+		return "(default)"
+	default:
+		return ""
+	}
+}
+
+// PrintRuntimeInfo prints a styled "Runtime: <lang> <version> (source)" line
+// to stderr followed by a blank line. Suppressed in quiet mode.
+// If version is empty, this is a no-op.
+func PrintRuntimeInfo(langName, version, source string) {
+	if quietMode || version == "" {
+		return
+	}
+	runtimeInfo := fmt.Sprintf("Runtime: %s %s", langName, version)
+	if label := FormatRuntimeSource(source); label != "" {
+		runtimeInfo += " " + StyleDim.Render(label)
+	}
+	fmt.Fprintln(os.Stderr, StyleInfo.Render(runtimeInfo))
+	fmt.Fprintln(os.Stderr)
+}
+
+// SupportedManifestList returns a comma-separated, alphabetically sorted
+// list of supported manifest filenames across the given languages.
+//
+// The result for the global languages.All slice is cached because it's hit
+// from error paths that can fire multiple times per command (e.g. `resolve`
+// surfacing both an argument hint and a file-not-found hint in one run),
+// and the list is stable for the lifetime of the process.
 func SupportedManifestList(langs []*deps.Language) string {
+	supportedManifestsOnce.Do(func() {
+		supportedManifestsCache = buildSupportedManifestList(langs)
+		supportedManifestsCacheKey = langCacheKey(langs)
+	})
+	// If the caller passes a different slice we honour it without caching,
+	// which keeps the helper correct for edge cases like tests.
+	if langCacheKey(langs) != supportedManifestsCacheKey {
+		return buildSupportedManifestList(langs)
+	}
+	return supportedManifestsCache
+}
+
+var (
+	supportedManifestsOnce     sync.Once
+	supportedManifestsCache    string
+	supportedManifestsCacheKey string
+)
+
+// langCacheKey builds a stable identity string from the language names so the
+// cache can detect when a different language set is passed.
+func langCacheKey(langs []*deps.Language) string {
+	names := make([]string, len(langs))
+	for i, l := range langs {
+		names[i] = l.Name
+	}
+	return strings.Join(names, ",")
+}
+
+func buildSupportedManifestList(langs []*deps.Language) string {
 	manifests := deps.SupportedManifests(langs)
 	files := make([]string, 0, len(manifests))
 	for f := range manifests {

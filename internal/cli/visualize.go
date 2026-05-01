@@ -37,30 +37,20 @@ Use 'render' as a shortcut to go directly from graph.json to visual output.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Formats = parseFormats(formatsStr)
-			if err := pipeline.ValidateFormats(opts.Formats); err != nil {
+			if err := validateRenderFormats(opts.Formats); err != nil {
 				return err
 			}
-			if err := pipeline.ValidateStyle(opts.Style); err != nil {
+			if err := validateRenderStyle(opts.Style); err != nil {
 				return err
 			}
 			return c.runVisualize(cmd.Context(), args[0], opts, output, noCache)
 		},
 	}
 
-	// Common flags
 	cmd.Flags().StringVarP(&output, "output", "o", "", "output file (single format) or base path (multiple)")
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "disable caching")
-
-	// Render flags
-	cmd.Flags().StringVar(&opts.Style, "style", opts.Style, "visual style: handdrawn (default), simple")
-	cmd.Flags().BoolVar(&opts.ShowEdges, "edges", opts.ShowEdges, "show dependency edges (tower)")
-	cmd.Flags().BoolVar(&opts.Popups, "popups", opts.Popups, "show hover popups with metadata")
-	cmd.Flags().StringVarP(&formatsStr, "format", "f", "", "output format(s): svg (default), pdf, png (comma-separated)")
-
-	// Security flags
-	cmd.Flags().BoolVar(&opts.ShowVulns, "show-vulns", opts.ShowVulns, "show vulnerability severity colours (requires scanned graph)")
-	cmd.Flags().BoolVar(&opts.ShowLicenses, "show-licenses", opts.ShowLicenses, "show license compliance indicators (copyleft/unknown borders)")
-	cmd.Flags().BoolVar(&opts.FlagsOnTop, "flags-on-top", opts.FlagsOnTop, "render security flags on top of all blocks")
+	addRenderFlags(cmd, &opts, &formatsStr)
+	addSecurityFlags(cmd, &opts)
 
 	return cmd
 }
@@ -101,6 +91,10 @@ func (c *CLI) runVisualize(ctx context.Context, input string, opts pipeline.Opti
 		return WrapSystemError(err, "visualization failed", "Check the output format and try again.")
 	}
 	spinner.Stop()
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 
 	return writeArtifacts(artifactWriteParams{
 		artifacts: artifacts,

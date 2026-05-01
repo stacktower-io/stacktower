@@ -1,8 +1,7 @@
 package cli
 
 import (
-	"encoding/json"
-	"os"
+	"io"
 	"sort"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/stacktower-io/stacktower/pkg/core/dag"
 	"github.com/stacktower-io/stacktower/pkg/core/deps/metadata"
 	"github.com/stacktower-io/stacktower/pkg/core/render/tower/feature"
+	"github.com/stacktower-io/stacktower/pkg/graph"
 	"github.com/stacktower-io/stacktower/pkg/security"
 )
 
@@ -34,12 +34,18 @@ maintenance signals, license compliance, vulnerabilities, and load-bearing packa
 		},
 	}
 
-	cmd.Flags().StringVarP(&format, "format", "f", "text", "Output format: text, json")
-	cmd.Flags().StringVarP(&output, "output", "o", "", "Output file (stdout if empty)")
+	cmd.Flags().StringVarP(&format, "format", "f", FormatText, "output format: text, json")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "output file (stdout if omitted)")
 
 	return cmd
 }
 
+// statsJSON is the stable wire format for `stats -f json`. It intentionally
+// re-groups the flat ui.StatsReport fields into nested overview/maintenance/
+// licenses/vulnerabilities sections — this is the public schema that
+// downstream scripts consume, so we decouple it from the in-memory
+// StatsReport used by the terminal renderer. If you add fields, update both
+// types and add a test case covering the new JSON shape.
 type statsJSON struct {
 	Root     string `json:"root"`
 	Version  string `json:"version"`
@@ -96,13 +102,13 @@ type statsLoadJSON struct {
 func (c *CLI) runStats(input, format, output string) error {
 	g, err := loadGraph(input)
 	if err != nil {
-		return WrapSystemError(err, "failed to load graph", "")
+		return WrapSystemError(err, "failed to load graph", "Check that the file exists and contains valid graph JSON.")
 	}
 
 	graphStats := dag.ComputeStats(g)
 
 	root := dag.FindRoot(g)
-	rootVersion := nodeVersion(g, root)
+	rootVersion := ui.NodeVersion(g, root)
 	language, _ := g.Meta()["language"].(string)
 
 	report := ui.StatsReport{
@@ -124,8 +130,22 @@ func (c *CLI) runStats(input, format, output string) error {
 		})
 	}
 
-	// Maintenance analysis from node metadata
-	report.HasMaintenanceData = collectMaintenanceData(g, root, &report)
+	if md := analyzeMaintenance(g, root); md.HasData {
+		report.HasMaintenanceData = true
+		report.SingleMaintainerCount = md.SingleMaintainerCount
+		report.Brittle = md.Brittle
+		report.Archived = md.Archived
+		report.MedianLastCommitDays = md.MedianLastCommitDays
+
+		// SingleMaintainerPct is derived from the overall dependency count,
+		// not from within analyzeMaintenance, so it stays here.
+		if report.TotalPackages > 1 {
+			depCount := report.TotalPackages - 1 // exclude root
+			if depCount > 0 {
+				report.SingleMaintainerPct = float64(report.SingleMaintainerCount) / float64(depCount) * 100
+			}
+		}
+	}
 
 	// License analysis
 	licReport := security.AnalyzeLicenses(g)
@@ -150,26 +170,23 @@ func (c *CLI) runStats(input, format, output string) error {
 	// Vulnerability data from node metadata (already annotated during parse --security-scan)
 	collectVulnData(g, root, &report)
 
-	w := os.Stdout
-	if output != "" {
-		f, err := os.Create(output)
-		if err != nil {
-			return WrapSystemError(err, "failed to create output file", "")
-		}
-		defer f.Close()
-		w = f
+	writers := map[string]func(io.Writer) error{
+		FormatJSON: func(w io.Writer) error { return writeStatsJSON(w, report) },
+		FormatText: func(w io.Writer) error { ui.WriteStats(w, report); return nil },
+	}
+	if err := writeFormatted(output, format, writers); err != nil {
+		return err
 	}
 
-	switch format {
-	case "json":
-		return writeStatsJSON(w, report)
-	default:
-		ui.WriteStats(w, report)
-		return nil
+	if output != "" {
+		ui.PrintNewline()
+		ui.PrintSuccess("Stats written")
+		ui.PrintFile(output)
 	}
+	return nil
 }
 
-func writeStatsJSON(w *os.File, r ui.StatsReport) error {
+func writeStatsJSON(w io.Writer, r ui.StatsReport) error {
 	out := statsJSON{
 		Root:     r.Root,
 		Version:  r.Version,
@@ -222,69 +239,74 @@ func writeStatsJSON(w *os.File, r ui.StatsReport) error {
 		})
 	}
 
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(out)
+	return encodeJSON(w, out)
 }
 
-func collectMaintenanceData(g *dag.DAG, root string, r *ui.StatsReport) bool {
-	hasData := false
+// maintenanceData is the pure-function output of analyzeMaintenance. It is
+// merged into the caller's ui.StatsReport by runStats. Keeping the analysis
+// separate from mutation makes it trivially testable.
+type maintenanceData struct {
+	HasData               bool
+	SingleMaintainerCount int
+	Brittle               []string
+	Archived              []string
+	MedianLastCommitDays  int
+}
+
+// analyzeMaintenance walks the graph and extracts maintenance signals from
+// package metadata (single-maintainer packages, archived repos, brittle
+// packages, median days since last commit). It never mutates inputs.
+func analyzeMaintenance(g *dag.DAG, root string) maintenanceData {
+	var md maintenanceData
 	var commitDays []int
 
 	for _, n := range g.Nodes() {
-		if n.IsSynthetic() || n.ID == root || n.ID == "__project__" {
+		if n.IsSynthetic() || n.ID == root || n.ID == graph.ProjectRootNodeID {
 			continue
 		}
 		if n.Meta == nil {
 			continue
 		}
 
-		// Single-maintainer check
 		maintainers := feature.CountMaintainers(n.Meta[metadata.RepoMaintainers])
 		if maintainers == 1 {
-			r.SingleMaintainerCount++
-			hasData = true
+			md.SingleMaintainerCount++
+			md.HasData = true
 		}
 
-		// Archived check
 		if archived, _ := n.Meta[metadata.RepoArchived].(bool); archived {
-			r.Archived = append(r.Archived, n.ID)
-			hasData = true
+			md.Archived = append(md.Archived, n.ID)
+			md.HasData = true
 		}
 
-		// Brittle check
 		if feature.IsBrittle(n) {
-			r.Brittle = append(r.Brittle, n.ID)
-			hasData = true
+			md.Brittle = append(md.Brittle, n.ID)
+			md.HasData = true
 		}
 
-		// Last commit for median calculation
 		lastCommit := feature.ParseDate(n.Meta[metadata.RepoLastCommit])
 		if !lastCommit.IsZero() {
 			days := int(time.Since(lastCommit).Hours() / 24)
 			commitDays = append(commitDays, days)
-			hasData = true
+			md.HasData = true
 		}
 	}
 
-	if r.TotalPackages > 1 {
-		depCount := r.TotalPackages - 1 // exclude root
-		if depCount > 0 {
-			r.SingleMaintainerPct = float64(r.SingleMaintainerCount) / float64(depCount) * 100
-		}
-	}
-
-	if len(commitDays) > 0 {
+	if n := len(commitDays); n > 0 {
 		sort.Ints(commitDays)
-		r.MedianLastCommitDays = commitDays[len(commitDays)/2]
+		if n%2 == 0 {
+			md.MedianLastCommitDays = (commitDays[n/2-1] + commitDays[n/2]) / 2
+		} else {
+			md.MedianLastCommitDays = commitDays[n/2]
+		}
 	}
 
-	return hasData
+	return md
 }
 
 func collectVulnData(g *dag.DAG, root string, r *ui.StatsReport) {
 	for _, n := range g.Nodes() {
-		if n.IsSynthetic() || n.ID == root || n.ID == "__project__" {
+		if n.IsSynthetic() || n.ID == root || n.ID == graph.ProjectRootNodeID {
 			continue
 		}
 		if n.Meta == nil {

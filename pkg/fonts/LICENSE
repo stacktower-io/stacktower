@@ -1,12 +1,10 @@
-xkcd-script font
-================
+Gaegu
+=====
 
-The xkcd-script font is from https://github.com/ipython/xkcd-font
+Gaegu is a handwriting font by Jiashuo Zhang & JIKJI FONT.
+https://fonts.google.com/specimen/Gaegu
 
-This font was derived from the handwriting of Randall Munroe, the xkcd webcomic
-author. It is licensed under the Creative Commons Attribution-NonCommercial 3.0
-License (CC BY-NC 3.0):
+Licensed under the SIL Open Font License, Version 1.1.
+https://openfontlicense.org
 
-https://creativecommons.org/licenses/by-nc/3.0/
-
-For commercial use, please contact xkcd.
+Copyright (c) 2018 JIKJI FONT (https://github.com/nicholasjang)

@@ -74,26 +74,38 @@ import (
 //
 // Space complexity is O(V) for tracking used node IDs.
 func ResolveSpanOverlaps(d *dag.DAG) {
+	_ = resolveSpanOverlaps(d)
+}
+
+func resolveSpanOverlaps(d *dag.DAG) error {
 	usedIDs := nodeIDSet(d.Nodes())
 	// Process row boundaries by index (not row number) since separator insertion
 	// shifts row numbers but not our position in the traversal.
 	for i := 1; i < d.RowCount(); i++ {
 		row := d.RowIDs()[i]
-		for insertSeparatorAt(d, row, usedIDs) {
+		for {
+			inserted, err := insertSeparatorAt(d, row, usedIDs)
+			if err != nil {
+				return err
+			}
+			if !inserted {
+				break
+			}
 			row = d.RowIDs()[i] // re-fetch: same index, new row number
 		}
 	}
+	return nil
 }
 
-func insertSeparatorAt(d *dag.DAG, row int, usedIDs map[string]struct{}) bool {
+func insertSeparatorAt(d *dag.DAG, row int, usedIDs map[string]struct{}) (bool, error) {
 	children := d.NodesInRow(row)
 	if len(children) < 2 {
-		return false
+		return false, nil
 	}
 
 	for _, child := range children {
 		if child.IsSubdivider() {
-			return false
+			return false, nil
 		}
 	}
 
@@ -103,11 +115,13 @@ func insertSeparatorAt(d *dag.DAG, row int, usedIDs map[string]struct{}) bool {
 	if ranges := findOverlappingSpans(d, sorted); len(ranges) > 0 {
 		shiftRowsDown(d, row)
 		for _, r := range ranges {
-			insertSeparator(d, row, sorted, r, usedIDs)
+			if err := insertSeparator(d, row, sorted, r, usedIDs); err != nil {
+				return false, err
+			}
 		}
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 type span struct{ lo, hi int }
@@ -201,14 +215,14 @@ func shiftRowsDown(d *dag.DAG, fromRow int) {
 	d.SetRows(newRows)
 }
 
-func insertSeparator(d *dag.DAG, row int, children []*dag.Node, r span, usedIDs map[string]struct{}) {
+func insertSeparator(d *dag.DAG, row int, children []*dag.Node, r span, usedIDs map[string]struct{}) error {
 	separatorID := uniqueID(row, children[r.lo].ID, children[r.hi].ID, usedIDs)
 	if err := d.AddNode(dag.Node{
 		ID:   separatorID,
 		Row:  row,
 		Kind: dag.NodeKindAuxiliary,
 	}); err != nil {
-		panic(err)
+		return fmt.Errorf("add separator node %q: %w", separatorID, err)
 	}
 
 	affectedChildren := make(map[string]struct{}, r.hi-r.lo+1)
@@ -228,15 +242,16 @@ func insertSeparator(d *dag.DAG, row int, children []*dag.Node, r span, usedIDs 
 
 	for parent := range parents {
 		if err := d.AddEdge(dag.Edge{From: parent, To: separatorID}); err != nil {
-			panic(err)
+			return fmt.Errorf("add separator edge %q -> %q: %w", parent, separatorID, err)
 		}
 	}
 
 	for child := range affectedChildren {
 		if err := d.AddEdge(dag.Edge{From: separatorID, To: child}); err != nil {
-			panic(err)
+			return fmt.Errorf("add separator edge %q -> %q: %w", separatorID, child, err)
 		}
 	}
+	return nil
 }
 
 func uniqueID(row int, firstChild, lastChild string, usedIDs map[string]struct{}) string {

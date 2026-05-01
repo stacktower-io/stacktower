@@ -23,25 +23,30 @@ Inspired by [XKCD #2347](https://xkcd.com/2347/), Stacktower renders dependency 
 
 ## Installation
 
-### Homebrew (macOS/Linux)
+### Homebrew (recommended)
+
+The Homebrew install includes everything out of the box — GitHub authentication, private repo access, and all CLI features work without extra configuration.
 
 ```bash
-brew tap stacktower-io/tap
-brew install stacktower
+brew install stacktower-io/homebrew-tap/stacktower
 ```
 
-### Go
+### Alternative: build from source
+
+> **⚠️ Important:** Building from source (or `go install`) does **not** embed the GitHub App credentials needed for `stacktower github login`, `stacktower github install`, and `stacktower parse github`. These commands will fail unless you manually set `STACKTOWER_GITHUB_APP_CLIENT_ID` and `STACKTOWER_GITHUB_APP_SLUG`. All other commands (parse, render, resolve, etc.) work fine without these.
+
+**Go install:**
 
 ```bash
 go install github.com/stacktower-io/stacktower/cmd/stacktower@latest
 ```
 
-### From Source
+**Clone & build:**
 
 ```bash
 git clone https://github.com/stacktower-io/stacktower.git
 cd stacktower
-go build -o bin/stacktower ./cmd/stacktower
+make build
 ```
 
 ## Quick Start
@@ -57,6 +62,8 @@ stacktower render fastapi.json -o fastapi.svg
 # Or pipe parse straight into render
 stacktower parse python flask | stacktower render - -o flask.svg
 ```
+
+> **Want more?** The CLI generates static SVGs locally. [**Stacktower Cloud**](https://app.stacktower.io) adds interactive towers, dependency history tracking, automated PR diffs via the [GitHub Action](https://github.com/stacktower-io/stacktower-action), AI-powered health grading, and team dashboards — all from the same `parse` output.
 
 ## Global Options
 
@@ -87,7 +94,7 @@ stacktower parse github [owner/repo]                   # Parse from a GitHub rep
 
 | Flag                    | Description                                                                          |
 | ----------------------- | ------------------------------------------------------------------------------------ |
-| `-o`, `--output`        | Output file (stdout if empty)                                                        |
+| `-o`, `--output`        | Output file (if omitted: TTY shows summary/tree, piped stdout emits JSON)            |
 | `-n`, `--name`          | Project name for manifest parsing (auto-detected if not set)                         |
 | `--max-depth N`         | Maximum dependency depth (default: 10, max: 100)                                     |
 | `--max-nodes N`         | Maximum packages to fetch (default: 5000, max: 50000)                                |
@@ -215,7 +222,7 @@ When `parse` detects that stdout is piped, it emits clean JSON with no chrome �
 stacktower parse python flask | stacktower render - -o flask.svg
 
 # Pipe into jq for analysis
-stacktower parse python requests -o - | jq '.nodes | length'
+stacktower parse python requests | jq '.nodes | length'
 
 # Combine with security scan
 stacktower parse python django --security-scan | stacktower render - --show-vulns -o django.svg
@@ -252,7 +259,7 @@ stacktower resolve <language> <package[@version]>
 
 | Flag                   | Description                                                                  |
 | ---------------------- | ---------------------------------------------------------------------------- |
-| `-o`, `--output`       | Output file for JSON (stdout shows tree by default)                          |
+| `-o`, `--output`       | Write JSON to file (resolve tree still prints to stdout)                     |
 | `-n`, `--name`         | Project name (for manifest parsing)                                          |
 | `--max-depth N`        | Maximum dependency depth (default: 10)                                       |
 | `--max-nodes N`        | Maximum packages to fetch (default: 5000)                                    |
@@ -298,8 +305,8 @@ Resolved 7 packages (max depth: 3, direct: 2)
 
 | | `resolve` | `parse` |
 | --- | --- | --- |
-| Language detection | Auto-detected from filename | Must specify language subcommand (or auto-detect from filename) |
-| Default output | Human-readable tree | Graph JSON |
+| Language detection | Auto-detected from filename | Auto-detected from filename (or explicit language subcommand) |
+| Default output | Human-readable tree | TTY: summary/tree, piped stdout: graph JSON |
 | Metadata enrichment | Off (opt-in with `--enrich`) | On by default (`--enrich=false` to skip) |
 | Best for | Local testing, inspecting deps | Rendering pipeline, CI |
 
@@ -318,6 +325,7 @@ stacktower list <language> <package> [flags]
 | Flag                   | Description                                                           |
 | ---------------------- | --------------------------------------------------------------------- |
 | `--all`                | Show all versions (default: newest 20)                                |
+| `--limit N`            | Show the newest N versions (default: 20; ignored when `--all` is set) |
 | `--runtime-version`    | Filter versions compatible with a specific runtime (e.g., `3.8`)      |
 | `--supported-runtimes` | Display runtime constraint for each version                           |
 | `--no-cache`           | Bypass cached version data                                            |
@@ -350,7 +358,7 @@ stacktower list python fastapi --supported-runtimes
   0.128.3   0.128.2   0.128.1   0.128.0   0.127.1   0.127.0   0.126.0
   0.125.0   0.124.4   0.124.3   0.124.2   0.124.1   0.124.0
 
-  … 256 older versions not shown (use --all to show all)
+  … 256 older versions not shown (use --all to list all)
 ```
 
 ---
@@ -539,7 +547,7 @@ stacktower why <graph.json|-> <package> [package...] [flags]
 | Flag             | Description                                          |
 | ---------------- | ---------------------------------------------------- |
 | `-f`, `--format` | Output format: `text` (default), `json`              |
-| `-o`, `--output` | Output file (stdout if empty)                        |
+| `-o`, `--output` | Output file (stdout if omitted)                      |
 | `--max-paths N`  | Maximum paths to display per target (default: 10)    |
 | `--shortest`     | Show only the shortest path(s)                       |
 
@@ -584,7 +592,7 @@ stacktower stats <graph.json|-> [flags]
 | Flag             | Description                         |
 | ---------------- | ----------------------------------- |
 | `-f`, `--format` | Output format: `text` (default), `json` |
-| `-o`, `--output` | Output file (stdout if empty)       |
+| `-o`, `--output` | Output file (stdout if omitted)     |
 
 ### Stats Examples
 
@@ -595,6 +603,8 @@ stacktower stats flask.json -f json
 # Piped from parse (with security scan for vuln data)
 stacktower parse python flask --security-scan | stacktower stats -
 ```
+
+> **Go deeper with Triage AI:** [Stacktower Cloud](https://app.stacktower.io) can run an AI agent that clones your repo, analyzes how you actually *use* each dependency, and produces a prioritized health grade (A-F) with actionable recommendations.
 
 **Output:**
 
@@ -638,7 +648,7 @@ stacktower diff <before.json> <after.json|-> [flags]
 | Flag               | Description                                        |
 | ------------------ | -------------------------------------------------- |
 | `-f`, `--format`   | Output format: `text` (default), `json`            |
-| `-o`, `--output`   | Output file (stdout if empty)                      |
+| `-o`, `--output`   | Output file (stdout if omitted)                    |
 | `--fail-on-vuln`   | Exit 3 if new vulnerabilities were introduced (CI) |
 
 ### Diff Examples
@@ -654,6 +664,8 @@ stacktower parse python flask | stacktower diff flask-old.json -
 # Fail in CI if new vulnerabilities appear
 stacktower diff old.json new.json --fail-on-vuln
 ```
+
+> **Automate this on every PR:** The [Stacktower GitHub Action](https://github.com/stacktower-io/stacktower-action) runs diff automatically, posts before/after tower images as a PR comment, and can block merges on new vulnerabilities or license issues.
 
 **Output:**
 
@@ -685,7 +697,7 @@ stacktower sbom <graph.json|-> [flags]
 | Flag               | Description                                              |
 | ------------------ | -------------------------------------------------------- |
 | `-f`, `--format`   | SBOM format: `cyclonedx` (default), `spdx`              |
-| `-o`, `--output`   | Output file (stdout if empty)                            |
+| `-o`, `--output`   | Output file (stdout if omitted)                          |
 | `--encoding`       | Serialization: `json` (default), `xml` (CycloneDX only) |
 | `--spec-version`   | Specification version (default: latest supported)        |
 
@@ -950,8 +962,10 @@ The ordering step is where the magic happens. Stacktower uses an optimal search 
 | Variable              | Description                                                      |
 | --------------------- | ---------------------------------------------------------------- |
 | `GITHUB_TOKEN`        | GitHub API token for metadata enrichment                         |
+| `STACKTOWER_GITHUB_APP_CLIENT_ID` | GitHub App client ID for device-flow auth; overrides embedded release metadata |
+| `STACKTOWER_GITHUB_APP_SLUG` | GitHub App slug for install links; overrides embedded release metadata |
 | `XDG_CACHE_HOME`      | Override default cache directory (`~/.cache`)                    |
-| `NO_COLOR`            | Disable colour output (see https://no-color.org)                 |
+| `NO_COLOR`            | Disable colour output (honored via [termenv](https://github.com/muesli/termenv); see https://no-color.org) |
 
 ## Using as a Library
 
@@ -989,6 +1003,23 @@ Key packages:
 - [`pkg/security`](https://pkg.go.dev/github.com/stacktower-io/stacktower/pkg/security) — Vulnerability scanning via OSV.dev
 - [`pkg/sbom`](https://pkg.go.dev/github.com/stacktower-io/stacktower/pkg/sbom) — SBOM generation (CycloneDX, SPDX)
 
+## Stacktower Cloud
+
+The CLI is 100% open source and always will be. [**Stacktower Cloud**](https://app.stacktower.io) builds on top of it for teams that want continuous dependency visibility:
+
+| | CLI (free) | Cloud (Pro) |
+| --- | --- | --- |
+| Parse & render locally | Yes | Yes |
+| Vulnerability scanning | One-shot | Continuous monitoring |
+| Dependency diff | Manual (two files) | Automated on every PR |
+| Health reports | `stats` snapshot | AI-graded (A-F) with prioritized recommendations |
+| Interactive viewer | — | Zoomable towers with linked metadata |
+| History & trends | — | Track dependency growth over time |
+| Team dashboards | — | Multi-repo overview |
+| GitHub Action | — | Before/after PR comments, fail gates |
+
+[**Get started free**](https://app.stacktower.io) — no credit card required. Pro is $9/month.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on adding new languages, manifest parsers, or output formats.
@@ -997,13 +1028,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on adding new languages, m
 
 ```bash
 make install-tools  # Install required tools (golangci-lint, goimports, govulncheck)
-make check          # Run all CI checks locally (fmt, lint, test, vuln)
+make check          # Run local quality checks (fmt, lint, test, vuln)
 make build          # Build binary to bin/stacktower
 ```
 
 | Command         | Description                                |
 | --------------- | ------------------------------------------ |
-| `make check`    | Format, lint, test, vulncheck (same as CI) |
+| `make check`    | Local convenience checks (format + lint + test + vuln) |
 | `make fmt`      | Format code with gofmt and goimports       |
 | `make lint`     | Run golangci-lint                          |
 | `make test`     | Run tests with race detector               |

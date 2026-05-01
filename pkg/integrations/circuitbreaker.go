@@ -31,6 +31,7 @@ type CircuitBreaker struct {
 	registry    string        // registry name for observability
 	threshold   int           // failures before opening (default 5)
 	cooldown    time.Duration // time in open state before half-open (default 30s)
+	probeActive bool          // whether a half-open probe request is in flight
 }
 
 // CircuitBreakerConfig holds configuration for a circuit breaker.
@@ -83,11 +84,16 @@ func (cb *CircuitBreaker) Allow(ctx context.Context) bool {
 	case observability.CircuitOpen:
 		if time.Now().After(cb.openUntil) {
 			cb.transitionTo(ctx, observability.CircuitHalfOpen, time.Time{})
+			cb.probeActive = true
 			return true
 		}
 		return false
 
 	case observability.CircuitHalfOpen:
+		if cb.probeActive {
+			return false
+		}
+		cb.probeActive = true
 		return true
 
 	default:
@@ -105,6 +111,7 @@ func (cb *CircuitBreaker) RecordSuccess(ctx context.Context) {
 	cb.failures = 0
 
 	if cb.state == observability.CircuitHalfOpen {
+		cb.probeActive = false
 		cb.transitionTo(ctx, observability.CircuitClosed, time.Time{})
 	}
 }
@@ -120,6 +127,7 @@ func (cb *CircuitBreaker) RecordFailure(ctx context.Context, retryAfter int) {
 	cb.lastFailure = time.Now()
 
 	if cb.state == observability.CircuitHalfOpen {
+		cb.probeActive = false
 		cooldown := cb.calculateCooldown(retryAfter)
 		cb.openUntil = time.Now().Add(cooldown)
 		cb.transitionTo(ctx, observability.CircuitOpen, cb.openUntil)
@@ -159,6 +167,7 @@ func (cb *CircuitBreaker) Reset(ctx context.Context) {
 	cb.failures = 0
 	cb.lastFailure = time.Time{}
 	cb.openUntil = time.Time{}
+	cb.probeActive = false
 }
 
 func (cb *CircuitBreaker) calculateCooldown(retryAfter int) time.Duration {

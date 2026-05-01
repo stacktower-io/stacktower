@@ -6,6 +6,11 @@ import (
 	"slices"
 )
 
+// ProjectRootNodeID is the conventional node ID for the virtual project root
+// in manifest-based dependency graphs. Defined here (the lowest-level graph
+// package) so that all consumers share a single constant.
+const ProjectRootNodeID = "__project__"
+
 var (
 	// ErrInvalidNodeID is returned by [DAG.AddNode] and [DAG.RenameNode] when
 	// the node ID is empty. All nodes must have non-empty identifiers.

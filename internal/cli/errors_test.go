@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -20,6 +21,7 @@ func TestExitCodeForError(t *testing.T) {
 		{"context.Canceled returns 130", context.Canceled, ExitCodeInterrupted},
 		{"wrapped context.Canceled returns 130", fmt.Errorf("operation: %w", context.Canceled), ExitCodeInterrupted},
 		{"double-wrapped context.Canceled returns 130", fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", context.Canceled)), ExitCodeInterrupted},
+		{"ErrCancelled returns 130", ErrCancelled, ExitCodeInterrupted},
 
 		// User errors (exit code 2)
 		{"CLIError user kind returns 2", NewUserError("invalid input", ""), ExitCodeUsage},
@@ -33,8 +35,18 @@ func TestExitCodeForError(t *testing.T) {
 		{"plain error returns 1", errors.New("something went wrong"), ExitCodeFailure},
 		{"fmt.Errorf returns 1", fmt.Errorf("formatted error"), ExitCodeFailure},
 
-		// Edge cases
+		// Vulnerability error (exit code 3)
+		{"VulnError returns 3", &VulnError{Count: 2}, ExitCodeVuln},
+		{"wrapped VulnError returns 3", fmt.Errorf("diff: %w", &VulnError{Count: 1}), ExitCodeVuln},
+
+		// Edge cases: timeouts are intentionally NOT interrupts — see the
+		// doc comment on ExitCodeForError. These cases lock that in so the
+		// rule is executable and future changes to the mapping can't
+		// silently regress it.
 		{"context.DeadlineExceeded returns 1 (not 130)", context.DeadlineExceeded, ExitCodeFailure},
+		{"wrapped context.DeadlineExceeded returns 1", fmt.Errorf("http get: %w", context.DeadlineExceeded), ExitCodeFailure},
+		{"double-wrapped context.DeadlineExceeded returns 1", fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", context.DeadlineExceeded)), ExitCodeFailure},
+		{"CLIError wrapping DeadlineExceeded returns 1", WrapSystemError(context.DeadlineExceeded, "fetch failed", ""), ExitCodeFailure},
 	}
 
 	for _, tt := range tests {
@@ -83,7 +95,7 @@ func TestCLIError_Error(t *testing.T) {
 				t.Errorf("Error() = %q, want %q", got, tt.wantMsg)
 			}
 			for _, s := range tt.contains {
-				if !containsString(got, s) {
+				if !strings.Contains(got, s) {
 					t.Errorf("Error() = %q, should contain %q", got, s)
 				}
 			}
@@ -202,18 +214,4 @@ func TestErrorKindConstants(t *testing.T) {
 	if ErrorKindUser == ErrorKindSystem {
 		t.Error("ErrorKindUser and ErrorKindSystem should be different")
 	}
-}
-
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

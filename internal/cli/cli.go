@@ -2,24 +2,19 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
-	"time"
+	"sync"
 
 	"github.com/charmbracelet/log"
 	"github.com/spf13/cobra"
 
 	"github.com/stacktower-io/stacktower/internal/cli/ui"
 	"github.com/stacktower-io/stacktower/pkg/buildinfo"
-	"github.com/stacktower-io/stacktower/pkg/cache"
-	"github.com/stacktower-io/stacktower/pkg/core/dag"
 	"github.com/stacktower-io/stacktower/pkg/observability"
 	"github.com/stacktower-io/stacktower/pkg/pipeline"
-	"github.com/stacktower-io/stacktower/pkg/security"
 )
 
 // =============================================================================
@@ -45,14 +40,33 @@ const (
 // =============================================================================
 
 // CLI holds shared state for all commands.
+//
+// NOTE: ui.SetQuiet and observability.Set*Hooks are package-global, so only
+// one CLI instance can be active per process. This is fine for a CLI binary
+// but means tests that construct multiple CLI values cannot run in parallel
+// with different quiet/log configurations. New returns an error on a second
+// call to catch accidental double-initialization (e.g. a test constructing
+// two CLI values without coordinating globals).
 type CLI struct {
 	Logger *log.Logger
-	Quiet  bool // suppress non-essential output (success messages, stats, next steps)
+
+	pipelineHooks *cliPipelineHooks // registered once; holds the active spinner
 }
+
+// cliInitOnce enforces single-process initialization of the global CLI state
+// (observability hooks, ui quiet flag). It is exposed as a package-level
+// variable so tests that genuinely need a fresh instance can reset it via
+// resetCLIForTesting.
+var cliInitOnce sync.Once
 
 // New creates a new CLI instance with a default logger.
 // Registers observability hooks for pipeline and security events.
-func New(w io.Writer, level log.Level) *CLI {
+//
+// Only one CLI instance may be created per process; calling New a second time
+// returns an error. The stacktower binary only creates one CLI, and tests that
+// need to validate behavior across multiple configurations should do so through
+// the single instance rather than constructing several.
+func New(w io.Writer, level log.Level) (*CLI, error) {
 	c := &CLI{
 		Logger: log.NewWithOptions(w, log.Options{
 			ReportTimestamp: true,
@@ -60,9 +74,34 @@ func New(w io.Writer, level log.Level) *CLI {
 			Level:           level,
 		}),
 	}
-	observability.SetPipelineHooks(&cliPipelineHooks{logger: c.Logger})
-	observability.SetSecurityHooks(&cliSecurityHooks{logger: c.Logger})
-	return c
+	c.pipelineHooks = &cliPipelineHooks{logger: c.Logger}
+
+	initialized := false
+	cliInitOnce.Do(func() {
+		observability.SetPipelineHooks(c.pipelineHooks)
+		observability.SetSecurityHooks(&cliSecurityHooks{logger: c.Logger})
+		initialized = true
+	})
+	if !initialized {
+		return nil, fmt.Errorf("cli.New called more than once: stacktower CLI state is process-global")
+	}
+	return c, nil
+}
+
+// resetCLIForTesting is used exclusively by tests that need to re-run New
+// after tearing down a previous CLI instance. Not part of the public API.
+func resetCLIForTesting() {
+	cliInitOnce = sync.Once{}
+}
+
+// AttachOrderingSpinner wires a spinner to receive ordering-progress updates
+// via the pipeline hook. Pass nil (e.g. in a defer) to detach. The hook only
+// ever knows about the ui.Spinner through this seam; the ordering algorithm
+// itself stays free of CLI/TTY dependencies.
+func (c *CLI) AttachOrderingSpinner(s *ui.Spinner) {
+	if c.pipelineHooks != nil {
+		c.pipelineHooks.SetOrderingSpinner(s)
+	}
 }
 
 // SetLogLevel updates the logger's level.
@@ -72,7 +111,6 @@ func (c *CLI) SetLogLevel(level log.Level) {
 
 // SetQuiet suppresses non-essential CLI output (success messages, stats, hints).
 func (c *CLI) SetQuiet(q bool) {
-	c.Quiet = q
 	ui.SetQuiet(q)
 }
 
@@ -98,7 +136,6 @@ func (c *CLI) RootCommand() *cobra.Command {
 		return nil
 	})
 
-	// Register all subcommands
 	root.AddCommand(c.versionCommand())
 	root.AddCommand(c.infoCommand())
 	root.AddCommand(c.parseCommand())
@@ -120,57 +157,6 @@ func (c *CLI) RootCommand() *cobra.Command {
 }
 
 // =============================================================================
-// Runner Factory
-// =============================================================================
-
-// newRunner creates a pipeline runner for CLI use.
-// When securityScan is true, an OSV-backed vulnerability scanner is attached.
-func (c *CLI) newRunner(noCache bool, securityScan bool) (*pipeline.Runner, error) {
-	cc, err := newCache(noCache)
-	if err != nil {
-		return nil, err
-	}
-
-	var scanner security.Scanner
-	if securityScan {
-		scanner = security.NewOSVScanner(nil) // default HTTP client
-	}
-
-	return pipeline.NewRunnerWithScanner(cc, nil, c.Logger, scanner), nil
-}
-
-func newCache(noCache bool) (cache.Cache, error) {
-	if noCache {
-		return cache.NewNullCache(), nil
-	}
-	dir, err := cacheDir()
-	if err != nil {
-		return cache.NewNullCache(), nil
-	}
-	fc, err := cache.NewFileCache(dir)
-	if err != nil {
-		return nil, err
-	}
-	return cache.NewInstrumentedCache(fc), nil
-}
-
-// =============================================================================
-// Paths
-// =============================================================================
-
-// cacheDir returns the cache directory using XDG standard (~/.cache/stacktower/).
-func cacheDir() (string, error) {
-	if cacheHome := os.Getenv("XDG_CACHE_HOME"); cacheHome != "" {
-		return filepath.Join(cacheHome, appName), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".cache", appName), nil
-}
-
-// =============================================================================
 // Options Helpers
 // =============================================================================
 
@@ -180,141 +166,19 @@ func setCLIDefaults(opts *pipeline.Options) {
 }
 
 // parseFormats parses a comma-separated format string into a slice.
+//
+// Empty input defaults to a single-element slice containing the SVG format;
+// pipeline.ValidateFormats treats empty as valid, but the CLI wants a
+// deterministic default so subsequent flag validation has a concrete format
+// to check. Callers should still run pipeline.ValidateFormats on the result
+// so the CLI and pipeline stay in lockstep about what counts as valid.
 func parseFormats(s string) []string {
 	if s == "" {
 		return []string{pipeline.FormatSVG}
 	}
-	return strings.Split(s, ",")
-}
-
-// =============================================================================
-// Shared Parse Pipeline
-// =============================================================================
-
-// parseResult holds the output of a parse pipeline run.
-type parseResult struct {
-	Graph          *dag.DAG
-	CacheHit       bool
-	RuntimeVersion string // Target runtime version used (e.g., "3.11")
-	RuntimeSource  string // Where runtime came from: "cli", "manifest", "default"
-}
-
-// runParseWithProgress creates a runner, starts a progress view, runs ParseWithCacheInfo,
-// and stops the progress view. This is the shared entrypoint used by both `parse` and `resolve`.
-func (c *CLI) runParseWithProgress(ctx context.Context, opts pipeline.Options, noCache, securityScan bool, progressMsg string, maxNodes int) (*parseResult, error) {
-	runner, err := c.newRunner(noCache, securityScan)
-	if err != nil {
-		return nil, fmt.Errorf("initialize runner: %w", err)
+	parts := strings.Split(s, ",")
+	for i, p := range parts {
+		parts[i] = strings.TrimSpace(p)
 	}
-	defer runner.Close()
-
-	opts.GitHubToken = getGitHubToken(ctx)
-	opts.SecurityScan = securityScan
-
-	// Warn about slower parsing when fetching contributors
-	if opts.FetchContributors {
-		ui.PrintInfo("Fetching GitHub contributors (this may be slower)")
-	}
-
-	pv := ui.NewProgressView(ctx, progressMsg, maxNodes)
-
-	pvLogger := log.New(ui.NewProgressWriter(pv, os.Stderr))
-	pvLogger.SetLevel(c.Logger.GetLevel())
-	opts.Logger = pvLogger
-
-	pv.Start()
-
-	result, err := runner.ParseWithCacheInfo(ctx, opts)
-	if err != nil {
-		pv.StopWithError("Failed to resolve dependencies")
-		return nil, err
-	}
-	pv.Stop()
-
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-
-	return &parseResult{
-		Graph:          result.Graph,
-		CacheHit:       result.CacheHit,
-		RuntimeVersion: result.RuntimeVersion,
-		RuntimeSource:  result.RuntimeSource,
-	}, nil
-}
-
-// =============================================================================
-// CLI Observability Hook Implementations
-// =============================================================================
-
-// cliPipelineHooks logs pipeline stage transitions.
-type cliPipelineHooks struct {
-	logger *log.Logger
-}
-
-func (h *cliPipelineHooks) OnParseStart(_ context.Context, language, pkg string) {
-	h.logger.Debug("parse starting", "language", language, "package", pkg)
-}
-
-func (h *cliPipelineHooks) OnParseComplete(_ context.Context, language, pkg string, nodes int, d time.Duration, err error) {
-	if err != nil {
-		h.logger.Debug("parse failed", "language", language, "package", pkg, "duration", d, "err", err)
-	} else {
-		h.logger.Debug("parse complete", "language", language, "package", pkg, "nodes", nodes, "duration", d)
-	}
-}
-
-func (h *cliPipelineHooks) OnLayoutStart(_ context.Context, vizType string, nodes int) {
-	h.logger.Debug("layout starting", "type", vizType, "nodes", nodes)
-}
-
-func (h *cliPipelineHooks) OnLayoutComplete(_ context.Context, vizType string, d time.Duration, err error) {
-	if err != nil {
-		h.logger.Debug("layout failed", "type", vizType, "duration", d, "err", err)
-	} else {
-		h.logger.Debug("layout complete", "type", vizType, "duration", d)
-	}
-}
-
-func (h *cliPipelineHooks) OnOrderingStart(_ context.Context, algorithm string, rowCount int) {
-	h.logger.Debug("ordering starting", "algorithm", algorithm, "rows", rowCount)
-}
-
-func (h *cliPipelineHooks) OnOrderingProgress(_ context.Context, explored, pruned, bestCrossings int) {
-	h.logger.Debug("ordering progress", "explored", explored, "pruned", pruned, "best_crossings", bestCrossings)
-}
-
-func (h *cliPipelineHooks) OnOrderingComplete(_ context.Context, crossings int, d time.Duration) {
-	h.logger.Debug("ordering complete", "crossings", crossings, "duration", d)
-}
-
-func (h *cliPipelineHooks) OnRenderStart(_ context.Context, formats []string) {
-	h.logger.Debug("render starting", "formats", formats)
-}
-
-func (h *cliPipelineHooks) OnRenderComplete(_ context.Context, formats []string, d time.Duration, err error) {
-	if err != nil {
-		h.logger.Debug("render failed", "formats", formats, "duration", d, "err", err)
-	} else {
-		h.logger.Debug("render complete", "formats", formats, "duration", d)
-	}
-}
-
-// cliSecurityHooks provides user-facing feedback during vulnerability scanning.
-type cliSecurityHooks struct {
-	logger *log.Logger
-}
-
-func (h *cliSecurityHooks) OnScanStart(_ context.Context, ecosystem string, depCount int) {
-	ui.PrintInfo("Scanning %d %s dependencies for vulnerabilities...", depCount, ecosystem)
-}
-
-func (h *cliSecurityHooks) OnScanComplete(_ context.Context, ecosystem string, findings int, d time.Duration, err error) {
-	if err != nil {
-		h.logger.Debug("security scan failed", "ecosystem", ecosystem, "duration", d, "err", err)
-	} else if findings > 0 {
-		ui.PrintWarning("Found %d vulnerabilities (%s)", findings, ui.FormatDuration(d))
-	} else {
-		ui.PrintInfo("No known vulnerabilities found (%s)", ui.FormatDuration(d))
-	}
+	return parts
 }

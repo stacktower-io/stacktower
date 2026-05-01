@@ -1,159 +1,110 @@
 # Contributing to Stacktower
 
-Thanks for your interest in contributing!
+Thank you for your interest in contributing! This guide covers the most common contribution paths: adding new languages, manifest parsers, and output formats.
 
 ## Getting Started
 
 ```bash
 git clone https://github.com/stacktower-io/stacktower.git
 cd stacktower
-make install-tools  # Install golangci-lint, goimports, govulncheck
-make check          # Run all CI checks locally
+make install-tools
+make check
 ```
 
-## Development Workflow
+`make check` runs formatting, linting, tests, and vulnerability checks. All four must pass before submitting a PR.
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feat/amazing-feature`)
-3. Make your changes
-4. Run checks: `make check`
-5. Commit with [Conventional Commits](https://www.conventionalcommits.org/) format:
-   - `feat: add new feature`
-   - `fix: resolve bug`
-   - `docs: update readme`
-   - `refactor: restructure code`
-   - `test: add tests`
-   - `ci: update workflows`
-6. Push and open a Pull Request
-
-## Code Style
-
-- Run `make fmt` before committing
-- Run `make lint` to check for issues
-- Keep changes focused and minimal
-
-## Running Tests
-
-```bash
-make test       # Unit tests
-make e2e        # End-to-end tests
-make cover      # Tests with coverage
-```
-
-## Architecture
-
-Stacktower follows a clean layered architecture. See the [pkg.go.dev documentation](https://pkg.go.dev/github.com/stacktower-io/stacktower) for detailed API docs.
+## Project Structure
 
 ```
-internal/cli/                  # Command-line interface
-pkg/core/dag/                  # Core DAG data structure
-├── transform/                 # Graph normalization (transitive reduction, subdivision)
-└── perm/                      # PQ-tree and permutation algorithms
-pkg/core/deps/                 # Dependency resolution from registries
-├── python/                    # Python: PyPI + poetry.lock + requirements.txt
-├── rust/                      # Rust: crates.io + Cargo.toml
-├── javascript/                # JavaScript: npm + package.json
-├── ruby/                      # Ruby: RubyGems + Gemfile
-├── php/                       # PHP: Packagist + composer.json
-├── java/                      # Java: Maven Central + pom.xml
-├── golang/                    # Go: Go Module Proxy + go.mod
-└── metadata/                  # GitHub/GitLab enrichment providers
-pkg/integrations/              # Registry API clients (npm, pypi, crates, etc.)
-pkg/core/render/tower/         # Tower visualization
-├── ordering/                  # Barycentric and optimal ordering algorithms
-├── layout/                    # Block position computation
-├── sink/                      # Output formats (SVG, JSON, PDF, PNG)
-└── styles/                    # Visual styles (handdrawn, simple)
-pkg/graph/                     # JSON import/export
-pkg/pipeline/                  # Parse → layout → render orchestration
-pkg/security/                  # Vulnerability scanning and license analysis
-pkg/cache/                     # Caching interfaces and implementations
+cmd/stacktower/       CLI entrypoint
+internal/cli/         CLI commands, flags, output formatting
+internal/cli/ui/      Terminal UI components (spinners, tables, styles)
+pkg/core/dag/         DAG data structure and crossing algorithms
+pkg/core/deps/        Dependency resolution per language ecosystem
+pkg/core/render/      Layout and rendering (tower, node-link)
+pkg/pipeline/         Parse → layout → render pipeline
+pkg/integrations/     External API clients (GitHub, OSV, registries)
+pkg/security/         Vulnerability scanning
+pkg/sbom/             SBOM generation (CycloneDX, SPDX)
+pkg/cache/            Caching layer
+pkg/graph/            Wire types for graph I/O
 ```
 
-## Adding a New Language
+The boundary between `pkg/` (stable library API) and `internal/` (CLI-only) is intentional. Library consumers import from `pkg/`; CLI-specific behavior stays in `internal/cli/`.
 
-1. **Create an integration client** in `pkg/integrations/<registry>/client.go`:
+## Adding a New Language Ecosystem
 
-```go
-type Client struct {
-    *integrations.Client
-    baseURL string
-}
+Each language lives in its own package under `pkg/core/deps/<language>/` and implements the `deps.Language` struct. Use an existing ecosystem (e.g., `pkg/core/deps/python/`) as a reference.
 
-func NewClient(cacheTTL time.Duration) (*Client, error) {
-    cache, err := integrations.NewCache(cacheTTL)
-    if err != nil {
-        return nil, err
-    }
-    return &Client{
-        Client:  integrations.NewClient(cache, nil),
-        baseURL: "https://registry.example.com",
-    }, nil
-}
+### Steps
 
-func (c *Client) FetchPackage(ctx context.Context, name string, refresh bool) (*PackageInfo, error) {
-    // Implement caching and fetching
-}
-```
+1. **Create the package** at `pkg/core/deps/<language>/`.
 
-2. **Create a language definition** in `pkg/deps/<lang>/<lang>.go`:
+2. **Define the `Language` variable** with registry info, manifest types, and resolver/parser factories:
+   - `Name` — lowercase identifier (e.g., `"python"`, `"rust"`)
+   - `DefaultRegistry` — primary registry name
+   - `ManifestFilenames` — map of filename to manifest type
+   - `NewResolver` — factory for the registry resolver
+   - `NewManifest` — factory for manifest parsers
 
-```go
-var Language = &deps.Language{
-    Name:            "mylang",
-    DefaultRegistry: "myregistry",
-    RegistryAliases: map[string]string{"alias": "myregistry"},
-    ManifestTypes:   []string{"my.lock"},
-    ManifestAliases: map[string]string{"my.lock": "mylock"},
-    NewResolver:     newResolver,
-    NewManifest:     newManifest,
-    ManifestParsers: manifestParsers,
-}
-```
+3. **Implement a resolver** that fetches package metadata from the registry and returns a `deps.Package` with versions and dependencies.
 
-3. **Register in CLI** in `internal/cli/parse.go`
+4. **Implement manifest parsers** for each supported manifest/lock file format.
 
-See [`pkg/core/deps`](https://pkg.go.dev/github.com/stacktower-io/stacktower/pkg/core/deps) for detailed documentation.
+5. **Register the language** in `pkg/core/deps/languages/languages.go` by adding it to the `All` slice.
 
-## Adding a Manifest Parser
+6. **Add tests** — at minimum, unit tests for the resolver and each manifest parser.
 
-Implement the `ManifestParser` interface:
+7. **Add example manifests** in `examples/manifest/` for the new ecosystem.
 
-```go
-type MyLockParser struct{}
+8. **Update the README** — add the language to the supported languages list and the manifest file table.
 
-func (p *MyLockParser) Type() string              { return "my.lock" }
-func (p *MyLockParser) IncludesTransitive() bool  { return true }
-func (p *MyLockParser) Supports(name string) bool { return name == "my.lock" }
+## Adding a New Manifest Parser
 
-func (p *MyLockParser) Parse(path string, opts deps.Options) (*deps.ManifestResult, error) {
-    g := dag.New(nil)
-    // ... populate nodes and edges
-    return &deps.ManifestResult{Graph: g, Type: p.Type(), IncludesTransitive: true}, nil
-}
-```
+To add support for a new manifest file within an existing language:
+
+1. Add a new manifest type in the language's package (e.g., `pkg/core/deps/python/`).
+2. Register the filename in the language's `ManifestFilenames` map.
+3. Implement the parser — it receives raw file bytes and returns a dependency graph.
+4. Add unit tests with representative fixture files.
+5. Add an example manifest to `examples/manifest/`.
 
 ## Adding a New Output Format
 
-Output formats are "sinks" in `pkg/core/render/tower/sink/`. Each sink takes a `layout.Layout` and renders it to bytes.
+Rendering output formats are handled in `pkg/core/render/`. To add a new format:
 
-1. **Create a sink file** in `pkg/render/tower/sink/<format>.go`:
+1. Implement a sink in the appropriate render package (e.g., `pkg/core/render/tower/sink/`).
+2. Register the format in `pkg/pipeline/formats.go`.
+3. Wire it into the CLI in `internal/cli/render.go`.
 
-```go
-func RenderMyFormat(l layout.Layout, opts ...MyFormatOption) ([]byte, error) {
-    // Access layout data:
-    // - l.FrameWidth, l.FrameHeight: canvas dimensions
-    // - l.Blocks: map[string]Block with position data
-    // - l.RowOrders: node ordering per row
-    return []byte("..."), nil
-}
+## Code Style
+
+- **Formatting**: `gofmt` + `goimports` with local prefix `github.com/stacktower-io/stacktower`. Run `make fmt` before committing.
+- **Linting**: `golangci-lint` with the config in `.golangci.yml`. Run `make lint`.
+- **Comments**: Avoid obvious narration. Comments should explain _why_, not _what_.
+- **Errors**: Use `CLIError` with `Kind`, `Message`, and `Hint` for user-facing errors in `internal/cli/`. Library code in `pkg/` returns plain errors.
+- **Tests**: Table-driven tests preferred. Use `_test.go` files adjacent to the code they test.
+
+## Commit Messages
+
+This project follows [Conventional Commits](https://www.conventionalcommits.org/). PR titles are validated automatically.
+
+```
+feat: add Swift ecosystem support
+fix(python): handle empty requirements.txt
+docs: update manifest file table
+test(rust): add Cargo.lock parser edge cases
 ```
 
-2. **Register in CLI** in `internal/cli/render.go`
+Valid types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `ci`, `build`, `revert`.
 
-See [`pkg/core/render/tower/sink`](https://pkg.go.dev/github.com/stacktower-io/stacktower/pkg/core/render/tower/sink) for existing implementations.
+## Pull Requests
 
-## Questions?
+- One logical change per PR.
+- Include tests for new functionality.
+- Update the README if your change affects CLI behavior, flags, or supported ecosystems.
+- All CI checks must pass (format, lint, test, vulncheck).
 
-Open an [issue](https://github.com/stacktower-io/stacktower/issues) — we're happy to help!
+## Reporting Issues
 
+Use [GitHub Issues](https://github.com/stacktower-io/stacktower/issues) for bugs and feature requests. For security vulnerabilities, see [SECURITY.md](SECURITY.md).

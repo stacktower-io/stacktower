@@ -237,7 +237,7 @@ func parseManifestWithResult(ctx context.Context, c cache.Cache, lang *deps.Lang
 		}
 		defer os.RemoveAll(tmpDir)
 
-		filePath = filepath.Join(tmpDir, opts.ManifestFilename)
+		filePath = filepath.Join(tmpDir, manifestName)
 		if err := os.WriteFile(filePath, []byte(opts.Manifest), 0644); err != nil {
 			return nil, fmt.Errorf("write temp file: %w", err)
 		}

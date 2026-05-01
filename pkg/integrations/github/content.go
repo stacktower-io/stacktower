@@ -331,9 +331,9 @@ func (c *ContentClient) FetchFile(ctx context.Context, owner, repo, path, ref st
 // This is more efficient for large files as it doesn't use base64 encoding.
 // If ref is non-empty, it specifies a branch, tag, or commit SHA.
 func (c *ContentClient) FetchFileRaw(ctx context.Context, owner, repo, path, ref string) (string, error) {
-	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s", c.baseURL, owner, repo, path)
+	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s", c.baseURL, owner, repo, escapePathSegments(path))
 	if ref != "" {
-		url += "?ref=" + ref
+		url += "?ref=" + urlEncode(ref)
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -358,6 +358,14 @@ func (c *ContentClient) FetchFileRaw(ctx context.Context, owner, repo, path, ref
 	}
 
 	return string(content), nil
+}
+
+func escapePathSegments(path string) string {
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
 }
 
 // DetectManifests finds manifest files in a repository's root directory.
@@ -935,9 +943,12 @@ func (c *ContentClient) ScanReposForManifests(ctx context.Context, manifestPatte
 	wg.Wait()
 
 	// Build final list preserving order
-	rwm := make([]RepoWithManifests, len(repos))
+	rwm := make([]RepoWithManifests, 0, len(repos))
 	for _, r := range results {
-		rwm[r.idx] = RepoWithManifests{Repo: r.repo, Manifests: r.manifests}
+		if len(r.manifests) == 0 {
+			continue
+		}
+		rwm = append(rwm, RepoWithManifests{Repo: r.repo, Manifests: r.manifests})
 	}
 
 	return rwm, nil

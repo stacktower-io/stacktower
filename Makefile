@@ -1,4 +1,4 @@
-.PHONY: all build clean fmt fmt-check lint test cover vuln e2e install-tools snapshot release help
+.PHONY: all build clean fmt fmt-check lint test cover vuln e2e install-tools snapshot release help ensure-github-app-vars
 
 # =============================================================================
 # Variables
@@ -8,9 +8,12 @@ BINARY := stacktower
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
 LDFLAGS := -X github.com/stacktower-io/stacktower/pkg/buildinfo.Version=$(VERSION) \
            -X github.com/stacktower-io/stacktower/pkg/buildinfo.Commit=$(COMMIT) \
-           -X github.com/stacktower-io/stacktower/pkg/buildinfo.Date=$(DATE)
+           -X github.com/stacktower-io/stacktower/pkg/buildinfo.Date=$(DATE) \
+           -X github.com/stacktower-io/stacktower/pkg/buildinfo.GitHubAppClientID=$(STACKTOWER_GITHUB_APP_CLIENT_ID) \
+           -X github.com/stacktower-io/stacktower/pkg/buildinfo.GitHubAppSlug=$(STACKTOWER_GITHUB_APP_SLUG)
 
 # =============================================================================
 # Default Target
@@ -29,6 +32,10 @@ build:
 install:
 	@echo "Installing CLI..."
 	@go install -ldflags "$(LDFLAGS)" ./cmd/stacktower
+
+ensure-github-app-vars:
+	@test -n "$(STACKTOWER_GITHUB_APP_CLIENT_ID)" || (echo "ERROR: STACKTOWER_GITHUB_APP_CLIENT_ID is required"; exit 1)
+	@test -n "$(STACKTOWER_GITHUB_APP_SLUG)" || (echo "ERROR: STACKTOWER_GITHUB_APP_SLUG is required"; exit 1)
 
 clean:
 	@rm -rf bin/ dist/ coverage.out output/ tmp/
@@ -87,10 +94,10 @@ e2e-parse: build
 # Release
 # =============================================================================
 
-snapshot:
+snapshot: ensure-github-app-vars
 	@goreleaser release --snapshot --clean --skip=publish
 
-release:
+release: ensure-github-app-vars
 	@goreleaser release --clean
 
 # =============================================================================

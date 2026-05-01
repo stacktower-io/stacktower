@@ -50,13 +50,15 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/stacktower-io/stacktower/pkg/cache"
 	"github.com/stacktower-io/stacktower/pkg/integrations/github"
 )
 
 // Sentinel errors for session operations.
 var (
 	// ErrNotFound is returned when a session does not exist.
-	ErrNotFound = errors.New("not found")
+	// Shared with cache/integrations for consistent errors.Is checks.
+	ErrNotFound = cache.ErrNotFound
 
 	// ErrExpired is returned when a session has exceeded its TTL.
 	ErrExpired = errors.New("expired")
@@ -160,23 +162,4 @@ func New(accessToken string, user *github.User, ttl time.Duration) (*Session, er
 		ExpiresAt:   now.Add(ttl),
 		CreatedAt:   now,
 	}, nil
-}
-
-// MockLocal creates a mock session for local development without authentication.
-// This is used when --no-auth is enabled in standalone mode.
-// The mock user has ID "local" and no GitHub access token.
-func MockLocal() *Session {
-	now := time.Now()
-	return &Session{
-		ID:          "local-session",
-		AccessToken: "", // No token - can't make authenticated GitHub API calls
-		User: &github.User{
-			ID:        0,
-			Login:     "local",
-			Name:      "Local User",
-			AvatarURL: "",
-		},
-		ExpiresAt: now.Add(365 * 24 * time.Hour), // Never expires
-		CreatedAt: now,
-	}
 }

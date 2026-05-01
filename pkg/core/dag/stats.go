@@ -56,7 +56,7 @@ func ComputeStats(g *DAG) *GraphStats {
 	// Count non-synthetic, non-root nodes as total deps
 	totalDeps := 0
 	for _, n := range g.Nodes() {
-		if n.IsSynthetic() || n.ID == root || n.ID == "__project__" {
+		if n.IsSynthetic() || n.ID == root || n.ID == ProjectRootNodeID {
 			continue
 		}
 		totalDeps++
@@ -69,7 +69,7 @@ func ComputeStats(g *DAG) *GraphStats {
 	var loadBearing []LoadBearingNode
 	for id, count := range revDeps {
 		n, ok := g.Node(id)
-		if !ok || n.IsSynthetic() || id == root || id == "__project__" {
+		if !ok || n.IsSynthetic() || id == root || id == ProjectRootNodeID {
 			continue
 		}
 		if count > 0 {
@@ -95,7 +95,7 @@ func computeReverseDeps(g *DAG, root string) map[string]int {
 	// For each non-synthetic, non-root node, walk its children and increment
 	// their reverse-dep count. We use DFS with per-source visited sets.
 	for _, n := range g.Nodes() {
-		if n.IsSynthetic() || n.ID == root || n.ID == "__project__" {
+		if n.IsSynthetic() || n.ID == root || n.ID == ProjectRootNodeID {
 			continue
 		}
 
@@ -122,13 +122,18 @@ func computeReverseDeps(g *DAG, root string) map[string]int {
 
 // FindRoot returns the ID of the primary root node (non-synthetic, in-degree 0).
 func FindRoot(g *DAG) string {
+	var candidates []string
 	for _, n := range g.Nodes() {
-		if n.IsSynthetic() || n.ID == "__project__" {
+		if n.IsSynthetic() || n.ID == ProjectRootNodeID {
 			continue
 		}
 		if g.InDegree(n.ID) == 0 {
-			return n.ID
+			candidates = append(candidates, n.ID)
 		}
 	}
-	return ""
+	if len(candidates) == 0 {
+		return ""
+	}
+	sort.Strings(candidates)
+	return candidates[0]
 }

@@ -1,10 +1,11 @@
 package cli
 
 import (
-	"os"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
+	"github.com/stacktower-io/stacktower/internal/cli/ui"
 	"github.com/stacktower-io/stacktower/pkg/buildinfo"
 	"github.com/stacktower-io/stacktower/pkg/sbom"
 )
@@ -32,10 +33,10 @@ vulnerability findings when the graph was parsed with --security-scan.`,
 		},
 	}
 
-	cmd.Flags().StringVarP(&format, "format", "f", "cyclonedx", "SBOM format: cyclonedx, spdx")
-	cmd.Flags().StringVarP(&output, "output", "o", "", "Output file (stdout if empty)")
-	cmd.Flags().StringVar(&encoding, "encoding", "json", "Serialization: json, xml (CycloneDX only)")
-	cmd.Flags().StringVar(&specVersion, "spec-version", "", "Specification version (default: latest supported)")
+	cmd.Flags().StringVarP(&format, "format", "f", string(sbom.FormatCycloneDX), "SBOM format: cyclonedx, spdx")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "output file (stdout if omitted)")
+	cmd.Flags().StringVar(&encoding, "encoding", string(sbom.EncodingJSON), "serialization: json, xml (CycloneDX only)")
+	cmd.Flags().StringVar(&specVersion, "spec-version", "", "specification version (default: latest supported)")
 
 	return cmd
 }
@@ -43,12 +44,38 @@ vulnerability findings when the graph was parsed with --security-scan.`,
 func (c *CLI) runSBOM(input, format, output, encoding, specVersion string) error {
 	g, err := loadGraph(input)
 	if err != nil {
-		return WrapSystemError(err, "failed to load graph", "")
+		return WrapSystemError(err, "failed to load graph", "Check that the file exists and contains valid graph JSON.")
+	}
+
+	sbomFmt := sbom.Format(format)
+	switch sbomFmt {
+	case sbom.FormatCycloneDX, sbom.FormatSPDX:
+	default:
+		return NewUserError(
+			fmt.Sprintf("unsupported SBOM format: %q", format),
+			"Supported formats: cyclonedx, spdx",
+		)
+	}
+
+	sbomEncoding := sbom.Encoding(encoding)
+	switch sbomEncoding {
+	case sbom.EncodingJSON, sbom.EncodingXML:
+	default:
+		return NewUserError(
+			fmt.Sprintf("unsupported SBOM encoding: %q", encoding),
+			"Supported encodings: json, xml",
+		)
+	}
+	if sbomFmt == sbom.FormatSPDX && sbomEncoding == sbom.EncodingXML {
+		return NewUserError(
+			"SPDX SBOM output does not support XML encoding",
+			"Use --encoding json for SPDX, or --format cyclonedx --encoding xml.",
+		)
 	}
 
 	opts := sbom.Options{
-		Format:      sbom.Format(format),
-		Encoding:    sbom.Encoding(encoding),
+		Format:      sbomFmt,
+		Encoding:    sbomEncoding,
 		SpecVersion: specVersion,
 		ToolName:    "stacktower",
 		ToolVersion: buildinfo.Version,
@@ -59,30 +86,24 @@ func (c *CLI) runSBOM(input, format, output, encoding, specVersion string) error
 	}
 
 	var data []byte
-	switch opts.Format {
+	switch sbomFmt {
 	case sbom.FormatSPDX:
 		data, err = sbom.GenerateSPDX(g, opts)
 	default:
 		data, err = sbom.GenerateCycloneDX(g, opts)
 	}
 	if err != nil {
-		return WrapSystemError(err, "failed to generate SBOM", "")
+		return WrapSystemError(err, "failed to generate SBOM", "Check that the graph JSON is valid and was produced by 'stacktower parse'.")
+	}
+
+	if err := writeFile(data, output); err != nil {
+		return WrapSystemError(err, "failed to write SBOM", "Check that the output path is writable.")
 	}
 
 	if output != "" {
-		if err := os.WriteFile(output, data, 0644); err != nil {
-			return WrapSystemError(err, "failed to write SBOM file", "")
-		}
-		return nil
-	}
-
-	_, err = os.Stdout.Write(data)
-	if err != nil {
-		return WrapSystemError(err, "failed to write SBOM to stdout", "")
-	}
-	// Ensure trailing newline for terminal output
-	if len(data) > 0 && data[len(data)-1] != '\n' {
-		os.Stdout.Write([]byte("\n"))
+		ui.PrintNewline()
+		ui.PrintSuccess("SBOM written (%s)", sbomFmt)
+		ui.PrintFile(output)
 	}
 	return nil
 }

@@ -17,7 +17,7 @@ type FileCache struct {
 // NewFileCache creates a file-based cache in the given directory.
 // The directory will be created if it doesn't exist.
 func NewFileCache(dir string) (Cache, error) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
 	return &FileCache{dir: dir}, nil
@@ -72,11 +72,11 @@ func (c *FileCache) Set(ctx context.Context, key string, data []byte, ttl time.D
 	}
 
 	path := c.path(key)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
 
-	return os.WriteFile(path, entryData, 0644)
+	return os.WriteFile(path, entryData, 0600)
 }
 
 // Delete removes a value from the cache.

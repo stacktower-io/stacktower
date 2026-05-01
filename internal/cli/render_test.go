@@ -27,9 +27,9 @@ func TestReadRenderInputStdin(t *testing.T) {
 	os.Stdin = r
 	defer func() { os.Stdin = origStdin }()
 
-	g, err := readRenderInput("-")
+	g, err := loadGraph("-")
 	if err != nil {
-		t.Fatalf("readRenderInput(-) error = %v", err)
+		t.Fatalf("loadGraph(-) error = %v", err)
 	}
 	if g.NodeCount() != 2 {
 		t.Fatalf("NodeCount = %d, want 2", g.NodeCount())
@@ -48,6 +48,7 @@ func TestParseFormats(t *testing.T) {
 		{"empty defaults to svg", "", []string{"svg"}},
 		{"single format", "svg", []string{"svg"}},
 		{"multiple formats", "svg,pdf,png", []string{"svg", "pdf", "png"}},
+		{"multiple formats with spaces", "svg, pdf , png", []string{"svg", "pdf", "png"}},
 		{"pdf only", "pdf", []string{"pdf"}},
 	}
 
@@ -116,22 +117,14 @@ func TestValidateStyle(t *testing.T) {
 	}
 }
 
-func TestValidFormatsMap(t *testing.T) {
-	expected := map[string]bool{
-		"svg":  true,
-		"pdf":  true,
-		"png":  true,
-		"json": true,
-	}
-
-	for k, v := range expected {
-		if pipeline.ValidFormats[k] != v {
-			t.Errorf("ValidFormats[%q] = %v, want %v", k, pipeline.ValidFormats[k], v)
+func TestIsValidFormat(t *testing.T) {
+	for _, f := range []string{"svg", "pdf", "png", "json"} {
+		if !pipeline.IsValidFormat(f) {
+			t.Errorf("IsValidFormat(%q) = false, want true", f)
 		}
 	}
-
-	if pipeline.ValidFormats["invalid"] {
-		t.Error("ValidFormats[invalid] should be false")
+	if pipeline.IsValidFormat("invalid") {
+		t.Error("IsValidFormat(\"invalid\") should be false")
 	}
 }
 

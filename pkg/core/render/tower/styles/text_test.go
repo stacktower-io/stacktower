@@ -242,6 +242,18 @@ func TestWrapURL(t *testing.T) {
 			content: "<rect/>",
 			want:    `  <a href="https://example.com?a=1&amp;b=2" target="_blank"><rect/></a>`,
 		},
+		{
+			name:    "unsafe URL scheme",
+			url:     "javascript:alert(1)",
+			content: "<text>hello</text>",
+			want:    "<text>hello</text>",
+		},
+		{
+			name:    "trim safe URL",
+			url:     "  https://example.com/docs  ",
+			content: "<text>hello</text>",
+			want:    `  <a href="https://example.com/docs" target="_blank"><text>hello</text></a>`,
+		},
 	}
 
 	for _, tt := range tests {

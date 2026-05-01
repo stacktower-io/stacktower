@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/stacktower-io/stacktower/pkg/pipeline"
 )
@@ -190,23 +191,26 @@ func FormatRequiredBy(parents []string, isDirect bool, rootName string) string {
 	return strings.Join(parents, ", ")
 }
 
-// PadRight pads a string to the right with spaces to reach the given width.
+// PadRight pads a string to the right with spaces to reach the given
+// display width (using runewidth for correct CJK/emoji handling).
 func PadRight(s string, width int) string {
-	if len(s) >= width {
+	w := runewidth.StringWidth(s)
+	if w >= width {
 		return s
 	}
-	return s + strings.Repeat(" ", width-len(s))
+	return s + strings.Repeat(" ", width-w)
 }
 
-// Truncate truncates a string to the given max length, adding "..." if needed.
+// Truncate truncates a string to the given max display width, adding "..."
+// if needed. Uses runewidth to avoid slicing mid-rune.
 func Truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	if runewidth.StringWidth(s) <= maxLen {
 		return s
 	}
 	if maxLen <= 3 {
-		return s[:maxLen]
+		return runewidth.Truncate(s, maxLen, "")
 	}
-	return s[:maxLen-3] + "..."
+	return runewidth.Truncate(s, maxLen, "...")
 }
 
 // PrintResolveSummary prints a summary line for resolved dependencies.

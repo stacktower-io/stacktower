@@ -17,54 +17,61 @@ var (
 )
 
 // StatsReport holds all data for the stats terminal output.
+//
+// JSON tags are provided as a convenience for future callers that want to
+// encode this value directly. Note that the CLI's `stats -f json` uses a
+// re-grouped wire format (nested overview/maintenance/licenses/vulnerabilities
+// sections) rather than the flat layout here, so the tags below are not used
+// by the CLI today; see MaintenanceSummary / MaintenanceSummary etc. in
+// internal/cli/stats.go for the actual wire schema.
 type StatsReport struct {
-	Root     string
-	Version  string
-	Language string
+	Root     string `json:"root"`
+	Version  string `json:"version,omitempty"`
+	Language string `json:"language,omitempty"`
 
 	// Overview
-	TotalPackages  int
-	TotalEdges     int
-	MaxDepth       int
-	DirectDeps     int
-	TransitiveDeps int
+	TotalPackages  int `json:"total_packages"`
+	TotalEdges     int `json:"total_edges"`
+	MaxDepth       int `json:"max_depth"`
+	DirectDeps     int `json:"direct"`
+	TransitiveDeps int `json:"transitive"`
 
 	// Maintenance
-	SingleMaintainerCount int
-	SingleMaintainerPct   float64
-	Brittle               []string
-	Archived              []string
-	MedianLastCommitDays  int
-	HasMaintenanceData    bool
+	SingleMaintainerCount int      `json:"single_maintainer_count,omitempty"`
+	SingleMaintainerPct   float64  `json:"single_maintainer_pct,omitempty"`
+	Brittle               []string `json:"brittle,omitempty"`
+	Archived              []string `json:"archived,omitempty"`
+	MedianLastCommitDays  int      `json:"median_last_commit_days,omitempty"`
+	HasMaintenanceData    bool     `json:"-"`
 
 	// Licenses
-	LicenseSummary   map[string]int // risk category -> count
-	LicenseBreakdown map[string]int // license name -> count
-	Compliant        bool
-	HasLicenseData   bool
+	LicenseSummary   map[string]int `json:"license_summary,omitempty"`   // risk category -> count
+	LicenseBreakdown map[string]int `json:"license_breakdown,omitempty"` // license name -> count
+	Compliant        bool           `json:"compliant,omitempty"`
+	HasLicenseData   bool           `json:"-"`
 
 	// Vulnerabilities
-	VulnCritical int
-	VulnHigh     int
-	VulnMedium   int
-	VulnLow      int
-	VulnAffected []VulnAffectedPkg
-	HasVulnData  bool
+	VulnCritical int               `json:"vuln_critical,omitempty"`
+	VulnHigh     int               `json:"vuln_high,omitempty"`
+	VulnMedium   int               `json:"vuln_medium,omitempty"`
+	VulnLow      int               `json:"vuln_low,omitempty"`
+	VulnAffected []VulnAffectedPkg `json:"vuln_affected,omitempty"`
+	HasVulnData  bool              `json:"-"`
 
 	// Load-bearing
-	LoadBearing []LoadBearingEntry
+	LoadBearing []LoadBearingEntry `json:"load_bearing,omitempty"`
 }
 
 // VulnAffectedPkg describes a package with a vulnerability.
 type VulnAffectedPkg struct {
-	Package  string
-	Severity string
+	Package  string `json:"package"`
+	Severity string `json:"severity"`
 }
 
 // LoadBearingEntry records a load-bearing package and its reverse dep count.
 type LoadBearingEntry struct {
-	Package     string
-	ReverseDeps int
+	Package     string `json:"package"`
+	ReverseDeps int    `json:"reverse_deps"`
 }
 
 // WriteStats renders a stats report to the writer in the styled terminal format.

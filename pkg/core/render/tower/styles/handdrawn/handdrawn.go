@@ -39,10 +39,10 @@ const (
 )
 
 // HandDrawn implements a casual, hand-drawn visual style with wobbly
-// lines and xkcd Script typography (embedded in the binary).
+// lines and Gaegu typography (embedded in the binary).
 type HandDrawn struct{ seed uint64 }
 
-// New creates a new HandDrawn style with the given seed forReproducible
+// New creates a new HandDrawn style with the given seed for reproducible
 // line wobbling.
 func New(seed uint64) *HandDrawn { return &HandDrawn{seed: seed} }
 
@@ -50,9 +50,9 @@ func (h *HandDrawn) RenderDefs(buf *bytes.Buffer) {
 	buf.WriteString(`  <defs>
     <style>
       @font-face {
-        font-family: 'xkcd Script';
+        font-family: 'Gaegu';
         src: url('data:font/woff;base64,`)
-	buf.WriteString(fonts.XKCDScriptWOFFBase64())
+	buf.WriteString(fonts.GaeguWOFFBase64())
 	buf.WriteString(`') format('woff');
         font-weight: normal;
         font-style: normal;

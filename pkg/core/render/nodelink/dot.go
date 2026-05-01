@@ -156,7 +156,7 @@ var (
 )
 
 // injectFont inserts a <style> block immediately after the opening <svg> tag.
-// The block embeds the xkcd Script WOFF font as base64 and applies it to all
+// The block embeds the Gaegu WOFF font as base64 and applies it to all
 // text elements, matching the hand-drawn aesthetic of the tower visualization.
 // The font is embedded in the SVG itself so PDF/PNG exports also use it.
 func injectFont(svg []byte) []byte {
@@ -171,8 +171,8 @@ func injectFont(svg []byte) []byte {
 	insertAt := idx + end + 1
 
 	style := fmt.Sprintf(
-		`<style>@font-face{font-family:'xkcd Script';src:url('data:font/woff;base64,%s')format('woff');font-weight:normal;font-style:normal;}text{font-family:'xkcd Script','Comic Sans MS','Bradley Hand','Segoe Script',sans-serif;}</style>`,
-		fonts.XKCDScriptWOFFBase64(),
+		`<style>@font-face{font-family:'Gaegu';src:url('data:font/woff;base64,%s')format('woff');font-weight:normal;font-style:normal;}text{font-family:'Gaegu','Comic Sans MS','Bradley Hand','Segoe Script',sans-serif;}</style>`,
+		fonts.GaeguWOFFBase64(),
 	)
 
 	result := make([]byte, 0, len(svg)+len(style))

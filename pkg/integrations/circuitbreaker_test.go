@@ -90,6 +90,25 @@ func TestCircuitBreakerTransitionsToHalfOpenAfterCooldown(t *testing.T) {
 	}
 }
 
+func TestCircuitBreakerAllowsOnlyOneHalfOpenProbe(t *testing.T) {
+	ctx := context.Background()
+	config := CircuitBreakerConfig{
+		Threshold: 1,
+		Cooldown:  10 * time.Millisecond,
+	}
+	cb := NewCircuitBreaker("test", config)
+
+	cb.RecordFailure(ctx, 0)
+	time.Sleep(20 * time.Millisecond)
+
+	if !cb.Allow(ctx) {
+		t.Fatal("expected first request after cooldown to be allowed as probe")
+	}
+	if cb.Allow(ctx) {
+		t.Fatal("expected second half-open request to be rejected while probe is active")
+	}
+}
+
 func TestCircuitBreakerClosesOnSuccessInHalfOpen(t *testing.T) {
 	ctx := context.Background()
 	config := CircuitBreakerConfig{

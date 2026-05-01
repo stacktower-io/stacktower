@@ -1,9 +1,8 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 
 	"github.com/spf13/cobra"
 
@@ -30,44 +29,11 @@ were introduced (useful in CI pipelines).`,
 		},
 	}
 
-	cmd.Flags().StringVarP(&format, "format", "f", "text", "Output format: text, json")
-	cmd.Flags().StringVarP(&output, "output", "o", "", "Output file (stdout if empty)")
-	cmd.Flags().BoolVar(&failOnVuln, "fail-on-vuln", false, "Exit 3 if new vulnerabilities were introduced")
+	cmd.Flags().StringVarP(&format, "format", "f", FormatText, "output format: text, json")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "output file (stdout if omitted)")
+	cmd.Flags().BoolVar(&failOnVuln, "fail-on-vuln", false, "exit 3 if new vulnerabilities were introduced")
 
 	return cmd
-}
-
-type diffJSON struct {
-	Before    diffSideJSON     `json:"before"`
-	After     diffSideJSON     `json:"after"`
-	Added     []diffEntryJSON  `json:"added"`
-	Removed   []diffEntryJSON  `json:"removed"`
-	Updated   []diffUpdateJSON `json:"updated"`
-	Unchanged int              `json:"unchanged"`
-	NewVulns  []diffVulnJSON   `json:"new_vulns"`
-}
-
-type diffSideJSON struct {
-	Root    string `json:"root"`
-	Version string `json:"version"`
-	Total   int    `json:"total"`
-}
-
-type diffEntryJSON struct {
-	Package string `json:"package"`
-	Version string `json:"version"`
-}
-
-type diffUpdateJSON struct {
-	Package    string `json:"package"`
-	OldVersion string `json:"old_version"`
-	NewVersion string `json:"new_version"`
-}
-
-type diffVulnJSON struct {
-	Package  string `json:"package"`
-	Severity string `json:"severity"`
-	Version  string `json:"version"`
 }
 
 // VulnError is returned when --fail-on-vuln detects new vulnerabilities.
@@ -81,34 +47,36 @@ func (e *VulnError) Error() string {
 }
 
 func (c *CLI) runDiff(beforeInput, afterInput, format, output string, failOnVuln bool) error {
+	if beforeInput == "-" && afterInput == "-" {
+		return NewUserError(
+			"diff cannot read both graphs from stdin",
+			"Pass one graph as a file path, or write one side to a temporary file before diffing.",
+		)
+	}
+
 	before, err := loadGraph(beforeInput)
 	if err != nil {
-		return WrapSystemError(err, "failed to load 'before' graph", "")
+		return WrapSystemError(err, "failed to load 'before' graph", "Check that the file exists and contains valid graph JSON.")
 	}
 	after, err := loadGraph(afterInput)
 	if err != nil {
-		return WrapSystemError(err, "failed to load 'after' graph", "")
+		return WrapSystemError(err, "failed to load 'after' graph", "Check that the file exists and contains valid graph JSON.")
 	}
 
 	d := dag.Diff(before, after)
 
-	w := os.Stdout
-	if output != "" {
-		f, err := os.Create(output)
-		if err != nil {
-			return WrapSystemError(err, "failed to create output file", "")
-		}
-		defer f.Close()
-		w = f
+	writers := map[string]func(io.Writer) error{
+		FormatJSON: func(w io.Writer) error { return writeDiffJSON(w, d) },
+		FormatText: func(w io.Writer) error { ui.WriteDiff(w, d); return nil },
+	}
+	if err := writeFormatted(output, format, writers); err != nil {
+		return err
 	}
 
-	switch format {
-	case "json":
-		if err := writeDiffJSON(w, d); err != nil {
-			return WrapSystemError(err, "failed to write JSON output", "")
-		}
-	default:
-		ui.WriteDiff(w, d)
+	if output != "" {
+		ui.PrintNewline()
+		ui.PrintSuccess("Diff written")
+		ui.PrintFile(output)
 	}
 
 	if failOnVuln && len(d.NewVulns) > 0 {
@@ -118,43 +86,11 @@ func (c *CLI) runDiff(beforeInput, afterInput, format, output string, failOnVuln
 	return nil
 }
 
-func writeDiffJSON(w *os.File, d *dag.DiffResult) error {
-	out := diffJSON{
-		Before: diffSideJSON{
-			Root:    d.Before.RootID,
-			Version: d.Before.RootVersion,
-			Total:   d.Before.NodeCount,
-		},
-		After: diffSideJSON{
-			Root:    d.After.RootID,
-			Version: d.After.RootVersion,
-			Total:   d.After.NodeCount,
-		},
-		Unchanged: d.Unchanged,
-	}
-
-	for _, e := range d.Added {
-		out.Added = append(out.Added, diffEntryJSON{Package: e.ID, Version: e.Version})
-	}
-	for _, e := range d.Removed {
-		out.Removed = append(out.Removed, diffEntryJSON{Package: e.ID, Version: e.Version})
-	}
-	for _, u := range d.Updated {
-		out.Updated = append(out.Updated, diffUpdateJSON{
-			Package:    u.ID,
-			OldVersion: u.OldVersion,
-			NewVersion: u.NewVersion,
-		})
-	}
-	for _, v := range d.NewVulns {
-		out.NewVulns = append(out.NewVulns, diffVulnJSON{
-			Package:  v.ID,
-			Severity: v.Severity,
-			Version:  v.Version,
-		})
-	}
-
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(out)
+// writeDiffJSON encodes the canonical dag.DiffResult directly. JSON tags on
+// the canonical type keep the external schema stable while avoiding a
+// shadow DTO that would have to be kept in sync. DepthChange on DiffUpdate
+// uses omitempty, so zero values are silently elided and scripts that
+// predate its introduction continue to see the same keys.
+func writeDiffJSON(w io.Writer, d *dag.DiffResult) error {
+	return encodeJSON(w, d)
 }

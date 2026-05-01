@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -13,7 +12,6 @@ import (
 	"github.com/stacktower-io/stacktower/internal/cli/ui"
 	"github.com/stacktower-io/stacktower/pkg/core/dag"
 	"github.com/stacktower-io/stacktower/pkg/core/render/tower/ordering"
-	"github.com/stacktower-io/stacktower/pkg/graph"
 	"github.com/stacktower-io/stacktower/pkg/observability"
 	"github.com/stacktower-io/stacktower/pkg/pipeline"
 )
@@ -44,41 +42,24 @@ If you want to save the intermediate layout, use 'layout' followed by 'visualize
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Formats = parseFormats(formatsStr)
-			if err := pipeline.ValidateFormats(opts.Formats); err != nil {
+			if err := validateRenderFormats(opts.Formats); err != nil {
 				return err
 			}
-			if err := pipeline.ValidateStyle(opts.Style); err != nil {
+			if err := validateRenderStyle(opts.Style); err != nil {
+				return err
+			}
+			if err := validateOrderingTimeout(orderTimeout); err != nil {
 				return err
 			}
 			return c.runRender(cmd.Context(), args[0], opts, output, noCache, orderTimeout)
 		},
 	}
 
-	// Common flags
 	cmd.Flags().StringVarP(&output, "output", "o", "", "output file (single format) or base path (multiple)")
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "disable caching")
-
-	// Layout flags
-	cmd.Flags().StringVarP(&opts.VizType, "type", "t", opts.VizType, "visualization type: tower (default), nodelink")
-	cmd.Flags().BoolVar(&opts.Normalize, "normalize", opts.Normalize, "apply graph normalization")
-	cmd.Flags().Float64Var(&opts.Width, "width", opts.Width, "frame width")
-	cmd.Flags().Float64Var(&opts.Height, "height", opts.Height, "frame height")
-	cmd.Flags().StringVar(&opts.Ordering, "ordering", opts.Ordering, "ordering algorithm: optimal (default), barycentric")
-	cmd.Flags().BoolVar(&opts.Randomize, "randomize", opts.Randomize, "randomize block widths (tower)")
-	cmd.Flags().BoolVar(&opts.Merge, "merge", opts.Merge, "merge subdivider blocks (tower)")
-	cmd.Flags().BoolVar(&opts.Nebraska, "nebraska", opts.Nebraska, "show Nebraska maintainer ranking (tower)")
-	cmd.Flags().IntVar(&orderTimeout, "ordering-timeout", defaultOrderTimeout, "timeout in seconds for optimal ordering search")
-
-	// Render flags
-	cmd.Flags().StringVar(&opts.Style, "style", opts.Style, "visual style: handdrawn (default), simple")
-	cmd.Flags().BoolVar(&opts.ShowEdges, "edges", opts.ShowEdges, "show dependency edges (tower)")
-	cmd.Flags().BoolVar(&opts.Popups, "popups", opts.Popups, "show hover popups with metadata")
-	cmd.Flags().StringVarP(&formatsStr, "format", "f", "", "output format(s): svg (default), pdf, png (comma-separated)")
-
-	// Security flags
-	cmd.Flags().BoolVar(&opts.ShowVulns, "show-vulns", opts.ShowVulns, "show vulnerability severity colours (requires scanned graph)")
-	cmd.Flags().BoolVar(&opts.ShowLicenses, "show-licenses", opts.ShowLicenses, "show license compliance indicators (copyleft/unknown borders)")
-	cmd.Flags().BoolVar(&opts.FlagsOnTop, "flags-on-top", opts.FlagsOnTop, "render security flags on top of all blocks")
+	addLayoutFlags(cmd, &opts, &orderTimeout)
+	addRenderFlags(cmd, &opts, &formatsStr)
+	addSecurityFlags(cmd, &opts)
 
 	return cmd
 }
@@ -87,7 +68,7 @@ If you want to save the intermediate layout, use 'layout' followed by 'visualize
 func (c *CLI) runRender(ctx context.Context, input string, opts pipeline.Options, output string, noCache bool, orderTimeout int) error {
 	start := time.Now()
 
-	g, err := readRenderInput(input)
+	g, err := loadGraph(input)
 	if err != nil {
 		if input == "-" {
 			return WrapSystemError(err, "failed to read graph from stdin", "Pipe valid graph JSON or pass a graph file path.")
@@ -113,9 +94,16 @@ func (c *CLI) runRender(ctx context.Context, input string, opts pipeline.Options
 
 	var orderer *optimalOrderer
 	if opts.NeedsOptimalOrderer() {
-		orderer = c.newOptimalOrderer(orderTimeout).(*optimalOrderer)
-		orderer.spinner = spinner // Wire spinner for live updates
-		opts.Orderer = orderer
+		if o, ok := c.newOptimalOrderer(ctx, orderTimeout).(*optimalOrderer); ok {
+			orderer = o
+			opts.Orderer = o
+		} else {
+			opts.Orderer = c.newOptimalOrderer(ctx, orderTimeout)
+		}
+		// Route ordering-progress events to the spinner via the pipeline hook
+		// so the orderer itself doesn't need to know about the CLI UI layer.
+		c.AttachOrderingSpinner(spinner)
+		defer c.AttachOrderingSpinner(nil)
 	}
 
 	spinner.Start()
@@ -149,12 +137,14 @@ func (c *CLI) runRender(ctx context.Context, input string, opts pipeline.Options
 	}
 	spinner.Stop()
 
-	// Get crossings from orderer (computed during layout) or fallback to layout-based count
+	// Prefer the orderer's live count when we just computed the layout
+	// (it may reflect partial/timed-out state more accurately). Otherwise
+	// fall back to the value persisted on the layout itself.
 	var crossings int
 	if orderer != nil && !layoutHit {
 		crossings = orderer.crossings
 	} else {
-		crossings = countCrossingsFromLayout(layout)
+		crossings = layout.Crossings
 	}
 	orderingName := opts.Ordering
 	if orderingName == "" {
@@ -175,10 +165,11 @@ func (c *CLI) runRender(ctx context.Context, input string, opts pipeline.Options
 		cacheHit:  layoutHit && renderHit,
 		elapsed:   time.Since(start),
 		renderStats: ui.RenderStats{
-			Layers:    len(layout.Rows),
-			Crossings: crossings,
-			Ordering:  orderingName,
-			Style:     style,
+			Layers:      len(layout.Rows),
+			Crossings:   crossings,
+			OrderingRan: true,
+			Ordering:    orderingName,
+			Style:       style,
 		},
 	})
 }
@@ -187,19 +178,29 @@ func (c *CLI) runRender(ctx context.Context, input string, opts pipeline.Options
 // Optimal Orderer
 // =============================================================================
 
-// optimalOrderer wraps ordering.OptimalSearch with CLI progress feedback.
+// optimalOrderer wraps ordering.OptimalSearch and surfaces events via
+// observability hooks. It deliberately knows nothing about ui.Spinner or
+// other CLI affordances: progress is routed through
+// observability.Pipeline().OnOrderingProgress, which the CLI's registered
+// pipeline hook forwards to the active spinner (see AttachOrderingSpinner).
+//
+// The caller's ctx is captured at construction time and passed to each
+// observability call so tracing/cancellation propagates correctly.
 type optimalOrderer struct {
 	ordering.OptimalSearch
 	cli       *CLI
-	crossings int         // Last computed crossings count
-	spinner   *ui.Spinner // Optional spinner for live updates
-	startTime time.Time   // For duration tracking
-	rowCount  int         // Number of rows being ordered
+	ctx       context.Context
+	crossings int       // Last computed crossings count
+	startTime time.Time // For duration tracking
+	rowCount  int       // Number of rows being ordered
 }
 
-// newOptimalOrderer creates an optimal orderer with a timeout.
-func (c *CLI) newOptimalOrderer(timeoutSec int) ordering.Orderer {
-	o := &optimalOrderer{cli: c}
+// newOptimalOrderer creates an optimal orderer bound to the caller's ctx.
+func (c *CLI) newOptimalOrderer(ctx context.Context, timeoutSec int) ordering.Orderer {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	o := &optimalOrderer{cli: c, ctx: ctx}
 	o.OptimalSearch = ordering.OptimalSearch{
 		Timeout:  time.Duration(timeoutSec) * time.Second,
 		Progress: o.onProgress,
@@ -209,18 +210,10 @@ func (c *CLI) newOptimalOrderer(timeoutSec int) ordering.Orderer {
 }
 
 func (o *optimalOrderer) onProgress(explored, pruned, bestScore int) {
-	if bestScore >= 0 {
-		o.cli.Logger.Debug("search progress", "explored", explored, "pruned", pruned, "crossings", bestScore)
-
-		// Update spinner with live progress
-		if o.spinner != nil {
-			o.spinner.UpdateMessage(fmt.Sprintf("Ordering... %s explored, best: %d crossings",
-				formatCount(explored+pruned), bestScore))
-		}
-
-		// Emit observability hook
-		observability.Pipeline().OnOrderingProgress(context.Background(), explored, pruned, bestScore)
+	if bestScore < 0 {
+		return
 	}
+	observability.Pipeline().OnOrderingProgress(o.ctx, explored, pruned, bestScore)
 }
 
 func (o *optimalOrderer) onDebug(info ordering.DebugInfo) {
@@ -232,15 +225,12 @@ func (o *optimalOrderer) OrderRows(g *dag.DAG) map[int][]string {
 	o.startTime = time.Now()
 	o.rowCount = g.RowCount()
 
-	// Emit start hook
-	observability.Pipeline().OnOrderingStart(context.Background(), "optimal", o.rowCount)
+	observability.Pipeline().OnOrderingStart(o.ctx, "optimal", o.rowCount)
 
 	result := o.OptimalSearch.OrderRows(g)
 	o.crossings = dag.CountCrossings(g, result)
 
-	// Emit complete hook
-	observability.Pipeline().OnOrderingComplete(context.Background(), o.crossings, time.Since(o.startTime))
-
+	observability.Pipeline().OnOrderingComplete(o.ctx, o.crossings, time.Since(o.startTime))
 	o.cli.Logger.Debug("ordering result", "crossings", o.crossings)
 
 	return result
@@ -288,10 +278,12 @@ func writeArtifacts(p artifactWriteParams) error {
 		paths = append(paths, path)
 	}
 
-	if p.renderStats.Crossings == 0 {
+	if p.renderStats.OrderingRan && p.renderStats.Crossings == 0 {
 		ui.PrintSuccess("Render complete (optimal layout)")
-	} else {
+	} else if p.renderStats.Crossings > 0 {
 		ui.PrintInfo("Render complete (%d crossings remaining)", p.renderStats.Crossings)
+	} else {
+		ui.PrintSuccess("Render complete")
 	}
 	for _, path := range paths {
 		ui.PrintFile(path)
@@ -305,67 +297,27 @@ func writeArtifacts(p artifactWriteParams) error {
 	return nil
 }
 
-func readRenderInput(input string) (*dag.DAG, error) {
-	return loadGraph(input)
-}
-
 // deriveBasePath computes the base path for output files.
+//
+// When -o is set and its extension matches a known render format, we strip
+// the extension so multi-format runs (e.g. -f svg,png) can append each
+// format's extension without doubling up ("foo.svg.svg").
+//
+// When -o is not set, we derive the base from the input (.layout.json) path:
+// we trim both the real extension (".json") and a trailing ".layout"
+// component, so "foo.layout.json" becomes "foo". This also trims for
+// non-.json inputs like "some.layout.svg" → "some"; that's an acceptable
+// overreach because layout inputs are almost always .json in practice.
 func deriveBasePath(input, output string) string {
 	if output != "" {
 		ext := filepath.Ext(output)
-		if pipeline.ValidFormats[strings.TrimPrefix(ext, ".")] {
+		if pipeline.IsValidFormat(strings.TrimPrefix(ext, ".")) {
 			return strings.TrimSuffix(output, ext)
 		}
 		return output
 	}
 	base := strings.TrimSuffix(input, filepath.Ext(input))
 	return strings.TrimSuffix(base, ".layout")
-}
-
-// writeFile writes raw data to the specified path (or stdout if empty).
-func writeFile(data []byte, path string) error {
-	if path == "" {
-		_, err := os.Stdout.Write(data)
-		return err
-	}
-	return os.WriteFile(path, data, 0644)
-}
-
-// countCrossingsFromLayout computes edge crossings from the layout's
-// row orderings and edges. It builds a temporary DAG for counting.
-func countCrossingsFromLayout(layout graph.Layout) int {
-	if len(layout.Rows) == 0 || len(layout.Edges) == 0 {
-		return 0
-	}
-
-	// Build a DAG from layout data
-	g := dag.New(nil)
-
-	// Add all nodes from rows with their row assignments
-	for row, nodeIDs := range layout.Rows {
-		for _, id := range nodeIDs {
-			_ = g.AddNode(dag.Node{ID: id, Row: row})
-		}
-	}
-
-	// Add edges
-	for _, e := range layout.Edges {
-		_ = g.AddEdge(dag.Edge{From: e.From, To: e.To})
-	}
-
-	return dag.CountCrossings(g, layout.Rows)
-}
-
-// formatCount formats a number with K/M suffixes for readability.
-func formatCount(n int) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fK", float64(n)/1_000)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
 }
 
 // dagHasContributorData checks if any node in the DAG has contributor/maintainer data.

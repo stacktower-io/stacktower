@@ -208,7 +208,7 @@ func TestValidatePackageName(t *testing.T) {
 				return
 			}
 			if err != nil && tt.errMsg != "" {
-				if !containsSubstring(err.Error(), tt.errMsg) {
+				if !strings.Contains(err.Error(), tt.errMsg) {
 					t.Errorf("error = %q, should contain %q", err.Error(), tt.errMsg)
 				}
 			}
@@ -289,11 +289,28 @@ func TestSanitizeFilenameSegment(t *testing.T) {
 	}
 }
 
-func containsSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
+func TestFormatSupportedManifests_IncludesRegisteredAndExtraLanguages(t *testing.T) {
+	manifestMap := map[string]string{
+		"poetry.lock":   "python",
+		"go.mod":        "go",
+		"foo.lock":      "foo-lang",
+		"foo-extra.yml": "foo-lang",
+	}
+
+	got := formatSupportedManifests(manifestMap)
+
+	parts := strings.Split(got, ", ")
+	expected := []string{"go.mod", "poetry.lock", "foo-extra.yml", "foo.lock"}
+	for _, want := range expected {
+		found := false
+		for _, part := range parts {
+			if part == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("formatSupportedManifests() missing %q in %q", want, got)
 		}
 	}
-	return false
 }

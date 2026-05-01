@@ -8,7 +8,7 @@ before:
     # Ensure dependencies are up to date
     - go mod tidy
     # Run tests before building
-    - go test ./...
+    - go test -race -timeout=2m ./...
 
 builds:
   # CLI binary (stacktower) - for end users
@@ -29,11 +29,13 @@ builds:
       - -X github.com/stacktower-io/stacktower/pkg/buildinfo.Version={{.Version}}
       - -X github.com/stacktower-io/stacktower/pkg/buildinfo.Commit={{.Commit}}
       - -X github.com/stacktower-io/stacktower/pkg/buildinfo.Date={{.Date}}
+      - -X github.com/stacktower-io/stacktower/pkg/buildinfo.GitHubAppClientID={{ .Env.STACKTOWER_GITHUB_APP_CLIENT_ID }}
+      - -X github.com/stacktower-io/stacktower/pkg/buildinfo.GitHubAppSlug={{ .Env.STACKTOWER_GITHUB_APP_SLUG }}
 
 archives:
   # CLI archive (for Homebrew, manual download)
   - id: stacktower
-    builds:
+    ids:
       - stacktower
     formats:
       - tar.gz
@@ -101,23 +103,28 @@ release:
     Download the appropriate binary for your platform below, or install via Go:
 
     ```bash
-    go install github.com/stacktower-io/stacktower@{{.Tag}}
+    go install github.com/stacktower-io/stacktower/cmd/stacktower@{{.Tag}}
     ```
 
   footer: |
     **Full Changelog**: https://github.com/stacktower-io/stacktower/compare/{{ .PreviousTag }}...{{ .Tag }}
 
-brews:
+homebrew_casks:
   - name: stacktower
+    ids:
+      - stacktower
+    binaries:
+      - stacktower
     repository:
       owner: stacktower-io
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Formula
     homepage: https://github.com/stacktower-io/stacktower
     description: Visualize dependency graphs as elegant stacked tower diagrams
     license: Apache-2.0
-    test: |
-      system "#{bin}/stacktower", "--version"
-    install: |
-      bin.install "stacktower"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/stacktower"]
+          end

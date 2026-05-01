@@ -10,42 +10,43 @@ import (
 	"sync"
 )
 
-// XKCDScript is the xkcd-script font from https://github.com/ipython/xkcd-font
-// This handwriting-style font is used for the hand-drawn visual style.
+// Gaegu is a handwriting-style font by Jiashuo Zhang & JIKJI FONT,
+// licensed under the SIL Open Font License 1.1.
+// https://fonts.google.com/specimen/Gaegu
+// Subsetted to Latin characters only to keep binary size small.
 
-//go:embed xkcd-script.woff
-var xkcdScriptWOFF []byte
+//go:embed Gaegu-Regular.woff
+var gaeguWOFF []byte
 
-//go:embed xkcd-script.ttf
-var xkcdScriptTTF []byte
+//go:embed Gaegu-Regular.ttf
+var gaeguTTF []byte
 
-// XKCDScriptWOFF returns the WOFF font data.
-func XKCDScriptWOFF() []byte {
-	return xkcdScriptWOFF
+// GaeguWOFF returns the WOFF font data.
+func GaeguWOFF() []byte {
+	return gaeguWOFF
 }
 
-// XKCDScriptTTF returns the TTF font data.
-func XKCDScriptTTF() []byte {
-	return xkcdScriptTTF
+// GaeguTTF returns the TTF font data.
+func GaeguTTF() []byte {
+	return gaeguTTF
 }
 
-// Cache for base64-encoded fonts (computed once on first access).
 var (
 	woffBase64     string
 	woffBase64Once sync.Once
 )
 
-// XKCDScriptWOFFBase64 returns the WOFF font data as a base64 string.
+// GaeguWOFFBase64 returns the WOFF font data as a base64 string.
 // The result is cached after first computation.
-func XKCDScriptWOFFBase64() string {
+func GaeguWOFFBase64() string {
 	woffBase64Once.Do(func() {
-		woffBase64 = base64.StdEncoding.EncodeToString(xkcdScriptWOFF)
+		woffBase64 = base64.StdEncoding.EncodeToString(gaeguWOFF)
 	})
 	return woffBase64
 }
 
-// FontFamily is the CSS font-family name for the xkcd-script font.
-const FontFamily = "xkcd Script"
+// FontFamily is the CSS font-family name for the hand-drawn style font.
+const FontFamily = "Gaegu"
 
 // FallbackFontFamily provides fallback fonts for systems without the embedded font.
-const FallbackFontFamily = `'xkcd Script', 'Comic Sans MS', 'Bradley Hand', 'Segoe Script', sans-serif`
+const FallbackFontFamily = `'Gaegu', 'Comic Sans MS', 'Bradley Hand', 'Segoe Script', sans-serif`

@@ -3,35 +3,48 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
+	"io"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
 	"github.com/stacktower-io/stacktower/internal/cli/ui"
 	"github.com/stacktower-io/stacktower/pkg/core/deps"
 	"github.com/stacktower-io/stacktower/pkg/core/deps/languages"
-	"github.com/stacktower-io/stacktower/pkg/integrations"
 	"github.com/stacktower-io/stacktower/pkg/pipeline"
 )
 
 const defaultListLimit = 20
 
-// termWidth returns the current terminal width, falling back to 80 columns.
-func termWidth() int {
-	w, _, err := term.GetSize(int(os.Stderr.Fd()))
-	if err != nil || w <= 0 {
-		return 80
+// effectiveListLimit resolves the user-facing display limit. Users can pass
+// --limit to override the default of 20; --all wins over --limit entirely
+// (handled at the call site). A zero or negative value falls back to the
+// default so the flag stays forgiving.
+func effectiveListLimit(flags *listFlags) int {
+	if flags.limit > 0 {
+		return flags.limit
 	}
-	return w
+	return defaultListLimit
 }
 
 type listFlags struct {
 	noCache           bool
 	all               bool
+	limit             int
 	runtimeVersion    string
 	supportedRuntimes bool
+	format            string
+	output            string
+}
+
+// listJSONOutput is the shape returned by `stacktower list ... -f json`.
+type listJSONOutput struct {
+	Package            string            `json:"package"`
+	Language           string            `json:"language"`
+	LatestStable       string            `json:"latest_stable,omitempty"`
+	Versions           []string          `json:"versions"`
+	RuntimeConstraints map[string]string `json:"runtime_constraints,omitempty"`
+	RuntimeFilter      string            `json:"runtime_filter,omitempty"`
+	Truncated          int               `json:"truncated,omitempty"`
 }
 
 func (c *CLI) listCommand() *cobra.Command {
@@ -52,20 +65,31 @@ Use --runtime-version to filter versions compatible with a specific
 runtime (e.g., Python 3.8). Use --supported-runtimes to display the
 runtime constraint for each version.
 
+Output:
+  Version strings are written to stdout (one per line when piped, as a
+  padded grid in a TTY). Status messages and decoration go to stderr,
+  so scripts can pipe cleanly:
+
+      stacktower list python fastapi | head
+
 Examples:
   stacktower list python fastapi
   stacktower list python fastapi --runtime-version 3.8
   stacktower list python fastapi --supported-runtimes
+  stacktower list python fastapi --all
+  stacktower list python fastapi -f json
   stacktower list rust serde
   stacktower list javascript react
-  stacktower list go github.com/gin-gonic/gin
-  stacktower list python fastapi --all`,
+  stacktower list go github.com/gin-gonic/gin`,
 	}
 
 	cmd.PersistentFlags().BoolVar(&flags.noCache, "no-cache", false, "bypass cached version data")
 	cmd.PersistentFlags().BoolVar(&flags.all, "all", false, "show all versions (default: newest 20)")
+	cmd.PersistentFlags().IntVar(&flags.limit, "limit", 0, "limit the number of versions shown (default: 20; ignored when --all is set)")
 	cmd.PersistentFlags().StringVar(&flags.runtimeVersion, "runtime-version", "", "filter versions compatible with runtime (e.g., 3.8 for Python)")
 	cmd.PersistentFlags().BoolVar(&flags.supportedRuntimes, "supported-runtimes", false, "show runtime constraints for each version")
+	cmd.PersistentFlags().StringVarP(&flags.format, "format", "f", "", "output format: text (default), json")
+	cmd.PersistentFlags().StringVarP(&flags.output, "output", "o", "", "write output to file (json format only; default: stdout)")
 
 	for _, lang := range languages.All {
 		cmd.AddCommand(c.listLangCommand(lang, &flags))
@@ -89,6 +113,12 @@ func (c *CLI) runList(ctx context.Context, lang *deps.Language, flags *listFlags
 	if err := validatePackageName(pkg); err != nil {
 		return err
 	}
+	if flags.limit < 0 {
+		return NewUserError(
+			"invalid --limit value",
+			"--limit must be a positive integer (e.g. --limit 50). Omit the flag for the default of 20.",
+		)
+	}
 
 	cc, err := newCache(flags.noCache)
 	if err != nil {
@@ -104,6 +134,7 @@ func (c *CLI) runList(ctx context.Context, lang *deps.Language, flags *listFlags
 		Refresh:            flags.noCache,
 	}
 
+	// Status UI always goes to stderr so stdout stays clean for pipes.
 	spinner := ui.NewSpinnerWithContext(ctx, fmt.Sprintf("Fetching versions for %s...", pkg))
 	spinner.Start()
 
@@ -114,164 +145,51 @@ func (c *CLI) runList(ctx context.Context, lang *deps.Language, flags *listFlags
 	}
 	spinner.Stop()
 
-	if len(result.Versions) == 0 {
-		if flags.runtimeVersion != "" {
-			ui.PrintWarning("No versions of %s are compatible with %s %s", pkg, lang.Name, flags.runtimeVersion)
-		} else {
-			ui.PrintWarning("No versions found for %s", pkg)
+	switch flags.format {
+	case FormatJSON:
+		return emitListJSON(result, lang.Name, flags)
+	case "", FormatText:
+		if flags.output != "" {
+			return NewUserError(
+				"-o/--output is only supported with -f json",
+				"Use `-f json -o file.json` to save structured output, or drop -o for text output.",
+			)
 		}
-		return nil
+		return emitListText(result, lang.Name, flags)
+	default:
+		return unsupportedFormatError(flags.format, nil)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// JSON output
+// ---------------------------------------------------------------------------
+
+func emitListJSON(result *pipeline.ListResult, langName string, flags *listFlags) error {
+	out := listJSONOutput{
+		Package:            result.Package,
+		Language:           langName,
+		LatestStable:       result.LatestStable,
+		Versions:           result.Versions,
+		RuntimeConstraints: result.RuntimeConstraints,
+		RuntimeFilter:      flags.runtimeVersion,
+	}
+	if !flags.all {
+		limit := effectiveListLimit(flags)
+		if len(out.Versions) > limit {
+			out.Truncated = len(out.Versions) - limit
+			out.Versions = out.Versions[:limit]
+		}
 	}
 
-	printVersionListWithRuntime(result.Package, lang.Name, result.Versions, result.LatestStable, flags, result.RuntimeConstraints)
+	if err := writeFormatted(flags.output, FormatJSON, map[string]func(io.Writer) error{
+		FormatJSON: func(w io.Writer) error { return encodeJSON(w, out) },
+	}); err != nil {
+		return err
+	}
+	if flags.output != "" {
+		ui.PrintSuccess("Versions written")
+		ui.PrintFile(flags.output)
+	}
 	return nil
-}
-
-// ---------------------------------------------------------------------------
-// Display
-// ---------------------------------------------------------------------------
-
-func printVersionListWithRuntime(pkg, langName string, versions []string, latest string, flags *listFlags, constraints map[string]string) {
-	total := len(versions)
-
-	ui.PrintNewline()
-
-	// Show runtime filter info if specified
-	if flags.runtimeVersion != "" {
-		fmt.Fprintf(os.Stderr, "  %s\n",
-			ui.StyleInfo.Render(fmt.Sprintf("Runtime: %s %s (filter)", langName, flags.runtimeVersion)))
-		ui.PrintNewline()
-	}
-
-	fmt.Fprintf(os.Stderr, "  %s %s\n",
-		ui.StyleHighlight.Render(pkg),
-		ui.StyleDim.Render(fmt.Sprintf("%s · %d versions", langName, total)))
-
-	// Show latest with its runtime constraint if available
-	latestConstraint := ""
-	if constraints != nil {
-		latestConstraint = constraints[latest]
-	}
-	if latestConstraint != "" {
-		fmt.Fprintf(os.Stderr, "  %s %s %s\n",
-			ui.StyleDim.Render("latest"),
-			ui.StyleSuccess.Render(latest),
-			ui.StyleDim.Render(fmt.Sprintf("(requires %s %s)", langName, latestConstraint)))
-	} else {
-		fmt.Fprintf(os.Stderr, "  %s %s\n",
-			ui.StyleDim.Render("latest"),
-			ui.StyleSuccess.Render(latest))
-	}
-	ui.PrintNewline()
-
-	display := make([]string, 0, len(versions))
-	for _, v := range versions {
-		if v != latest {
-			display = append(display, v)
-		}
-	}
-
-	truncated := 0
-	if !flags.all && len(display) > defaultListLimit {
-		truncated = len(display) - defaultListLimit
-		display = display[:defaultListLimit]
-	}
-
-	if flags.supportedRuntimes && constraints != nil {
-		printVersionColumnsWithRuntime(display, constraints, langName)
-	} else {
-		printVersionColumns(display)
-	}
-
-	if truncated > 0 {
-		ui.PrintNewline()
-		ui.PrintDetail("… %d older versions not shown (use --all to list all)", truncated)
-	}
-	ui.PrintNewline()
-}
-
-func printVersionColumnsWithRuntime(versions []string, constraints map[string]string, langName string) {
-	if len(versions) == 0 {
-		return
-	}
-
-	// Find max version length
-	maxVerLen := 0
-	for _, v := range versions {
-		if len(v) > maxVerLen {
-			maxVerLen = len(v)
-		}
-	}
-
-	// Find max constraint length
-	maxConstraintLen := 0
-	for _, v := range versions {
-		c := constraints[v]
-		if len(c) > maxConstraintLen {
-			maxConstraintLen = len(c)
-		}
-	}
-
-	const indent = 2
-	for _, v := range versions {
-		fmt.Fprint(os.Stderr, strings.Repeat(" ", indent))
-
-		padded := fmt.Sprintf("%-*s", maxVerLen, v)
-		sv := integrations.ParseSemver(v)
-		switch {
-		case !sv.Valid || sv.Prerelease != "":
-			fmt.Fprint(os.Stderr, ui.StyleDim.Render(padded))
-		default:
-			fmt.Fprint(os.Stderr, ui.StyleValue.Render(padded))
-		}
-
-		constraint := constraints[v]
-		if constraint != "" {
-			fmt.Fprintf(os.Stderr, "  %s", ui.StyleDim.Render(fmt.Sprintf("%s %s", langName, constraint)))
-		}
-		fmt.Fprintln(os.Stderr)
-	}
-}
-
-func printVersionColumns(versions []string) {
-	if len(versions) == 0 {
-		return
-	}
-
-	maxLen := 0
-	for _, v := range versions {
-		if len(v) > maxLen {
-			maxLen = len(v)
-		}
-	}
-
-	const indent = 2
-	const colGap = 3
-	colWidth := maxLen + colGap
-	cols := (termWidth() - indent) / colWidth
-	if cols < 1 {
-		cols = 1
-	}
-
-	for i, v := range versions {
-		if i%cols == 0 {
-			fmt.Fprint(os.Stderr, strings.Repeat(" ", indent))
-		}
-
-		padded := fmt.Sprintf("%-*s", maxLen, v)
-
-		sv := integrations.ParseSemver(v)
-		switch {
-		case !sv.Valid || sv.Prerelease != "":
-			fmt.Fprint(os.Stderr, ui.StyleDim.Render(padded))
-		default:
-			fmt.Fprint(os.Stderr, ui.StyleValue.Render(padded))
-		}
-
-		if i%cols == cols-1 || i == len(versions)-1 {
-			fmt.Fprintln(os.Stderr)
-		} else {
-			fmt.Fprint(os.Stderr, strings.Repeat(" ", colGap))
-		}
-	}
 }

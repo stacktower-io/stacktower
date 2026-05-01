@@ -20,7 +20,7 @@ readonly COMBINED_SCALE=0.5
 main() {
     local mode="${1:-all}"
 
-    check_prerequisites
+    check_prerequisites "$mode"
     mkdir -p "$OUTPUT_DIR"
 
     case "$mode" in
@@ -53,12 +53,23 @@ main() {
 }
 
 check_prerequisites() {
+    local mode="$1"
+
     if [[ ! -f "$BIN" ]]; then
         fail "Binary not found at $BIN\nRun 'make build' first"
     fi
 
     if ! command -v jq >/dev/null 2>&1; then
         fail "jq is required but not installed"
+    fi
+
+    if [[ "$mode" != "parse" ]]; then
+        if ! command -v bc >/dev/null 2>&1; then
+            fail "bc is required for combined SVG generation"
+        fi
+        if ! command -v rsvg-convert >/dev/null 2>&1; then
+            fail "rsvg-convert is required for PNG/PDF rendering (install librsvg)"
+        fi
     fi
 }
 

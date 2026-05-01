@@ -49,12 +49,21 @@ import (
 // count), as each node may spawn subdividers equal to the depth. Space
 // complexity is O(V) for tracking used IDs.
 func Subdivide(g *dag.DAG) {
-	gen := newIDGen(g.Nodes())
-	subdivideLongEdges(g, gen)
-	extendSinksToBottom(g, gen)
+	_ = subdivide(g)
 }
 
-func subdivideLongEdges(g *dag.DAG, gen *idGen) {
+func subdivide(g *dag.DAG) error {
+	gen := newIDGen(g.Nodes())
+	if err := subdivideLongEdges(g, gen); err != nil {
+		return err
+	}
+	if err := extendSinksToBottom(g, gen); err != nil {
+		return err
+	}
+	return nil
+}
+
+func subdivideLongEdges(g *dag.DAG, gen *idGen) error {
 	var toRemove []dag.Edge
 	for _, e := range g.Edges() {
 		src, srcOK := g.Node(e.From)
@@ -66,19 +75,24 @@ func subdivideLongEdges(g *dag.DAG, gen *idGen) {
 		toRemove = append(toRemove, e)
 		prevID := src.ID
 		for row := src.Row + 1; row < dst.Row; row++ {
-			prevID = addSubdivider(g, gen, prevID, src.ID, row)
+			nextID, err := addSubdivider(g, gen, prevID, src.ID, row)
+			if err != nil {
+				return err
+			}
+			prevID = nextID
 		}
 		if err := g.AddEdge(dag.Edge{From: prevID, To: dst.ID, Meta: e.Meta}); err != nil {
-			panic(err)
+			return fmt.Errorf("add subdivided edge %q -> %q: %w", prevID, dst.ID, err)
 		}
 	}
 
 	for _, e := range toRemove {
 		g.RemoveEdge(e.From, e.To)
 	}
+	return nil
 }
 
-func addSubdivider(g *dag.DAG, gen *idGen, from, master string, row int) string {
+func addSubdivider(g *dag.DAG, gen *idGen, from, master string, row int) (string, error) {
 	id := gen.next(master, row)
 	if err := g.AddNode(dag.Node{
 		ID:       id,
@@ -86,15 +100,15 @@ func addSubdivider(g *dag.DAG, gen *idGen, from, master string, row int) string 
 		Kind:     dag.NodeKindSubdivider,
 		MasterID: master,
 	}); err != nil {
-		panic(err)
+		return "", fmt.Errorf("add subdivider node %q: %w", id, err)
 	}
 	if err := g.AddEdge(dag.Edge{From: from, To: id}); err != nil {
-		panic(err)
+		return "", fmt.Errorf("add subdivider edge %q -> %q: %w", from, id, err)
 	}
-	return id
+	return id, nil
 }
 
-func extendSinksToBottom(g *dag.DAG, gen *idGen) {
+func extendSinksToBottom(g *dag.DAG, gen *idGen) error {
 	maxRow := g.MaxRow()
 	for _, n := range g.Nodes() {
 		if g.OutDegree(n.ID) > 0 || n.Row >= maxRow {
@@ -102,9 +116,14 @@ func extendSinksToBottom(g *dag.DAG, gen *idGen) {
 		}
 		prevID := n.ID
 		for row := n.Row + 1; row <= maxRow; row++ {
-			prevID = addSubdivider(g, gen, prevID, n.EffectiveID(), row)
+			nextID, err := addSubdivider(g, gen, prevID, n.EffectiveID(), row)
+			if err != nil {
+				return err
+			}
+			prevID = nextID
 		}
 	}
+	return nil
 }
 
 type idGen struct {

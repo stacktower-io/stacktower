@@ -6,6 +6,11 @@ import (
 	"fmt"
 )
 
+// ErrNotLoggedIn is a sentinel used by loadGitHubSession when no session
+// exists. Checked structurally via errors.Is in the login flow.
+var ErrNotLoggedIn = errors.New("not logged in")
+var ErrCancelled = errors.New("operation cancelled")
+
 const (
 	// ExitCodeFailure is a generic runtime failure.
 	ExitCodeFailure = 1
@@ -87,11 +92,26 @@ func WrapSystemError(cause error, message string, hint string) error {
 }
 
 // ExitCodeForError maps errors to stable process exit codes.
+//
+// Mapping:
+//
+//   - nil                       → 0
+//   - context.Canceled          → 130 (SIGINT/SIGTERM convention)
+//   - VulnError                 → 3   (diff --fail-on-vuln)
+//   - CLIError{Kind:User}       → 2   (usage/input errors)
+//   - anything else             → 1   (generic runtime failure)
+//
+// Note: context.DeadlineExceeded intentionally maps to 1 (runtime failure),
+// not 130, because a timeout is typically a system/network condition rather
+// than a user-initiated interrupt.
 func ExitCodeForError(err error) int {
 	if err == nil {
 		return 0
 	}
 	if errors.Is(err, context.Canceled) {
+		return ExitCodeInterrupted
+	}
+	if errors.Is(err, ErrCancelled) {
 		return ExitCodeInterrupted
 	}
 

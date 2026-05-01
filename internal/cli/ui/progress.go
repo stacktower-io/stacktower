@@ -10,9 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mattn/go-isatty"
 	"github.com/mattn/go-runewidth"
-	"golang.org/x/term"
 
 	"github.com/stacktower-io/stacktower/pkg/observability"
 )
@@ -76,7 +74,7 @@ func NewProgressView(ctx context.Context, message string, maxNodes int) *Progres
 		ctx:           pvCtx,
 		cancel:        cancel,
 		done:          make(chan struct{}),
-		isTTY:         isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd()),
+		isTTY:         StderrIsTTY(),
 		inflight:      make(map[string]bool),
 		seenOK:        make(map[string]bool),
 		rateLimited:   make(map[string]rateLimitInfo),
@@ -85,11 +83,33 @@ func NewProgressView(ctx context.Context, message string, maxNodes int) *Progres
 	}
 }
 
-// Start registers hooks and launches the render loop.
+// activeProgressView tracks the currently-active ProgressView so we can detect
+// and refuse overlapping registrations. Hooks in pkg/observability are a
+// process-global seam — if a second ProgressView called Start while another
+// was active we'd silently clobber the first view's hooks and lose its
+// progress data. Since the CLI runs one parse at a time this is a programming
+// error, so we log a debug event and skip registration rather than racing.
+var (
+	activeProgressMu sync.Mutex
+	activeProgress   *ProgressView
+)
+
+// Start registers hooks and launches the render loop. If another ProgressView
+// is already active, Start is a no-op (the other view keeps its hook
+// registrations). This guards against accidental concurrent use, which would
+// otherwise race for the global observability hook slots.
 func (pv *ProgressView) Start() {
 	if quietMode {
 		return
 	}
+	activeProgressMu.Lock()
+	if activeProgress != nil && activeProgress != pv {
+		activeProgressMu.Unlock()
+		return
+	}
+	activeProgress = pv
+	activeProgressMu.Unlock()
+
 	observability.SetResolverHooks(pv)
 	observability.SetRateLimitHooks(pv)
 	pv.active = true
@@ -115,6 +135,7 @@ func (pv *ProgressView) Stop() {
 	observability.SetResolverHooks(nil)
 	observability.SetRateLimitHooks(nil)
 	pv.active = false
+	pv.releaseActive()
 }
 
 // StopWithError deregisters hooks, clears progress, and prints an error.
@@ -132,7 +153,18 @@ func (pv *ProgressView) StopWithError(message string) {
 	observability.SetResolverHooks(nil)
 	observability.SetRateLimitHooks(nil)
 	pv.active = false
+	pv.releaseActive()
 	PrintError("%s", message)
+}
+
+// releaseActive clears the package-level active-view pointer so a subsequent
+// ProgressView.Start can succeed. No-op if this view was never the active one.
+func (pv *ProgressView) releaseActive() {
+	activeProgressMu.Lock()
+	if activeProgress == pv {
+		activeProgress = nil
+	}
+	activeProgressMu.Unlock()
 }
 
 // ---------------------------------------------------------------------------
@@ -298,7 +330,7 @@ func (pv *ProgressView) render(frame int) {
 	rateLimitLines := pv.rateLimitStatusLinesLocked()
 	lines = append(lines, rateLimitLines...)
 
-	width := terminalWidth()
+	width := StderrWidth()
 	if len(lines) > 0 {
 		lines[0] = FitToWidth(lines[0], width)
 	}
@@ -314,14 +346,6 @@ func (pv *ProgressView) render(frame int) {
 		fmt.Fprintf(os.Stderr, "%s\033[K\n", l)
 	}
 	pv.lines = len(lines)
-}
-
-func terminalWidth() int {
-	width, _, err := term.GetSize(int(os.Stderr.Fd()))
-	if err != nil || width <= 0 {
-		return 0
-	}
-	return width
 }
 
 // FitToWidth truncates a string to fit within a terminal width.
@@ -387,7 +411,7 @@ func (pv *ProgressView) rateLimitStatusLinesLocked() []string {
 				msg = fmt.Sprintf("  %s %s: circuit open, pausing for %s",
 					StyleIconWarning.Render(IconWarning),
 					registry,
-					formatDuration(remaining))
+					formatCountdown(remaining))
 			} else {
 				msg = fmt.Sprintf("  %s %s: circuit open, testing recovery",
 					StyleIconWarning.Render(IconWarning),
@@ -415,7 +439,7 @@ func (pv *ProgressView) rateLimitStatusLinesLocked() []string {
 				msg := fmt.Sprintf("  %s %s: rate limited, waiting %s",
 					StyleIconWarning.Render(IconWarning),
 					registry,
-					formatDuration(remaining))
+					formatCountdown(remaining))
 				lines = append(lines, StyleWarning.Render(msg))
 			}
 		} else if elapsed < 5*time.Second {
@@ -439,7 +463,7 @@ func (pv *ProgressView) rateLimitStatusLinesLocked() []string {
 			msg := fmt.Sprintf("  %s %s: throttling requests (%s remaining)",
 				StyleIconInfo.Render(IconInfo),
 				registry,
-				formatDuration(remaining))
+				formatCountdown(remaining))
 			lines = append(lines, StyleDim.Render(msg))
 		} else if now.Sub(info.startedAt) < 2*time.Second {
 			msg := fmt.Sprintf("  %s %s: throttling requests",
@@ -452,7 +476,11 @@ func (pv *ProgressView) rateLimitStatusLinesLocked() []string {
 	return lines
 }
 
-func formatDuration(d time.Duration) string {
+// formatCountdown formats a remaining-time duration for progress display.
+// Unlike FormatDuration (which is optimized for elapsed-time display with
+// millisecond precision), this produces compact countdown labels like "<1s",
+// "12s", "2m30s".
+func formatCountdown(d time.Duration) string {
 	if d < time.Second {
 		return "<1s"
 	}

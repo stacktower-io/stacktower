@@ -71,7 +71,18 @@ func generateTowerLayout(g *dag.DAG, opts Options) (graph.Layout, error) {
 	l.Nebraska = feature.RankNebraska(workGraph, 10)
 
 	// Export to serialization format
-	return l.Export(workGraph)
+	exported, err := l.Export(workGraph)
+	if err != nil {
+		return exported, err
+	}
+
+	// Record the crossing count on the serialized layout so cache consumers
+	// and diff tooling can read it without re-running the ordering step.
+	if len(exported.Rows) > 0 && len(exported.Edges) > 0 {
+		exported.Crossings = dag.CountCrossings(workGraph, exported.Rows)
+	}
+
+	return exported, nil
 }
 
 // =============================================================================

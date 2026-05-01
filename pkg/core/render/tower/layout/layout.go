@@ -16,9 +16,10 @@ const (
 	defaultOrdererTimeout = 60 * time.Second
 )
 
-// DefaultOrderer is the default ordering algorithm used by Build.
+// defaultOrderer is the default ordering algorithm used by Build.
 // It uses OptimalSearch with a 60-second timeout to find minimum-crossing layouts.
-var DefaultOrderer = ordering.OptimalSearch{Timeout: defaultOrdererTimeout}
+// Callers that need a different orderer should use WithOrderer.
+var defaultOrderer = ordering.OptimalSearch{Timeout: defaultOrdererTimeout}
 
 // Layout represents the computed physical positions and dimensions of all
 // blocks in a tower visualization, along with rendering metadata.
@@ -101,7 +102,7 @@ func EnsureLayered(g *dag.DAG) {
 // should handle layer assignment.
 func Build(g *dag.DAG, width, height float64, opts ...Option) Layout {
 	cfg := config{
-		orderer:     DefaultOrderer,
+		orderer:     defaultOrderer,
 		auxRatio:    defaultAuxRatio,
 		marginRatio: defaultMarginRatio,
 	}

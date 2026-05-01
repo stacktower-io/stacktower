@@ -39,7 +39,6 @@ Instead, report them privately via one of these methods:
 This security policy covers:
 - The Stacktower CLI binary
 - The Go library (`pkg/`)
-- The official container images (if any)
 
 Out of scope:
 - Third-party dependencies (report to the respective maintainers)
@@ -49,7 +48,7 @@ Out of scope:
 
 When using Stacktower:
 
-- **API Tokens**: Never commit `GITHUB_TOKEN` or `GITLAB_TOKEN` to version control
+- **API Tokens**: Never commit `GITHUB_TOKEN` to version control
 - **Cache Directory**: The cache at `~/.cache/stacktower/` may contain API responses; treat it as potentially sensitive
 - **Dependencies**: Run `make vuln` or `govulncheck ./...` to check for known vulnerabilities
 

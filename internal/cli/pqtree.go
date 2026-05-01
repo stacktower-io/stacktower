@@ -1,3 +1,15 @@
+//go:build dev
+
+// Package cli – pqtree is a developer-only command for visualizing PQ-tree
+// permutations used by the dependency ordering algorithm. It is not part of
+// the public CLI surface and is only compiled into binaries built with the
+// `dev` build tag (e.g. `go build -tags dev ./cmd/stacktower`). In normal
+// release builds, pqtreeCommand returns a hidden no-op (see pqtree_stub.go)
+// so users never see it in `--help` output and accidental shipping is
+// impossible.
+//
+// If you need this locally: `go run -tags dev ./cmd/stacktower pqtree --help`.
+
 package cli
 
 import (
@@ -73,7 +85,7 @@ Example: "0,1" means elements 0 and 1 must be adjacent.`,
 		},
 	}
 
-	cmd.Flags().StringVarP(&output, "output", "o", "", "output file (stdout if empty)")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "output file (stdout if omitted)")
 	cmd.Flags().StringVar(&labels, "labels", "A,B,C,D", "comma-separated node labels")
 
 	return cmd

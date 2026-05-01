@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"net/url"
+	"strings"
 )
 
 const (
@@ -65,11 +67,28 @@ func EscapeXML(s string) string {
 }
 
 func WrapURL(buf *bytes.Buffer, url string, fn func()) {
-	if url != "" {
-		fmt.Fprintf(buf, `  <a href="%s" target="_blank">`, EscapeXML(url))
+	if safeURL := safeLinkURL(url); safeURL != "" {
+		fmt.Fprintf(buf, `  <a href="%s" target="_blank">`, EscapeXML(safeURL))
+		fn()
+		buf.WriteString("</a>")
+		return
 	}
 	fn()
-	if url != "" {
-		buf.WriteString("</a>")
+}
+
+func safeLinkURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return raw
+	default:
+		return ""
 	}
 }

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -62,6 +61,17 @@ Examples:
 	return cmd
 }
 
+// repoSelection is the output of resolveRepo: the repository coordinates plus
+// any manifests/default-branch that the interactive picker happened to
+// surface up-front (so we can skip a second DetectManifests/GetRepoInfo call
+// in the common case).
+type repoSelection struct {
+	Owner         string
+	Repo          string
+	DefaultBranch string
+	Manifests     []github.ManifestFile // may be nil when resolved from argv
+}
+
 func (c *CLI) runParseGitHub(ctx context.Context, args []string, flags *parseFlags, publicOnly bool, timeout time.Duration, ref string) error {
 	sess, err := loadGitHubSession(ctx)
 	if err != nil {
@@ -69,7 +79,8 @@ func (c *CLI) runParseGitHub(ctx context.Context, args []string, flags *parseFla
 		ui.PrintNewline()
 		sess, err = c.runGitHubLogin(ctx)
 		if err != nil {
-			return fmt.Errorf("login failed: %w", err)
+			return WrapSystemError(err, "GitHub login failed",
+				"Run `stacktower github login` to authenticate and try again.")
 		}
 	}
 
@@ -80,72 +91,20 @@ func (c *CLI) runParseGitHub(ctx context.Context, args []string, flags *parseFla
 
 	client := github.NewContentClient(sess.AccessToken)
 
-	var owner, repo, defaultBranch string
-	var manifests []github.ManifestFile
-	var selectedManifest github.ManifestFile
-
-	if len(args) == 1 {
-		var err error
-		owner, repo, err = github.ParseRepoRef(args[0])
-		if err != nil {
-			return err
-		}
-		ui.PrintInfo("Repository: %s", ui.StyleHighlight.Render(owner+"/"+repo))
-	} else {
-		spinner := ui.NewSpinnerWithContext(ctx, "Fetching and scanning repositories...")
-		spinner.Start()
-		manifestPatterns := deps.SupportedManifests(languages.All)
-		rwm, err := client.ScanReposForManifests(ctx, manifestPatterns, publicOnly)
-		spinner.Stop()
-		if err != nil {
-			return fmt.Errorf("scan repos: %w", err)
-		}
-
-		if len(rwm) == 0 {
-			return fmt.Errorf("no repositories with manifest files found")
-		}
-
-		ui.PrintSuccess("Found %d repositories with manifests", len(rwm))
-		ui.PrintNewline()
-
-		m := ui.NewRepoListModel(rwm)
-		p := tea.NewProgram(m)
-		finalModel, err := p.Run()
-		if err != nil {
-			return err
-		}
-
-		fm, ok := finalModel.(ui.RepoListModel)
-		if !ok || fm.Selected == nil {
-			ui.PrintDetail("No selection made")
-			return nil
-		}
-
-		parts := strings.SplitN(fm.Selected.Repo.Repo.FullName, "/", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("invalid repo name: %s", fm.Selected.Repo.Repo.FullName)
-		}
-		owner, repo = parts[0], parts[1]
-		defaultBranch = fm.Selected.Repo.Repo.DefaultBranch
-		manifests = fm.Selected.Repo.Manifests
+	sel, cancelled, err := c.resolveRepo(ctx, client, args, publicOnly)
+	if err != nil {
+		return err
+	}
+	if cancelled {
+		return ErrCancelled
 	}
 
-	// -------------------------------------------------------------------------
-	// Ref selection: determine which branch/tag/commit to use
-	// -------------------------------------------------------------------------
-
-	selectedRef := ref
-
-	if selectedRef == "" {
-		var err error
-		selectedRef, defaultBranch, err = c.selectRef(ctx, client, owner, repo, defaultBranch)
-		if err != nil {
-			return err
-		}
-		if selectedRef == "" {
-			ui.PrintDetail("No selection made")
-			return nil
-		}
+	selectedRef, defaultBranch, cancelled, err := c.resolveRef(ctx, client, sel.Owner, sel.Repo, sel.DefaultBranch, ref)
+	if err != nil {
+		return err
+	}
+	if cancelled {
+		return ErrCancelled
 	}
 
 	refLabel := selectedRef
@@ -154,78 +113,181 @@ func (c *CLI) runParseGitHub(ctx context.Context, args []string, flags *parseFla
 	}
 	ui.PrintInfo("Ref: %s", ui.StyleHighlight.Render(refLabel))
 
-	// -------------------------------------------------------------------------
-	// Manifest detection and selection
-	// -------------------------------------------------------------------------
-
-	if selectedManifest.Name == "" {
-		if len(manifests) == 0 {
-			spinner := ui.NewSpinnerWithContext(ctx, fmt.Sprintf("Scanning %s/%s@%s for manifests...", owner, repo, selectedRef))
-			spinner.Start()
-			manifests, err = client.DetectManifests(ctx, owner, repo, selectedRef, deps.SupportedManifests(languages.All))
-			spinner.Stop()
-			if err != nil {
-				return fmt.Errorf("detect manifests: %w", err)
-			}
-		}
-
-		if len(manifests) == 0 {
-			return fmt.Errorf("no manifest files found in %s/%s@%s", owner, repo, selectedRef)
-		}
-
-		if len(manifests) == 1 {
-			selectedManifest = manifests[0]
-			ui.PrintInfo("Found: %s (%s)", ui.StyleHighlight.Render(selectedManifest.Name), selectedManifest.Language)
-		} else {
-			ui.PrintInfo("Found %d manifest files", len(manifests))
-			ui.PrintNewline()
-			mm := ui.NewManifestListModel(manifests)
-			mp := tea.NewProgram(mm)
-			mfinalModel, err := mp.Run()
-			if err != nil {
-				return err
-			}
-
-			mfm, ok := mfinalModel.(ui.ManifestListModel)
-			if !ok || mfm.Selected == nil {
-				ui.PrintDetail("No manifest selected")
-				return nil
-			}
-			selectedManifest = *mfm.Selected
-		}
+	manifest, cancelled, err := c.resolveManifest(ctx, client, sel.Owner, sel.Repo, selectedRef, sel.Manifests)
+	if err != nil {
+		return err
+	}
+	if cancelled {
+		return ErrCancelled
 	}
 
-	fetchSpinner := ui.NewSpinnerWithContext(ctx, fmt.Sprintf("Fetching %s@%s...", selectedManifest.Path, selectedRef))
+	return c.fetchAndParseManifest(ctx, client, flags, sel.Owner, sel.Repo, selectedRef, manifest)
+}
+
+// resolveRepo picks the (owner, repo) coordinates the user wants to parse.
+// When args[0] is set, the repo is taken verbatim. Otherwise we scan the
+// user's accessible repositories for manifests and show an interactive
+// picker, which also lets us reuse the manifest list / default branch that
+// scan returned.
+//
+// Returns cancelled=true when the user dismissed the picker without selecting.
+func (c *CLI) resolveRepo(ctx context.Context, client *github.ContentClient, args []string, publicOnly bool) (repoSelection, bool, error) {
+	if len(args) == 1 {
+		owner, repo, err := github.ParseRepoRef(args[0])
+		if err != nil {
+			return repoSelection{}, false, WrapUserError(err, "invalid GitHub repository reference",
+				"Use the form owner/repo (e.g. stacktower-io/stacktower).")
+		}
+		ui.PrintInfo("Repository: %s", ui.StyleHighlight.Render(owner+"/"+repo))
+		return repoSelection{Owner: owner, Repo: repo}, false, nil
+	}
+
+	spinner := ui.NewSpinnerWithContext(ctx, "Fetching and scanning repositories...")
+	spinner.Start()
+	manifestPatterns := deps.SupportedManifests(languages.All)
+	rwm, err := client.ScanReposForManifests(ctx, manifestPatterns, publicOnly)
+	spinner.Stop()
+	if err != nil {
+		return repoSelection{}, false, WrapSystemError(err, "failed to scan repositories",
+			"Check your network connection and GitHub token scopes.")
+	}
+
+	if len(rwm) == 0 {
+		return repoSelection{}, false, NewUserError(
+			"no repositories with manifest files found",
+			"Make sure your GitHub App installation has access to at least one repo with a supported manifest.",
+		)
+	}
+
+	ui.PrintSuccess("Found %d repositories with manifests", len(rwm))
+	ui.PrintNewline()
+
+	m := ui.NewRepoListModel(rwm)
+	p := tea.NewProgram(m)
+	finalModel, err := p.Run()
+	if err != nil {
+		return repoSelection{}, false, WrapSystemError(err, "repo picker failed", "")
+	}
+
+	fm, ok := finalModel.(ui.RepoListModel)
+	if !ok || fm.Selected == nil {
+		ui.PrintDetail("No selection made")
+		return repoSelection{}, true, nil
+	}
+
+	parts := strings.SplitN(fm.Selected.Repo.Repo.FullName, "/", 2)
+	if len(parts) != 2 {
+		return repoSelection{}, false, NewSystemError(
+			fmt.Sprintf("invalid repo name returned by GitHub: %s", fm.Selected.Repo.Repo.FullName),
+			"This is an internal error. Please report this issue.",
+		)
+	}
+
+	return repoSelection{
+		Owner:         parts[0],
+		Repo:          parts[1],
+		DefaultBranch: fm.Selected.Repo.Repo.DefaultBranch,
+		Manifests:     fm.Selected.Repo.Manifests,
+	}, false, nil
+}
+
+// resolveRef picks the git ref to parse. If the user already passed --ref we
+// use it verbatim; otherwise we fall through to the interactive picker. The
+// returned defaultBranch is used for the "(default)" label in the UI.
+func (c *CLI) resolveRef(ctx context.Context, client *github.ContentClient, owner, repo, defaultBranch, ref string) (string, string, bool, error) {
+	if ref != "" {
+		return ref, defaultBranch, false, nil
+	}
+	selectedRef, defaultBranch, err := c.selectRef(ctx, client, owner, repo, defaultBranch)
+	if err != nil {
+		return "", defaultBranch, false, err
+	}
+	if selectedRef == "" {
+		ui.PrintDetail("No selection made")
+		return "", defaultBranch, true, nil
+	}
+	return selectedRef, defaultBranch, false, nil
+}
+
+// resolveManifest selects which manifest file to parse. If resolveRepo's
+// picker already surfaced a list we reuse it; otherwise we call
+// DetectManifests against the chosen ref. Single matches are auto-selected;
+// multiple matches trigger an interactive picker.
+func (c *CLI) resolveManifest(ctx context.Context, client *github.ContentClient, owner, repo, ref string, manifests []github.ManifestFile) (github.ManifestFile, bool, error) {
+	if len(manifests) == 0 {
+		spinner := ui.NewSpinnerWithContext(ctx, fmt.Sprintf("Scanning %s/%s@%s for manifests...", owner, repo, ref))
+		spinner.Start()
+		found, err := client.DetectManifests(ctx, owner, repo, ref, deps.SupportedManifests(languages.All))
+		spinner.Stop()
+		if err != nil {
+			return github.ManifestFile{}, false, WrapSystemError(err, "failed to detect manifests",
+				"Check that the repository and ref exist and are accessible with your GitHub token.")
+		}
+		manifests = found
+	}
+
+	if len(manifests) == 0 {
+		return github.ManifestFile{}, false, NewUserError(
+			fmt.Sprintf("no manifest files found in %s/%s@%s", owner, repo, ref),
+			"Verify the ref contains a supported manifest (package.json, poetry.lock, Cargo.lock, ...)",
+		)
+	}
+
+	if len(manifests) == 1 {
+		m := manifests[0]
+		ui.PrintInfo("Found: %s (%s)", ui.StyleHighlight.Render(m.Name), m.Language)
+		return m, false, nil
+	}
+
+	ui.PrintInfo("Found %d manifest files", len(manifests))
+	ui.PrintNewline()
+	mm := ui.NewManifestListModel(manifests)
+	mp := tea.NewProgram(mm)
+	mfinalModel, err := mp.Run()
+	if err != nil {
+		return github.ManifestFile{}, false, WrapSystemError(err, "manifest picker failed", "")
+	}
+
+	mfm, ok := mfinalModel.(ui.ManifestListModel)
+	if !ok || mfm.Selected == nil {
+		ui.PrintDetail("No manifest selected")
+		return github.ManifestFile{}, true, nil
+	}
+	return *mfm.Selected, false, nil
+}
+
+// fetchAndParseManifest pulls the manifest bytes, runs the parse pipeline,
+// annotates the root node with GitHub metadata, and hands off to finishParse.
+func (c *CLI) fetchAndParseManifest(ctx context.Context, client *github.ContentClient, flags *parseFlags, owner, repo, ref string, manifest github.ManifestFile) error {
+	fetchSpinner := ui.NewSpinnerWithContext(ctx, fmt.Sprintf("Fetching %s@%s...", manifest.Path, ref))
 	fetchSpinner.Start()
-	content, err := client.FetchFileRaw(ctx, owner, repo, selectedManifest.Path, selectedRef)
+	content, err := client.FetchFileRaw(ctx, owner, repo, manifest.Path, ref)
 	if err != nil {
 		fetchSpinner.StopWithError("Failed to fetch manifest")
-		return fmt.Errorf("fetch manifest: %w", err)
+		return WrapSystemError(err, "failed to fetch manifest from GitHub",
+			"Check that the ref exists and your token has access to the repository.")
 	}
 	fetchSpinner.Stop()
 
-	tmpDir, err := os.MkdirTemp("", "stacktower-github-*")
-	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	tmpFile := filepath.Join(tmpDir, selectedManifest.Name)
-	if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
-		return fmt.Errorf("write temp file: %w", err)
-	}
-
-	lang := languages.Find(selectedManifest.Language)
+	lang := languages.Find(manifest.Language)
 	if lang == nil {
-		return fmt.Errorf("unsupported language: %s", selectedManifest.Language)
+		return NewSystemError(
+			fmt.Sprintf("unsupported language returned by manifest detector: %s", manifest.Language),
+			"This is an internal error. Please report this issue.",
+		)
 	}
 
-	if flags.name == "" {
-		flags.name = repo
+	manifestName := filepath.Base(manifest.Name)
+
+	name := flags.name
+	if name == "" {
+		name = repo
 	}
-	if flags.output == "" {
-		flags.output = repo + "-" + sanitizeFilenameSegment(selectedRef) + ".json"
-	}
+	// Match the behavior of `parse <lang>`: only write to a file when the user
+	// explicitly passed -o (or when stdout is not a TTY, handled by
+	// finishParse). A suggestion is surfaced as a "next step" hint instead of
+	// silently fabricating an implicit output path.
+	output := flags.output
 
 	ui.PrintNewline()
 
@@ -233,22 +295,19 @@ func (c *CLI) runParseGitHub(ctx context.Context, args []string, flags *parseFla
 	opts := flags.Options
 	opts.Language = lang.Name
 	opts.Manifest = content
-	opts.ManifestFilename = filepath.Base(tmpFile)
-	opts.ManifestPath = tmpFile
+	opts.ManifestFilename = manifestName
+	opts.ManifestPath = ""
 	opts.SkipEnrich = !flags.enrich
 
 	result, err := c.runParseWithProgress(ctx, opts, flags.noCache, flags.scan,
-		fmt.Sprintf("Parsing %s...", filepath.Base(tmpFile)), flags.MaxNodes)
+		fmt.Sprintf("Parsing %s...", manifestName), flags.MaxNodes)
 	if err != nil {
-		return wrapParseFailure(fmt.Sprintf("parse %s", filepath.Base(tmpFile)), err)
-	}
-
-	name := flags.name
-	if name == "" {
-		name = strings.TrimSuffix(filepath.Base(tmpFile), filepath.Ext(tmpFile))
+		return wrapParseFailure(fmt.Sprintf("parse %s", manifestName), err)
 	}
 	if name != "" {
-		result.Graph.RenameNode(graph.ProjectRootNodeID, name) //nolint:errcheck // non-critical rename
+		if err := result.Graph.RenameNode(graph.ProjectRootNodeID, name); err != nil {
+			c.Logger.Debug("rename root node failed", "from", graph.ProjectRootNodeID, "to", name, "err", err)
+		}
 	}
 
 	if info, infoErr := client.GetRepoInfo(ctx, owner, repo); infoErr == nil {
@@ -259,14 +318,14 @@ func (c *CLI) runParseGitHub(ctx context.Context, args []string, flags *parseFla
 
 	return finishParse(finishParseOpts{
 		Graph:          result.Graph,
-		Output:         flags.output,
+		Output:         output,
 		LangName:       lang.Name,
-		Source:         filepath.Base(tmpFile),
+		Source:         manifestName,
 		CacheHit:       result.CacheHit,
 		Elapsed:        time.Since(start),
 		RuntimeVersion: result.RuntimeVersion,
 		RuntimeSource:  result.RuntimeSource,
-		Ref:            selectedRef,
+		Ref:            ref,
 	})
 }
 
@@ -334,6 +393,11 @@ func (c *CLI) selectRef(ctx context.Context, client *github.ContentClient, owner
 		err  error
 	}
 
+	// Channels are buffered with capacity 1 so each goroutine can always
+	// enqueue its result without blocking, even if the parent function
+	// returns early (e.g. ctx cancellation or a read error above). This
+	// prevents goroutine leaks: the sender never parks on a send, and the
+	// HTTP client already honours ctx to bound the lifetime of each call.
 	branchCh := make(chan branchResult, 1)
 	tagCh := make(chan tagResult, 1)
 	infoCh := make(chan infoResult, 1)
@@ -368,7 +432,8 @@ func (c *CLI) selectRef(ctx context.Context, client *github.ContentClient, owner
 	spinner.Stop()
 
 	if br.err != nil {
-		return "", defaultBranch, fmt.Errorf("list branches: %w", br.err)
+		return "", defaultBranch, WrapSystemError(br.err, "failed to list branches",
+			"Check that your GitHub token has access to the repository.")
 	}
 
 	// Fallback: if we still don't know the default branch, guess from available branches
@@ -387,6 +452,8 @@ func (c *CLI) selectRef(ctx context.Context, client *github.ContentClient, owner
 	var tags []github.Tag
 	if tr.err == nil {
 		tags = tr.tags
+	} else {
+		ui.PrintWarning("Could not load tags: %v", tr.err)
 	}
 
 	// Fast path: if only the default branch exists and no tags, skip the picker
@@ -401,7 +468,7 @@ func (c *CLI) selectRef(ctx context.Context, client *github.ContentClient, owner
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
 	if err != nil {
-		return "", defaultBranch, err
+		return "", defaultBranch, WrapSystemError(err, "ref picker failed", "")
 	}
 
 	fm, ok := finalModel.(*ui.RefListModel)

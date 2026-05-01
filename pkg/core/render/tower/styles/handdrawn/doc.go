@@ -12,7 +12,7 @@
 //
 //   - Wobbly lines: SVG displacement filters create imperfect edges
 //   - Rough fills: Textured backgrounds instead of solid colors
-//   - Comic fonts: Hand-writing style typeface
+//   - Comic fonts: Gaegu typeface (OFL-licensed)
 //   - Sketchy borders: Multiple offset strokes for a drawn look
 //   - Brittle treatment: Red tinting for at-risk packages
 //

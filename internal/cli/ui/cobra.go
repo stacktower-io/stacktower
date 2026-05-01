@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/pflag"
 )
 
+var descHeaderPattern = regexp.MustCompile(`^([A-Z][a-z]+:)\s*$`)
+
 // RenderHelp renders styled help output for a cobra command.
 func RenderHelp(cmd *cobra.Command) string {
 	var b strings.Builder
@@ -214,12 +216,8 @@ func styleDescription(desc string) string {
 	lines := strings.Split(desc, "\n")
 	var result []string
 
-	// Pattern for section headers like "Examples:", "Notes:", etc.
-	headerPattern := regexp.MustCompile(`^([A-Z][a-z]+:)\s*$`)
-
 	for _, line := range lines {
-		// Check if it's a section header
-		if headerPattern.MatchString(strings.TrimSpace(line)) {
+		if descHeaderPattern.MatchString(strings.TrimSpace(line)) {
 			header := strings.TrimSpace(line)
 			result = append(result, StyleHighlight.Render(header))
 			continue

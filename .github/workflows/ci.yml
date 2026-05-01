@@ -4,6 +4,8 @@ on:
   push:
     branches-ignore:
       - "dependabot/**" # Skip dependabot branches (they create PRs)
+    tags:
+      - "v*"
   pull_request:
 
 concurrency:
@@ -47,3 +49,9 @@ jobs:
 
       - name: Vulncheck
         run: make vuln
+
+      - name: GoReleaser check
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check

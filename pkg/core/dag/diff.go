@@ -3,43 +3,47 @@ package dag
 import "sort"
 
 // DiffResult describes the differences between two dependency graphs.
+//
+// JSON tags are provided so callers (notably the CLI's `diff -f json`) can
+// serialize this value directly; keep the schema stable across releases so
+// downstream tooling isn't broken by internal renames.
 type DiffResult struct {
-	Before    DiffSummary
-	After     DiffSummary
-	Added     []DiffEntry
-	Removed   []DiffEntry
-	Updated   []DiffUpdate
-	Unchanged int
-	NewVulns  []DiffVuln
+	Before    DiffSummary  `json:"before"`
+	After     DiffSummary  `json:"after"`
+	Added     []DiffEntry  `json:"added"`
+	Removed   []DiffEntry  `json:"removed"`
+	Updated   []DiffUpdate `json:"updated"`
+	Unchanged int          `json:"unchanged"`
+	NewVulns  []DiffVuln   `json:"new_vulns"`
 }
 
 // DiffSummary captures the root and size of one side of the diff.
 type DiffSummary struct {
-	RootID      string
-	RootVersion string
-	NodeCount   int
+	RootID      string `json:"root"`
+	RootVersion string `json:"version"`
+	NodeCount   int    `json:"total"`
 }
 
 // DiffEntry represents a package that was added or removed.
 type DiffEntry struct {
-	ID      string
-	Version string
+	ID      string `json:"package"`
+	Version string `json:"version"`
 }
 
 // DiffUpdate represents a package whose version changed between graphs.
 type DiffUpdate struct {
-	ID          string
-	OldVersion  string
-	NewVersion  string
-	DepthChange int // positive = deeper, negative = shallower
+	ID          string `json:"package"`
+	OldVersion  string `json:"old_version"`
+	NewVersion  string `json:"new_version"`
+	DepthChange int    `json:"depth_change,omitempty"` // positive = deeper, negative = shallower
 }
 
 // DiffVuln represents a package that gained (or escalated) a vulnerability.
 type DiffVuln struct {
-	ID          string
-	Version     string
-	Severity    string
-	WasSeverity string // empty if the package was not vulnerable before
+	ID          string `json:"package"`
+	Version     string `json:"version"`
+	Severity    string `json:"severity"`
+	WasSeverity string `json:"was_severity,omitempty"` // empty if the package was not vulnerable before
 }
 
 // Diff compares two DAGs and returns a structured diff result.
@@ -122,7 +126,7 @@ func buildDiffSummary(g *DAG) DiffSummary {
 func collectDiffNodes(g *DAG, exclude map[string]bool) map[string]*Node {
 	m := make(map[string]*Node)
 	for _, n := range g.Nodes() {
-		if n.IsSynthetic() || n.ID == "__project__" || exclude[n.ID] {
+		if n.IsSynthetic() || n.ID == ProjectRootNodeID || exclude[n.ID] {
 			continue
 		}
 		m[n.ID] = n
@@ -159,9 +163,9 @@ func detectNewVulns(beforeNodes, afterNodes map[string]*Node) []DiffVuln {
 			beforeSev = nodeVulnSeverity(bn)
 		}
 
-		// New vuln: package is new with vuln, or package existed without vuln,
-		// or package had lower severity.
-		if !existed || beforeSev == "" || beforeSev != afterSev {
+		// New vuln: package is new with a vuln, package previously had no vuln,
+		// or severity escalated (e.g. low → high). Downgrades are not flagged.
+		if !existed || beforeSev == "" || vulnSeverityWeight(afterSev) > vulnSeverityWeight(beforeSev) {
 			vulns = append(vulns, DiffVuln{
 				ID:          id,
 				Version:     metaVersion(an),
@@ -173,6 +177,24 @@ func detectNewVulns(beforeNodes, afterNodes map[string]*Node) []DiffVuln {
 
 	sort.Slice(vulns, func(i, j int) bool { return vulns[i].ID < vulns[j].ID })
 	return vulns
+}
+
+// vulnSeverityWeight maps severity strings to numeric weights for comparison.
+// Higher weight = more severe. This mirrors security.Severity.Weight() without
+// importing the security package (dag must remain dependency-free).
+func vulnSeverityWeight(sev string) int {
+	switch sev {
+	case "critical":
+		return 4
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func nodeVulnSeverity(n *Node) string {

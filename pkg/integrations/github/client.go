@@ -38,17 +38,19 @@ type Client struct {
 // The returned Client is safe for concurrent use.
 func NewClient(backend cache.Cache, token string, cacheTTL time.Duration) *Client {
 	headers := map[string]string{"Accept": "application/vnd.github.v3+json"}
+	namespace := "github:unauth:"
 
 	var rl integrations.RateLimit
 	if token != "" {
 		headers["Authorization"] = "Bearer " + token
 		rl = integrations.DefaultRateLimits["github"]
+		namespace = "github:auth:" + cache.Hash([]byte(token)) + ":"
 	} else {
 		rl = integrations.DefaultRateLimits["github_unauth"]
 	}
 
 	return &Client{
-		Client:  integrations.NewClientWithRateLimit(backend, "github:", cacheTTL, headers, rl.RequestsPerSecond, rl.Burst),
+		Client:  integrations.NewClientWithRateLimit(backend, namespace, cacheTTL, headers, rl.RequestsPerSecond, rl.Burst),
 		baseURL: "https://api.github.com",
 	}
 }

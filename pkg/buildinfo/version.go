@@ -26,15 +26,27 @@ var (
 	Date = "unknown"
 
 	// GitHubAppClientID is the OAuth client ID for GitHub device flow authentication.
-	// Override at runtime with STACKTOWER_GITHUB_APP_CLIENT_ID.
-	GitHubAppClientID = "Iv23liRkeVtW225qGBef"
+	// Set via ldflags or override at runtime with STACKTOWER_GITHUB_APP_CLIENT_ID.
+	GitHubAppClientID = ""
 
 	// GitHubAppSlug is the GitHub App slug for installation URLs.
-	// Override at runtime with STACKTOWER_GITHUB_APP_SLUG.
-	GitHubAppSlug = "stacktower-io"
+	// Set via ldflags or override at runtime with STACKTOWER_GITHUB_APP_SLUG.
+	GitHubAppSlug = ""
+
+	// CompiledGitHubAppClientID is the OAuth client ID embedded at build time.
+	// This value is captured before runtime env var overrides are applied.
+	CompiledGitHubAppClientID = ""
+
+	// CompiledGitHubAppSlug is the app slug embedded at build time.
+	// This value is captured before runtime env var overrides are applied.
+	CompiledGitHubAppSlug = ""
 )
 
 func init() {
+	// Preserve the build-time values so CLI diagnostics can show exactly what was compiled.
+	CompiledGitHubAppClientID = GitHubAppClientID
+	CompiledGitHubAppSlug = GitHubAppSlug
+
 	if v := os.Getenv("STACKTOWER_GITHUB_APP_CLIENT_ID"); v != "" {
 		GitHubAppClientID = v
 	}

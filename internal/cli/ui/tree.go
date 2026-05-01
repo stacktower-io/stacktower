@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/stacktower-io/stacktower/pkg/core/dag"
-	"github.com/stacktower-io/stacktower/pkg/core/deps"
 	"github.com/stacktower-io/stacktower/pkg/core/deps/metadata"
 )
 
@@ -79,7 +79,7 @@ func writeTreeNode(w io.Writer, g *dag.DAG, id, prefix string, depth int, isRoot
 		stats.MaxDepth = depth
 	}
 
-	version := nodeVersion(g, id)
+	version := NodeVersion(g, id)
 	inline := ""
 	if opts.ShowMeta {
 		inline = nodeInlineMeta(g, id, opts.Color)
@@ -181,8 +181,8 @@ func writeDescLine(w io.Writer, g *dag.DAG, id, prefix string, isRoot, isLast, c
 	if desc == "" {
 		return
 	}
-	if len(desc) > 60 {
-		desc = desc[:57] + "..."
+	if runewidth.StringWidth(desc) > 60 {
+		desc = runewidth.Truncate(desc, 60, "...")
 	}
 
 	metaPrefix := prefix
@@ -222,18 +222,14 @@ func nextPrefix(prefix string, isRoot, isLast bool) string {
 	return prefix + "│   "
 }
 
-// nodeVersion extracts the version string from a DAG node's metadata.
-func nodeVersion(g *dag.DAG, id string) string {
+// NodeVersion extracts the version string from a DAG node's metadata.
+func NodeVersion(g *dag.DAG, id string) string {
 	n, ok := g.Node(id)
-	if !ok {
+	if !ok || n.Meta == nil {
 		return ""
 	}
-	if v, ok := n.Meta["version"]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
+	v, _ := n.Meta["version"].(string)
+	return v
 }
 
 // =============================================================================
@@ -250,52 +246,4 @@ func FindRoots(g *dag.DAG) []string {
 	}
 	slices.Sort(roots)
 	return roots
-}
-
-// GraphDepth returns the maximum depth of the DAG from its root(s).
-func GraphDepth(g *dag.DAG) int {
-	if g == nil || g.NodeCount() == 0 {
-		return 0
-	}
-
-	start := deps.ProjectRootNodeID
-	if _, ok := g.Node(start); !ok {
-		foundVirtualRoot := false
-		for _, n := range g.Nodes() {
-			if v, ok := n.Meta["virtual"].(bool); ok && v {
-				start = n.ID
-				foundVirtualRoot = true
-				break
-			}
-		}
-		if !foundVirtualRoot {
-			roots := FindRoots(g)
-			if len(roots) == 0 {
-				return 0
-			}
-			start = roots[0]
-		}
-	}
-
-	// Longest-path style BFS from the primary root. We update depth when a
-	// longer path is discovered (important for DAGs with merge/rejoin patterns).
-	depth := map[string]int{start: 0}
-	queue := []string{start}
-	best := 0
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		d := depth[id]
-		if d > best {
-			best = d
-		}
-		for _, child := range g.Children(id) {
-			nd := d + 1
-			if prev, ok := depth[child]; !ok || nd > prev {
-				depth[child] = nd
-				queue = append(queue, child)
-			}
-		}
-	}
-	return best
 }

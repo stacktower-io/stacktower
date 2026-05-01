@@ -28,7 +28,7 @@ func TestHandDrawn_RenderDefs(t *testing.T) {
 	if !strings.Contains(output, "<defs>") {
 		t.Error("RenderDefs() missing <defs> tag")
 	}
-	if !strings.Contains(output, "xkcd Script") {
+	if !strings.Contains(output, "Gaegu") {
 		t.Error("RenderDefs() missing font-face declaration")
 	}
 	if !strings.Contains(output, "data:font/woff;base64,") {
@@ -136,7 +136,7 @@ func TestHandDrawn_RenderText(t *testing.T) {
 	if !strings.Contains(output, `<text`) {
 		t.Errorf("RenderText() missing text element: %s", output)
 	}
-	if !strings.Contains(output, "xkcd Script") {
+	if !strings.Contains(output, "Gaegu") {
 		t.Errorf("RenderText() missing font family: %s", output)
 	}
 }

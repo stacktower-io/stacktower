@@ -7,6 +7,8 @@ import (
 )
 
 // completionCommand creates the completion command for generating shell completions.
+// The receiver is unused here but kept for API consistency — all command
+// constructors are methods on *CLI so RootCommand() can wire them uniformly.
 func (c *CLI) completionCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "completion [bash|zsh|fish|powershell]",
@@ -60,8 +62,11 @@ PowerShell:
 				return cmd.Root().GenFishCompletion(os.Stdout, true)
 			case "powershell":
 				return cmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)
+			default:
+				// cobra.OnlyValidArgs prevents reaching here, but return
+				// a clear error defensively.
+				return NewUserError("unknown shell: "+args[0], "Supported: bash, zsh, fish, powershell")
 			}
-			return nil
 		},
 	}
 

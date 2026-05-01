@@ -80,3 +80,69 @@ func TestNewSpinnerWithContextNilParent(t *testing.T) {
 	s.Start()
 	s.Stop()
 }
+
+func TestSpinnerQuietMode(t *testing.T) {
+	// Verify the quiet-mode lifecycle: Start closes stopped immediately
+	// without launching a goroutine, and Stop completes without blocking.
+	quietMode = true
+	defer func() { quietMode = false }()
+
+	s := NewSpinner("quiet spinner")
+	s.Start()
+
+	// active should remain false in quiet mode
+	if s.active {
+		t.Error("Spinner should not be active in quiet mode")
+	}
+
+	// Stop must not deadlock — the stopped channel is already closed by Start
+	done := make(chan struct{})
+	go func() {
+		s.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// success
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop() deadlocked in quiet mode")
+	}
+
+	// Idempotent stop in quiet mode
+	s.Stop()
+}
+
+func TestSpinnerDoubleStartIsIdempotent(t *testing.T) {
+	s := NewSpinner("double start")
+	s.Start()
+	s.Start() // must not panic
+	s.Stop()
+}
+
+func TestSpinnerDoubleStartQuietMode(t *testing.T) {
+	quietMode = true
+	defer func() { quietMode = false }()
+
+	s := NewSpinner("double start quiet")
+	s.Start()
+	s.Start() // must not panic
+	s.Stop()
+}
+
+func TestSpinnerQuietModeWithVariants(t *testing.T) {
+	quietMode = true
+	defer func() { quietMode = false }()
+
+	s := NewSpinner("quiet variants")
+	s.Start()
+	s.StopWithSuccess("ok")
+
+	s2 := NewSpinner("quiet error")
+	s2.Start()
+	s2.StopWithError("fail")
+
+	s3 := NewSpinner("quiet warning")
+	s3.Start()
+	s3.StopWithWarning("warn")
+}

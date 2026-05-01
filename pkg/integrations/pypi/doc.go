@@ -7,12 +7,9 @@
 //
 // # Usage
 //
-//	client, err := pypi.NewClient(24 * time.Hour)  // Cache TTL
-//	if err != nil {
-//	    log.Fatal(err)
-//	}
+//	client := pypi.NewClient(backend, 24*time.Hour, "3.12")
 //
-//	pkg, err := client.FetchPackage(ctx, "fastapi", false)  // false = use cache
+//	pkg, err := client.FetchPackage(ctx, "fastapi", false) // false = use cache
 //	if err != nil {
 //	    log.Fatal(err)
 //	}

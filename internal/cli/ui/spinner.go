@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 )
@@ -24,6 +23,7 @@ type Spinner struct {
 	active    bool
 	mu        sync.Mutex
 	closeOnce sync.Once
+	startOnce sync.Once
 }
 
 // NewSpinner creates a new spinner with the given message.
@@ -45,36 +45,41 @@ func NewSpinnerWithContext(ctx context.Context, message string) *Spinner {
 	}
 }
 
-// Start begins the spinner animation.
-// In quiet mode, no animation is shown but Stop() remains callable.
+// Start begins the spinner animation. It is safe to call more than once;
+// subsequent calls are no-ops.
+//
+// In quiet mode or when stderr is not a terminal, no animation is shown
+// but Stop() remains callable.
 func (s *Spinner) Start() {
-	if quietMode {
-		close(s.stopped)
-		return
-	}
-	s.active = true
-	go func() {
-		defer close(s.stopped)
-		ticker := time.NewTicker(SpinnerInterval)
-		defer ticker.Stop()
-
-		i := 0
-		for {
-			select {
-			case <-s.ctx.Done():
-				s.clearLine()
-				return
-			case <-s.done:
-				return
-			case <-ticker.C:
-				frame := SpinnerFrames[i%len(SpinnerFrames)]
-				s.mu.Lock()
-				fmt.Fprintf(os.Stderr, "\r%s %s", StyleIconSpinner.Render(frame), StyleDim.Render(s.message))
-				s.mu.Unlock()
-				i++
-			}
+	s.startOnce.Do(func() {
+		if quietMode || !StderrIsTTY() {
+			close(s.stopped)
+			return
 		}
-	}()
+		s.active = true
+		go func() {
+			defer close(s.stopped)
+			ticker := time.NewTicker(SpinnerInterval)
+			defer ticker.Stop()
+
+			i := 0
+			for {
+				select {
+				case <-s.ctx.Done():
+					s.clearLine()
+					return
+				case <-s.done:
+					return
+				case <-ticker.C:
+					frame := SpinnerFrames[i%len(SpinnerFrames)]
+					s.mu.Lock()
+					fmt.Fprintf(os.Stderr, "\r%s %s", StyleIconSpinner.Render(frame), StyleDim.Render(s.message))
+					s.mu.Unlock()
+					i++
+				}
+			}
+		}()
+	})
 }
 
 // Stop stops the spinner and clears the line.
@@ -91,7 +96,9 @@ func (s *Spinner) Stop() {
 func (s *Spinner) clearLine() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	fmt.Fprintf(os.Stderr, "\r%s\r", strings.Repeat(" ", len(s.message)+4))
+	// Use ANSI escape to erase the entire line reliably, regardless of
+	// how wide the styled (ANSI-colored) output was.
+	fmt.Fprint(os.Stderr, "\r\033[2K")
 }
 
 // ClearLine clears the current spinner line without stopping.

@@ -1,7 +1,7 @@
 // Package errors provides structured error types for the Stacktower application.
 //
 // This package defines error codes and types that enable:
-//   - Consistent error handling across CLI and API
+//   - Consistent error handling across API and library packages
 //   - Machine-readable error codes for programmatic handling
 //   - User-friendly error messages
 //   - Error wrapping with context preservation

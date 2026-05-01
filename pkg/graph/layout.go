@@ -49,6 +49,11 @@ type Layout struct {
 	Rows     map[int][]string  `json:"rows,omitempty" bson:"rows,omitempty"`
 	Nebraska []NebraskaRanking `json:"nebraska,omitempty" bson:"nebraska,omitempty"`
 
+	// Crossings is the number of edge crossings produced by Rows.
+	// Populated by the ordering stage; persisted so cached layouts don't
+	// have to recompute it. A negative value means "not computed yet".
+	Crossings int `json:"crossings,omitempty" bson:"crossings,omitempty"`
+
 	// Tower-specific
 	Blocks    []Block `json:"blocks,omitempty" bson:"blocks,omitempty"`
 	MarginX   float64 `json:"margin_x,omitempty" bson:"margin_x,omitempty"`

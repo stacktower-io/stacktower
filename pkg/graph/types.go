@@ -25,8 +25,9 @@ const (
 	StyleHanddrawn = "handdrawn"
 )
 
-// ProjectRootNodeID is the node ID used for the root of manifest-based graphs.
-const ProjectRootNodeID = "__project__"
+// ProjectRootNodeID is an alias for [dag.ProjectRootNodeID] so that callers
+// importing pkg/graph can use the short name without importing pkg/core/dag.
+const ProjectRootNodeID = dag.ProjectRootNodeID
 
 // Node kinds.
 const (

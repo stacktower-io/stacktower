@@ -1,9 +1,10 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
+	"io"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -32,10 +33,10 @@ all paths from the root package to the specified target(s).`,
 		},
 	}
 
-	cmd.Flags().StringVarP(&format, "format", "f", "text", "Output format: text, json")
-	cmd.Flags().StringVarP(&output, "output", "o", "", "Output file (stdout if empty)")
-	cmd.Flags().IntVar(&maxPaths, "max-paths", 10, "Maximum paths to display per target")
-	cmd.Flags().BoolVar(&shortest, "shortest", false, "Show only the shortest path(s)")
+	cmd.Flags().StringVarP(&format, "format", "f", FormatText, "output format: text, json")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "output file (stdout if omitted)")
+	cmd.Flags().IntVar(&maxPaths, "max-paths", 10, "maximum paths to display per target")
+	cmd.Flags().BoolVar(&shortest, "shortest", false, "show only the shortest path(s)")
 
 	return cmd
 }
@@ -51,7 +52,7 @@ type whyResult struct {
 func (c *CLI) runWhy(input string, targets []string, format, output string, maxPaths int, shortest bool) error {
 	g, err := loadGraph(input)
 	if err != nil {
-		return WrapSystemError(err, "failed to load graph", "")
+		return WrapSystemError(err, "failed to load graph", "Check that the file exists and contains valid graph JSON.")
 	}
 
 	roots := ui.FindRoots(g)
@@ -60,24 +61,28 @@ func (c *CLI) runWhy(input string, targets []string, format, output string, maxP
 	}
 	root := roots[0]
 
-	w := os.Stdout
-	if output != "" {
-		f, err := os.Create(output)
-		if err != nil {
-			return WrapSystemError(err, "failed to create output file", "")
-		}
-		defer f.Close()
-		w = f
-	}
-
-	for i, target := range targets {
+	var missing []string
+	for _, target := range targets {
 		if _, ok := g.Node(target); !ok {
+			missing = append(missing, target)
+		}
+	}
+	if len(missing) > 0 {
+		hint := missingPackageHint(g, missing[0])
+		if len(missing) == 1 {
 			return NewUserError(
-				fmt.Sprintf("package %q not found in the graph", target),
-				fmt.Sprintf("Run `stacktower resolve %s` to see all packages.", input),
+				fmt.Sprintf("package %q not found in the graph", missing[0]),
+				hint,
 			)
 		}
+		return NewUserError(
+			fmt.Sprintf("packages not found in the graph: %s", strings.Join(missing, ", ")),
+			hint,
+		)
+	}
 
+	results := make([]whyResult, 0, len(targets))
+	for _, target := range targets {
 		var paths [][]string
 		if shortest {
 			paths = dag.ShortestPaths(g, root, target)
@@ -85,40 +90,79 @@ func (c *CLI) runWhy(input string, targets []string, format, output string, maxP
 			paths = dag.FindPaths(g, root, target, maxPaths)
 		}
 
-		depth := dag.ShortestDepth(paths)
-
-		version := nodeVersion(g, target)
-
-		switch format {
-		case "json":
-			result := whyResult{
-				Target:       target,
-				Version:      version,
-				Paths:        paths,
-				ShortestPath: depth,
-				TotalPaths:   len(paths),
-			}
-			enc := json.NewEncoder(w)
-			enc.SetIndent("", "  ")
-			if err := enc.Encode(result); err != nil {
-				return WrapSystemError(err, "failed to write JSON output", "")
-			}
-		default:
-			if i > 0 {
-				fmt.Fprintln(w)
-			}
-			ui.WritePaths(w, target, version, paths, depth)
-		}
+		results = append(results, whyResult{
+			Target:       target,
+			Version:      ui.NodeVersion(g, target),
+			Paths:        paths,
+			ShortestPath: dag.ShortestDepth(paths),
+			TotalPaths:   len(paths),
+		})
 	}
 
+	writers := map[string]func(io.Writer) error{
+		FormatJSON: func(w io.Writer) error {
+			// Emit a single JSON object so consumers can parse the
+			// output with one `json.Unmarshal` call (NDJSON streams
+			// required bespoke decoding and broke `jq` in the common
+			// case of multiple targets).
+			return encodeJSON(w, struct {
+				Results []whyResult `json:"results"`
+			}{Results: results})
+		},
+		FormatText: func(w io.Writer) error {
+			for i, r := range results {
+				if i > 0 {
+					fmt.Fprintln(w)
+				}
+				ui.WritePaths(w, r.Target, r.Version, r.Paths, r.ShortestPath)
+			}
+			return nil
+		},
+	}
+	if err := writeFormatted(output, format, writers); err != nil {
+		return err
+	}
+
+	if output != "" {
+		ui.PrintNewline()
+		ui.PrintSuccess("Paths written")
+		ui.PrintFile(output)
+	}
 	return nil
 }
 
-func nodeVersion(g *dag.DAG, id string) string {
-	n, ok := g.Node(id)
-	if !ok || n.Meta == nil {
-		return ""
+// missingPackageHint returns an actionable hint when the requested target is
+// not present in the graph. It prefers a substring match over the node IDs so
+// typos surface useful candidates; otherwise it falls back to advising `stats`,
+// which can enumerate the graph contents without re-resolving.
+func missingPackageHint(g *dag.DAG, target string) string {
+	suggestions := suggestPackages(g, target, 5)
+	if len(suggestions) > 0 {
+		return "Did you mean: " + strings.Join(suggestions, ", ") + "?"
 	}
-	v, _ := n.Meta["version"].(string)
-	return v
+	return "Run `stacktower stats <graph>` to inspect the graph contents."
+}
+
+// suggestPackages returns up to `limit` node IDs that contain `target` as a
+// case-insensitive substring. Results are stable-sorted so output is
+// reproducible across runs.
+func suggestPackages(g *dag.DAG, target string, limit int) []string {
+	if g == nil || target == "" || limit <= 0 {
+		return nil
+	}
+	needle := strings.ToLower(target)
+	var matches []string
+	for _, n := range g.Nodes() {
+		if n.IsSynthetic() {
+			continue
+		}
+		if strings.Contains(strings.ToLower(n.ID), needle) {
+			matches = append(matches, n.ID)
+		}
+	}
+	sort.Strings(matches)
+	if len(matches) > limit {
+		matches = matches[:limit]
+	}
+	return matches
 }

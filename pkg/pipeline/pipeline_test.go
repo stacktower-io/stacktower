@@ -128,6 +128,13 @@ func TestOptionsValidateForParse(t *testing.T) {
 		t.Errorf("Valid manifest options should pass: %v", err)
 	}
 
+	// Manifest filename must be a basename because in-memory manifests are
+	// written to a temporary directory before parser execution.
+	opts = Options{Language: "python", Manifest: "content", ManifestFilename: "../poetry.lock"}
+	if err := opts.ValidateForParse(); err == nil {
+		t.Error("Manifest filename with path traversal should fail")
+	}
+
 	// Invalid dependency scope
 	opts = Options{Language: "python", Package: "requests", DependencyScope: "invalid"}
 	if err := opts.ValidateForParse(); err == nil {
