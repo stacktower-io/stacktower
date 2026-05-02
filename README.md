@@ -28,7 +28,7 @@ Inspired by [XKCD #2347](https://xkcd.com/2347/), Stacktower renders dependency 
 The Homebrew install includes everything out of the box — GitHub authentication, private repo access, and all CLI features work without extra configuration.
 
 ```bash
-brew install stacktower-io/homebrew-tap/stacktower
+brew install --cask stacktower-io/homebrew-tap/stacktower
 ```
 
 ### Alternative: build from source
