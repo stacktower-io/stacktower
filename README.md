@@ -1,6 +1,6 @@
 # Stacktower
 
-[![Dependencies](https://api.stacktower.io/v1/badge/github/stacktower-io/stacktower)](https://app.stacktower.io/github/stacktower-io/stacktower)
+[![Deps](https://api.stacktower.io/v1/badge/github/stacktower-io/stacktower)](https://app.stacktower.io/github/stacktower-io/stacktower)
 [![CI](https://github.com/stacktower-io/stacktower/actions/workflows/ci.yml/badge.svg)](https://github.com/stacktower-io/stacktower/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/stacktower-io/stacktower/graph/badge.svg)](https://codecov.io/gh/stacktower-io/stacktower)
 [![Go Report Card](https://goreportcard.com/badge/github.com/stacktower-io/stacktower)](https://goreportcard.com/report/github.com/stacktower-io/stacktower)
@@ -10,7 +10,7 @@
 
 Inspired by [XKCD #2347](https://xkcd.com/2347/), Stacktower renders dependency graphs as **physical towers** where blocks rest on what they depend on. Your application sits at the top, supported by libraries below—all the way down to that one critical package maintained by _some dude in Nebraska_.
 
-[![Dependency Tower](https://api.stacktower.io/v1/embed/github/stacktower-io/stacktower)](https://app.stacktower.io/github/stacktower-io/stacktower)
+[![Dependency Tower](https://api.stacktower.io/v1/embed/github/stacktower-io/stacktower?v=2)](https://app.stacktower.io/github/stacktower-io/stacktower)
 
 ---
 
