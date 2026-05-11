@@ -59,6 +59,17 @@ func parseSemver(v string) semverVersion {
 	return sv
 }
 
+func (sv semverVersion) normalized() string {
+	if !sv.valid {
+		return ""
+	}
+	version := fmt.Sprintf("%d.%d.%d", sv.major, sv.minor, sv.patch)
+	if sv.prerelease != "" {
+		version += "-" + sv.prerelease
+	}
+	return version
+}
+
 // ParseVersion converts a semver string to a PubGrub SemanticVersion.
 func (SemverMatcher) ParseVersion(version string) pubgrub.Version {
 	sv := parseSemver(version)
@@ -66,7 +77,7 @@ func (SemverMatcher) ParseVersion(version string) pubgrub.Version {
 		return nil
 	}
 	// Use SemanticVersion for proper ordering
-	semVer, err := pubgrub.ParseSemanticVersion(fmt.Sprintf("%d.%d.%d", sv.major, sv.minor, sv.patch))
+	semVer, err := pubgrub.ParseSemanticVersion(sv.normalized())
 	if err != nil {
 		return pubgrub.SimpleVersion(version)
 	}
@@ -220,46 +231,43 @@ func singleConstraintToRange(constraint string) string {
 		// Caret: ^1.2.3 -> >=1.2.3, <2.0.0 (allows minor/patch changes)
 		// ^0.2.3 -> >=0.2.3, <0.3.0 (when major is 0, minor is significant)
 		// ^0.0.3 -> >=0.0.3, <0.0.4 (when major.minor is 0.0, only patch changes)
+		lower := sv.normalized()
 		if sv.major == 0 {
 			if sv.minor == 0 {
 				// ^0.0.x -> only exact patch
-				return fmt.Sprintf(">=%d.%d.%d, <%d.%d.%d",
-					sv.major, sv.minor, sv.patch,
+				return fmt.Sprintf(">=%s, <%d.%d.%d",
+					lower,
 					sv.major, sv.minor, sv.patch+1)
 			}
 			// ^0.x.y -> minor is significant
-			return fmt.Sprintf(">=%d.%d.%d, <%d.%d.0",
-				sv.major, sv.minor, sv.patch,
+			return fmt.Sprintf(">=%s, <%d.%d.0",
+				lower,
 				sv.major, sv.minor+1)
 		}
-		return fmt.Sprintf(">=%d.%d.%d, <%d.0.0",
-			sv.major, sv.minor, sv.patch,
-			sv.major+1)
+		return fmt.Sprintf(">=%s, <%d.0.0", lower, sv.major+1)
 
 	case "~":
 		// Tilde: ~1.2.3 -> >=1.2.3, <1.3.0 (allows patch changes)
-		return fmt.Sprintf(">=%d.%d.%d, <%d.%d.0",
-			sv.major, sv.minor, sv.patch,
-			sv.major, sv.minor+1)
+		return fmt.Sprintf(">=%s, <%d.%d.0", sv.normalized(), sv.major, sv.minor+1)
 
 	case ">=":
-		return fmt.Sprintf(">=%d.%d.%d", sv.major, sv.minor, sv.patch)
+		return fmt.Sprintf(">=%s", sv.normalized())
 
 	case ">":
-		return fmt.Sprintf(">%d.%d.%d", sv.major, sv.minor, sv.patch)
+		return fmt.Sprintf(">%s", sv.normalized())
 
 	case "<=":
-		return fmt.Sprintf("<=%d.%d.%d", sv.major, sv.minor, sv.patch)
+		return fmt.Sprintf("<=%s", sv.normalized())
 
 	case "<":
-		return fmt.Sprintf("<%d.%d.%d", sv.major, sv.minor, sv.patch)
+		return fmt.Sprintf("<%s", sv.normalized())
 
 	case "=", "":
 		// Exact match or no operator (bare version)
-		return fmt.Sprintf("==%d.%d.%d", sv.major, sv.minor, sv.patch)
+		return fmt.Sprintf("==%s", sv.normalized())
 
 	case "!=":
-		return fmt.Sprintf("!=%d.%d.%d", sv.major, sv.minor, sv.patch)
+		return fmt.Sprintf("!=%s", sv.normalized())
 
 	default:
 		return ""

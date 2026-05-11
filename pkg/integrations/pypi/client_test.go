@@ -94,6 +94,35 @@ func TestExtractDeps_FiltersMarkers(t *testing.T) {
 	}
 }
 
+func TestEvaluatePythonVersionMarker(t *testing.T) {
+	tests := []struct {
+		name          string
+		marker        string
+		pythonVersion string
+		want          bool
+	}{
+		{"no python_version", "os_name == 'posix'", "3.11", true},
+		{"simple >=", "python_version >= '3.8'", "3.11", true},
+		{"simple < excluded", "python_version < '3.11'", "3.11", false},
+		{"AND both satisfied", "python_version >= '3.8' and python_version < '4.0'", "3.11", true},
+		{"AND one fails", "python_version >= '3.8' and python_version < '3.10'", "3.11", false},
+		{"OR first matches", "python_version < '3.8' or python_version >= '3.11'", "3.11", true},
+		{"OR second matches", "python_version >= '3.12' or python_version >= '3.11'", "3.11", true},
+		{"OR neither matches", "python_version < '3.8' or python_version == '3.10'", "3.11", false},
+		{"empty marker", "", "3.11", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evaluatePythonVersionMarker(tt.marker, tt.pythonVersion)
+			if got != tt.want {
+				t.Errorf("evaluatePythonVersionMarker(%q, %q) = %v, want %v",
+					tt.marker, tt.pythonVersion, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExtractDeps_ExtractsConstraints(t *testing.T) {
 	tests := []struct {
 		name           string

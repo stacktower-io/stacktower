@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -204,16 +205,29 @@ func ExtractRepoURL(re *regexp.Regexp, urls map[string]string, homepage string) 
 		return false
 	}
 
+	// Try preferred keys first (deterministic order).
+	tried := make(map[string]bool, len(repoURLKeys))
 	for _, key := range repoURLKeys {
+		tried[key] = true
 		if u, exists := urls[key]; exists && match(u) {
 			return
 		}
 	}
-	for _, u := range urls {
-		if match(u) {
+
+	// Fall back to remaining keys in sorted order for determinism.
+	remaining := make([]string, 0, len(urls))
+	for k := range urls {
+		if !tried[k] {
+			remaining = append(remaining, k)
+		}
+	}
+	sort.Strings(remaining)
+	for _, k := range remaining {
+		if match(urls[k]) {
 			return
 		}
 	}
+
 	if homepage != "" {
 		match(homepage)
 	}

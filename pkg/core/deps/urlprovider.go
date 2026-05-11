@@ -52,21 +52,20 @@ func fetchURLsChunked(
 		}
 		chunk := names[i:end]
 
-		results := ParallelMapOrdered(ctx, workers, chunk, func(ctx context.Context, name string) urlFetchResult {
+		results, err := ParallelMapOrdered(ctx, workers, chunk, func(ctx context.Context, name string) urlFetchResult {
 			hooks.OnFetchStart(ctx, name, 0)
 			result := fetchFn(ctx, name)
 			hooks.OnFetchComplete(ctx, name, 0, 0, nil)
 			return result
 		})
+		if err != nil {
+			break
+		}
 
 		for _, r := range results {
 			if r.ok {
 				urlMap[r.name] = r.urls
 			}
-		}
-
-		if ctx.Err() != nil {
-			break
 		}
 	}
 

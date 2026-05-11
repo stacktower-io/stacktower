@@ -385,25 +385,38 @@ func (c *Client) doRequestWithBody(ctx context.Context, method, reqURL string, b
 
 func checkResponse(resp *http.Response) error {
 	switch {
-	case resp.StatusCode == http.StatusOK:
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return nil
 	case resp.StatusCode == http.StatusNotFound:
 		return ErrNotFound
 	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
 		return ErrUnauthorized
 	case resp.StatusCode == http.StatusTooManyRequests:
-		retryAfter := 0
-		if v := resp.Header.Get("Retry-After"); v != "" {
-			if seconds, err := strconv.Atoi(v); err == nil {
-				retryAfter = seconds
-			}
-		}
+		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
 		return cache.Retryable(&RateLimitedError{RetryAfter: retryAfter})
 	case resp.StatusCode >= 500:
 		return cache.Retryable(fmt.Errorf("%w: status %d", ErrNetwork, resp.StatusCode))
 	default:
 		return fmt.Errorf("%w: status %d", ErrNetwork, resp.StatusCode)
 	}
+}
+
+// parseRetryAfter parses the Retry-After header value, which may be either
+// a number of seconds or an HTTP-date (RFC 7231).
+func parseRetryAfter(value string) int {
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		return seconds
+	}
+	if t, err := http.ParseTime(value); err == nil {
+		delay := int(time.Until(t).Seconds())
+		if delay > 0 {
+			return delay
+		}
+	}
+	return 0
 }
 
 // RateLimitedError indicates the API rate limit has been exceeded.

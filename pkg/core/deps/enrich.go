@@ -152,7 +152,7 @@ func EnrichGraph(ctx context.Context, g *dag.DAG, manifestFile string, opts Opti
 	var authErrorSeen bool
 	var authMu sync.Mutex
 
-	results := ParallelMapOrdered(ctx, o.Workers, jobs, func(ctx context.Context, j graphEnrichJob) graphEnrichResult {
+	results, _ := ParallelMapOrdered(ctx, o.Workers, jobs, func(ctx context.Context, j graphEnrichJob) graphEnrichResult {
 		hooks.OnFetchStart(ctx, j.ref.Name, 0)
 		m := make(map[string]any)
 		success := false

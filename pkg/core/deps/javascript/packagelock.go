@@ -118,96 +118,141 @@ func buildPackageLockGraph(lock packageLockFile, opts deps.Options) *dag.DAG {
 	return g
 }
 
-// buildFromPackages builds the graph from v2/v3 "packages" format
+// buildFromPackages builds the graph from v2/v3 "packages" format.
+// When the same package appears at multiple versions (nested node_modules),
+// each distinct version gets its own node with an ID of "name@version" and
+// the display name stored in metadata. Single-version packages use just the
+// name as the node ID for backward compatibility.
 func buildFromPackages(lock packageLockFile, opts deps.Options) *dag.DAG {
 	g := dag.New(nil)
-	pkgs := make(map[string]bool)
 	hooks := observability.ResolverFromContext(opts.Ctx)
 
-	// First pass: add all package nodes
+	type pkgEntry struct {
+		name    string
+		version string
+		path    string
+		entry   packageLockEntry
+	}
+
+	// First pass: collect all entries keyed by name to detect duplicates.
+	byName := make(map[string][]pkgEntry)
 	for path, entry := range lock.Packages {
-		// Skip the root entry (empty path)
 		if path == "" {
 			continue
 		}
-
-		// Extract package name from path (e.g., "node_modules/lodash" -> "lodash")
-		// Handle nested deps: "node_modules/foo/node_modules/bar" -> "bar"
 		name := extractPackageName(path)
 		if name == "" {
-			continue
-		}
-
-		// Only add if not already seen (handle duplicate nested paths)
-		if pkgs[name] {
 			continue
 		}
 		if opts.DependencyScope == deps.DependencyScopeProdOnly && entry.Dev {
 			continue
 		}
-		pkgs[name] = true
+		byName[name] = append(byName[name], pkgEntry{name: name, version: entry.Version, path: path, entry: entry})
+	}
 
-		hooks.OnFetchStart(opts.Ctx, name, 0)
-		meta := dag.Metadata{"version": entry.Version}
-		if entry.Dev {
+	// Deduplicate: keep one entry per distinct name+version pair.
+	// Build a node ID for each: use "name" when there's a single version,
+	// "name@version" when multiple versions coexist.
+	type nodeInfo struct {
+		id      string
+		name    string
+		version string
+		entry   packageLockEntry
+	}
+	nodes := make(map[string]*nodeInfo)     // nodeID -> info
+	nameToIDs := make(map[string][]string)  // package name -> list of node IDs
+
+	for _, entries := range byName {
+		// Deduplicate by version
+		versionSeen := make(map[string]bool)
+		var unique []pkgEntry
+		for _, e := range entries {
+			if !versionSeen[e.version] {
+				versionSeen[e.version] = true
+				unique = append(unique, e)
+			}
+		}
+
+		multiVersion := len(unique) > 1
+		for _, e := range unique {
+			id := e.name
+			if multiVersion {
+				id = deps.BuildPackageID(e.name, e.version, "")
+			}
+			if nodes[id] != nil {
+				continue
+			}
+			nodes[id] = &nodeInfo{id: id, name: e.name, version: e.version, entry: e.entry}
+			nameToIDs[e.name] = append(nameToIDs[e.name], id)
+		}
+	}
+
+	// Add all nodes to the graph
+	for _, ni := range nodes {
+		hooks.OnFetchStart(opts.Ctx, ni.name, 0)
+		meta := dag.Metadata{"version": ni.version}
+		if ni.id != ni.name {
+			meta["name"] = ni.name
+		}
+		if ni.entry.Dev {
 			meta["dev"] = true
 		}
-		if entry.License != "" {
-			meta["license"] = entry.License
+		if ni.entry.License != "" {
+			meta["license"] = ni.entry.License
 		}
-		_ = g.AddNode(dag.Node{ID: name, Meta: meta})
-		hooks.OnFetchComplete(opts.Ctx, name, 0, len(entry.Dependencies), nil)
+		_ = g.AddNode(dag.Node{ID: ni.id, Meta: meta})
+		hooks.OnFetchComplete(opts.Ctx, ni.name, 0, len(ni.entry.Dependencies), nil)
 	}
 
-	// Second pass: add dependency edges
+	// Add edges. For dependencies, find the matching node ID.
 	incoming := make(map[string]bool)
-	for path, entry := range lock.Packages {
-		if path == "" {
-			continue
-		}
-
-		from := extractPackageName(path)
-		if from == "" || !pkgs[from] {
-			continue
-		}
-
-		for depName, constraint := range entry.Dependencies {
-			if pkgs[depName] {
-				edgeMeta := dag.Metadata{}
-				if constraint != "" {
-					edgeMeta["constraint"] = constraint
-				}
-				_ = g.AddEdge(dag.Edge{From: from, To: depName, Meta: edgeMeta})
-				incoming[depName] = true
+	for _, ni := range nodes {
+		for depName, constraint := range ni.entry.Dependencies {
+			targetIDs := nameToIDs[depName]
+			if len(targetIDs) == 0 {
+				continue
 			}
+			// Prefer the node matching the constraint version, fall back to first.
+			targetID := targetIDs[0]
+			for _, tid := range targetIDs {
+				if tn := nodes[tid]; tn != nil && tn.version == constraint {
+					targetID = tid
+					break
+				}
+			}
+			edgeMeta := dag.Metadata{}
+			if constraint != "" {
+				edgeMeta["constraint"] = constraint
+			}
+			_ = g.AddEdge(dag.Edge{From: ni.id, To: targetID, Meta: edgeMeta})
+			incoming[targetID] = true
 		}
 	}
 
-	// Add virtual root and connect packages with no incoming edges
+	// Add virtual root
 	_ = g.AddNode(dag.Node{ID: deps.ProjectRootNodeID, Meta: dag.Metadata{"virtual": true}})
 
-	// Get direct dependencies from the root entry
 	if rootEntry, ok := lock.Packages[""]; ok {
 		for depName := range rootEntry.Dependencies {
-			if pkgs[depName] {
-				edgeMeta := dag.Metadata{}
-				// Look up the pinned version from the lock file
-				if entry, ok := lock.Packages["node_modules/"+depName]; ok && entry.Version != "" {
-					edgeMeta["constraint"] = "==" + entry.Version
-				}
-				_ = g.AddEdge(dag.Edge{From: deps.ProjectRootNodeID, To: depName, Meta: edgeMeta})
+			targetIDs := nameToIDs[depName]
+			if len(targetIDs) == 0 {
+				continue
 			}
+			targetID := targetIDs[0]
+			edgeMeta := dag.Metadata{}
+			if ni := nodes[targetID]; ni != nil && ni.version != "" {
+				edgeMeta["constraint"] = "==" + ni.version
+			}
+			_ = g.AddEdge(dag.Edge{From: deps.ProjectRootNodeID, To: targetID, Meta: edgeMeta})
 		}
 	} else {
-		// Fall back to packages with no incoming edges
-		for name := range pkgs {
-			if !incoming[name] {
+		for id := range nodes {
+			if !incoming[id] {
 				edgeMeta := dag.Metadata{}
-				// Look up the pinned version from the lock file
-				if entry, ok := lock.Packages["node_modules/"+name]; ok && entry.Version != "" {
-					edgeMeta["constraint"] = "==" + entry.Version
+				if ni := nodes[id]; ni != nil && ni.version != "" {
+					edgeMeta["constraint"] = "==" + ni.version
 				}
-				_ = g.AddEdge(dag.Edge{From: deps.ProjectRootNodeID, To: name, Meta: edgeMeta})
+				_ = g.AddEdge(dag.Edge{From: deps.ProjectRootNodeID, To: id, Meta: edgeMeta})
 			}
 		}
 	}

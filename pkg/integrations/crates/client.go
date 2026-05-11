@@ -257,20 +257,23 @@ func sparseIndexURL(crate string) string {
 }
 
 type indexEntry struct {
-	Name        string     `json:"name"`
-	Version     string     `json:"vers"`
-	Deps        []indexDep `json:"deps"`
-	Yanked      bool       `json:"yanked"`
-	RustVersion string     `json:"rust_version"`
-	License     string     `json:"license"`
+	Name        string            `json:"name"`
+	Version     string            `json:"vers"`
+	Deps        []indexDep        `json:"deps"`
+	Features    map[string][]string `json:"features"` // feature name -> dep names or "dep/feature"
+	Yanked      bool              `json:"yanked"`
+	RustVersion string            `json:"rust_version"`
+	License     string            `json:"license"`
 }
 
 type indexDep struct {
-	Name     string  `json:"name"`
-	Req      string  `json:"req"`
-	Kind     string  `json:"kind"`
-	Optional bool    `json:"optional"`
-	Package  *string `json:"package"` // actual crate name if renamed
+	Name            string   `json:"name"`
+	Req             string   `json:"req"`
+	Kind            string   `json:"kind"`
+	Optional        bool     `json:"optional"`
+	DefaultFeatures bool     `json:"default_features"`
+	Features        []string `json:"features"`
+	Package         *string  `json:"package"` // actual crate name if renamed
 }
 
 func (c *Client) fetchIndex(ctx context.Context, crate string, refresh bool) ([]indexEntry, error) {
@@ -290,13 +293,15 @@ func (c *Client) fetchIndex(ctx context.Context, crate string, refresh bool) ([]
 
 		lines := strings.Split(strings.TrimSpace(text), "\n")
 		entries = make([]indexEntry, 0, len(lines))
-		for _, line := range lines {
+		for lineNum, line := range lines {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
 			}
 			var e indexEntry
 			if err := json.Unmarshal([]byte(line), &e); err != nil {
+				slog.Warn("crates: malformed NDJSON line in sparse index",
+					"crate", crate, "line", lineNum+1, "error", err)
 				continue
 			}
 			entries = append(entries, e)
@@ -306,10 +311,30 @@ func (c *Client) fetchIndex(ctx context.Context, crate string, refresh bool) ([]
 	return entries, err
 }
 
+// indexEntryToDeps extracts runtime dependencies from a sparse-index entry.
+// Non-optional "normal" deps are always included. Optional deps are included
+// when they are activated by a default feature (i.e. the dep name appears in
+// the "default" feature list).
 func indexEntryToDeps(entry indexEntry) []Dependency {
+	// Collect the set of optional dep names activated by "default" features.
+	defaultOptional := make(map[string]bool)
+	if defaults, ok := entry.Features["default"]; ok {
+		for _, f := range defaults {
+			// Feature entries can be bare dep names or "dep/feature".
+			depName := f
+			if idx := strings.Index(f, "/"); idx >= 0 {
+				depName = f[:idx]
+			}
+			defaultOptional[depName] = true
+		}
+	}
+
 	var deps []Dependency
 	for _, d := range entry.Deps {
-		if d.Kind != "normal" || d.Optional {
+		if d.Kind != "" && d.Kind != "normal" {
+			continue
+		}
+		if d.Optional && !defaultOptional[d.Name] {
 			continue
 		}
 		name := d.Name

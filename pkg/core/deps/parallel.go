@@ -14,19 +14,19 @@ type indexedResult[T any] struct {
 // results in the same order as the input slice.
 //
 // Context cancellation is respected: if the context is cancelled before or
-// during execution, the function returns nil. Workers check context before
-// processing each item and stop early on cancellation.
+// during execution, the function returns nil and ctx.Err(). Workers check
+// context before processing each item and stop early on cancellation.
 func ParallelMapOrdered[I any, O any](
 	ctx context.Context,
 	workers int,
 	items []I,
 	fn func(context.Context, I) O,
-) []O {
+) ([]O, error) {
 	if len(items) == 0 {
-		return nil
+		return nil, nil
 	}
 	if ctx.Err() != nil {
-		return nil
+		return nil, ctx.Err()
 	}
 	if workers <= 0 {
 		workers = 1
@@ -79,7 +79,7 @@ func ParallelMapOrdered[I any, O any](
 	}
 
 	if ctx.Err() != nil {
-		return nil
+		return nil, ctx.Err()
 	}
-	return ordered
+	return ordered, nil
 }

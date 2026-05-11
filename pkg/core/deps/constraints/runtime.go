@@ -118,8 +118,20 @@ func checkConstraintGroup(version, constraint string) bool {
 		case "!=":
 			satisfied = cmp != 0
 		case "^":
-			// Caret: ^3.10 means >=3.10, <4.0 (compatible release).
-			satisfied = cmp >= 0 && (len(targetParts) > 0 && len(verParts) > 0 && targetParts[0] == verParts[0])
+			// Caret: ^X.Y.Z means >=X.Y.Z with upper bound depending on leading zeros:
+			//   ^1.2.3 → >=1.2.3, <2.0.0  (major >= 1: lock major)
+			//   ^0.2.3 → >=0.2.3, <0.3.0  (major == 0: lock minor)
+			//   ^0.0.3 → >=0.0.3, <0.0.4  (major.minor == 0.0: lock patch)
+			if cmp < 0 {
+				satisfied = false
+			} else if len(verParts) > 0 && verParts[0] > 0 {
+				satisfied = len(targetParts) > 0 && targetParts[0] == verParts[0]
+			} else if len(verParts) > 1 && verParts[1] > 0 {
+				satisfied = len(targetParts) > 1 && targetParts[0] == verParts[0] && targetParts[1] == verParts[1]
+			} else {
+				satisfied = len(targetParts) > 2 && len(verParts) > 2 &&
+					targetParts[0] == verParts[0] && targetParts[1] == verParts[1] && targetParts[2] == verParts[2]
+			}
 		case "~", "~=", "~>":
 			// Tilde: ~3.10 means >=3.10, <3.11 (allow patch updates only).
 			// Ruby uses ~> for this.
@@ -128,7 +140,9 @@ func checkConstraintGroup(version, constraint string) bool {
 				satisfied = targetParts[0] == verParts[0] && targetParts[1] == verParts[1]
 			}
 		default:
-			satisfied = true
+			// Unknown operator: fail closed to avoid silently accepting
+			// incompatible runtimes.
+			satisfied = false
 		}
 
 		if !satisfied {

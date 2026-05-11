@@ -258,10 +258,54 @@ func (c *Client) extractDeps(requires []string) []Dependency {
 // evaluatePythonVersionMarker checks if a marker's python_version condition
 // is satisfied by the target Python version. Returns true if the dependency
 // should be included (marker is satisfied or has no python_version condition).
+//
+// Supports "and" / "or" boolean connectives between python_version conditions.
+// Non-python_version markers (e.g. os_name, sys_platform) are ignored (treated
+// as satisfied) since we only care about version filtering.
 func evaluatePythonVersionMarker(marker string, pythonVersion string) bool {
-	matches := pythonVersionRE.FindAllStringSubmatch(marker, -1)
+	// Split on " or " first: any OR-group matching means include.
+	orGroups := splitMarkerOr(marker)
+	for _, group := range orGroups {
+		if evaluateMarkerAndGroup(group, pythonVersion) {
+			return true
+		}
+	}
+	return len(orGroups) == 0
+}
+
+// splitMarkerOr splits a marker expression on top-level " or " connectives,
+// respecting parenthesised sub-expressions.
+func splitMarkerOr(marker string) []string {
+	var groups []string
+	depth := 0
+	start := 0
+	lower := strings.ToLower(marker)
+	for i := 0; i < len(lower); i++ {
+		switch lower[i] {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		}
+		if depth == 0 && i+4 <= len(lower) && lower[i:i+4] == " or " {
+			groups = append(groups, strings.TrimSpace(marker[start:i]))
+			start = i + 4
+		}
+	}
+	tail := strings.TrimSpace(marker[start:])
+	if tail != "" {
+		groups = append(groups, tail)
+	}
+	return groups
+}
+
+// evaluateMarkerAndGroup evaluates a single AND-connected group of marker
+// conditions. All python_version conditions must be satisfied.
+func evaluateMarkerAndGroup(group string, pythonVersion string) bool {
+	matches := pythonVersionRE.FindAllStringSubmatch(group, -1)
 	if len(matches) == 0 {
-		// No python_version in marker, include the dependency
 		return true
 	}
 
@@ -292,12 +336,9 @@ func evaluatePythonVersionMarker(marker string, pythonVersion string) bool {
 		case "!=":
 			satisfied = cmp != 0
 		default:
-			// Unknown operator, include to be safe
-			satisfied = true
+			satisfied = false
 		}
 
-		// For "and" conditions (default), all must be satisfied
-		// Most markers use "and" implicitly, so if any condition fails, skip
 		if !satisfied {
 			return false
 		}

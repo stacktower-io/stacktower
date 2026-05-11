@@ -86,6 +86,9 @@ func buildGraphQLQuery(repos []RepoID) string {
 // FetchBatch retrieves repository metrics for multiple repos in a single GraphQL call.
 // Repos that don't exist or fail are silently omitted from the result.
 // Returns a map keyed by "owner/repo" to RepoMetrics.
+//
+// If refresh is true, the cache is bypassed for this batch. GraphQL-level
+// errors (partial failures, rate limits) are checked and returned.
 func (c *Client) FetchBatch(ctx context.Context, repos []RepoID, refresh bool) (map[string]*integrations.RepoMetrics, error) {
 	result := make(map[string]*integrations.RepoMetrics, len(repos))
 
@@ -117,9 +120,29 @@ func (c *Client) fetchGraphQLBatch(ctx context.Context, repos []RepoID, refresh 
 		graphqlURL = url + "/graphql"
 	}
 
+	// Build a stable cache key from the sorted repo list so identical
+	// batch requests are deduplicated and cached.
+	var keyParts []string
+	for _, r := range repos {
+		keyParts = append(keyParts, r.Key())
+	}
+	cacheKey := "graphql_batch:" + strings.Join(keyParts, ",")
+
 	var resp graphqlResponse
-	if err := c.PostJSON(ctx, graphqlURL, graphqlRequest{Query: query}, &resp); err != nil {
+	err := c.Cached(ctx, cacheKey, refresh, &resp, func() error {
+		return c.PostJSON(ctx, graphqlURL, graphqlRequest{Query: query}, &resp)
+	})
+	if err != nil {
 		return nil, fmt.Errorf("graphql batch fetch: %w", err)
+	}
+
+	// Check for GraphQL-level errors (rate limits, schema issues, etc.)
+	if len(resp.Errors) > 0 {
+		var msgs []string
+		for _, e := range resp.Errors {
+			msgs = append(msgs, e.Message)
+		}
+		return nil, fmt.Errorf("graphql errors: %s", strings.Join(msgs, "; "))
 	}
 
 	result := make(map[string]*integrations.RepoMetrics, len(repos))

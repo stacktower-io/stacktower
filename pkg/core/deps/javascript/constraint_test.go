@@ -16,7 +16,7 @@ func TestSemverMatcher_ParseVersion(t *testing.T) {
 		{"v1.2.3", "1.2.3", true},
 		{"1.0.0", "1.0.0", true},
 		{"0.1.0", "0.1.0", true},
-		{"1.2.3-beta.1", "1.2.3", true}, // prerelease stripped in semver
+		{"1.2.3-beta.1", "1.2.3-beta.1", true},
 		{"invalid", "", false},
 		{"", "", false},
 	}
@@ -106,6 +106,9 @@ func TestSemverMatcher_ParseConstraint(t *testing.T) {
 
 		// Wildcard
 		{"*", "99.99.99", true},
+
+		// Explicit prerelease constraints include prerelease versions
+		{"^1.0.0-next.24", "1.0.0-next.29", true},
 	}
 
 	for _, tt := range tests {
@@ -145,6 +148,7 @@ func TestConstraintToRange(t *testing.T) {
 		{"=1.2.3", "==1.2.3"},
 		{"1.x", ">=1.0.0, <2.0.0"},
 		{"1.2.x", ">=1.2.0, <1.3.0"},
+		{"^1.0.0-next.24", ">=1.0.0-next.24, <2.0.0"},
 		{"*", "*"},
 		{"1.0.0 - 2.0.0", ">=1.0.0, <=2.0.0"},
 	}

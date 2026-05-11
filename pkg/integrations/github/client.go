@@ -112,22 +112,30 @@ func (c *Client) fetchMetrics(ctx context.Context, owner, repo string, m *integr
 		m.LastCommitAt = data.PushedAt
 	}
 
-	// Fetch release and contributors in parallel (both are optional/best-effort)
-	var wg sync.WaitGroup
+	// Fetch release and contributors in parallel (both are optional/best-effort).
+	// Results are collected in locals to avoid concurrent writes to m.
+	var (
+		wg            sync.WaitGroup
+		releaseAt     *time.Time
+		contributors  []integrations.Contributor
+	)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		if rel, err := c.fetchRelease(ctx, owner, repo); err == nil {
-			m.LastReleaseAt = &rel.PublishedAt
+			releaseAt = &rel.PublishedAt
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		if contribs, err := c.fetchContributors(ctx, owner, repo); err == nil {
-			m.Contributors = contribs
+			contributors = contribs
 		}
 	}()
 	wg.Wait()
+
+	m.LastReleaseAt = releaseAt
+	m.Contributors = contributors
 
 	return nil
 }

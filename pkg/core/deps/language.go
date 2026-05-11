@@ -25,7 +25,7 @@ type Language struct {
 
 	// DefaultRuntimeVersion is the default runtime version to use when none
 	// is specified via CLI or manifest. For example, "3.11" for Python,
-	// "20" for Node.js, "1.75" for Rust. Empty string means no default.
+	// "22.12.0" for Node.js, "1.75" for Rust. Empty string means no default.
 	DefaultRuntimeVersion string
 
 	// RegistryAliases maps alternative registry names to canonical names.

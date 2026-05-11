@@ -118,10 +118,15 @@ func BuildPackageID(name, version, commit string) string {
 
 // ParsePackageID parses a versioned package identifier into its components.
 //
+// Scoped npm names (starting with "@") are handled correctly by splitting on
+// the last "@" separator rather than the first.
+//
 // Examples:
 //   - "requests@2.31.0" → ("requests", "2.31.0", "")
 //   - "lib@commit:abc1234" → ("lib", "", "abc1234")
 //   - "requests" → ("requests", "", "")
+//   - "@types/node@20.1.0" → ("@types/node", "20.1.0", "")
+//   - "@types/node" → ("@types/node", "", "")
 //
 // Returns the package name, version, and commit. At most one of version or
 // commit will be non-empty.
@@ -130,10 +135,17 @@ func ParsePackageID(id string) (name, version, commit string) {
 		return "", "", ""
 	}
 
-	idx := strings.Index(id, versionSeparator)
+	// Use last "@" to split so scoped npm names like "@scope/pkg@1.0" work.
+	// Skip a leading "@" (scoped packages) when searching for the separator.
+	searchFrom := 0
+	if strings.HasPrefix(id, "@") {
+		searchFrom = 1
+	}
+	idx := strings.LastIndex(id[searchFrom:], versionSeparator)
 	if idx == -1 {
 		return id, "", ""
 	}
+	idx += searchFrom
 
 	name = id[:idx]
 	versionPart := id[idx+1:]
@@ -224,8 +236,8 @@ type Options struct {
 	Logger func(string, ...any)
 
 	// IncludePrerelease controls whether prerelease versions (alpha, beta, rc,
-	// dev, etc.) are considered during resolution. When false, the resolver
-	// filters out prerelease versions before version selection. Default is true.
+	// dev, etc.) are considered during resolution. When false (the default), the
+	// resolver filters out prerelease versions before version selection.
 	IncludePrerelease bool
 
 	// RuntimeVersion is the target runtime version for environment marker evaluation.

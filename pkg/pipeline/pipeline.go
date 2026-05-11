@@ -218,7 +218,7 @@ type Result struct {
 	CacheInfo CacheInfo
 
 	// RuntimeVersion is the target runtime version used for resolution.
-	// For Python: "3.11", for Node.js: "20", etc.
+	// For Python: "3.11", for Node.js: "22.12.0", etc.
 	RuntimeVersion string
 
 	// RuntimeSource indicates where the runtime version came from.

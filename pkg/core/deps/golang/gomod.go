@@ -299,7 +299,7 @@ func buildGoModGraphWithEdges(ctx context.Context, resolver deps.Resolver, direc
 		depSlice = append(depSlice, dep)
 	}
 
-	results := deps.ParallelMapOrdered(ctx, opts.Workers, depSlice, func(ctx context.Context, dep deps.Dependency) fetchResult {
+	results, _ := deps.ParallelMapOrdered(ctx, opts.Workers, depSlice, func(ctx context.Context, dep deps.Dependency) fetchResult {
 		if ctx.Err() != nil {
 			return fetchResult{name: dep.Name, err: ctx.Err()}
 		}

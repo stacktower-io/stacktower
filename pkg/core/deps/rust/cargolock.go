@@ -93,54 +93,94 @@ func buildCargoLockGraph(lock cargoLockFile, opts deps.Options) *dag.DAG {
 	g := dag.New(nil)
 	hooks := observability.ResolverFromContext(opts.Ctx)
 
-	// Build a map of package keys (name + version) to track unique packages
-	// This handles cases where the same crate name appears with different versions
-	pkgKeys := make(map[string]bool)
-	pkgByName := make(map[string]string) // name -> version for simple lookups
+	// Detect crate names that appear at multiple versions.
+	nameCount := make(map[string]int)
+	for _, pkg := range lock.Packages {
+		nameCount[pkg.Name]++
+	}
 
-	// First pass: add all package nodes
+	// Build a map of package keys (name + version) to their node IDs.
+	// When a crate name appears more than once, use "name@version" as the
+	// node ID so both versions are preserved. Single-version crates keep
+	// just the name for backward compatibility.
+	type nodeEntry struct {
+		id      string
+		name    string
+		version string
+	}
+	pkgKeys := make(map[string]bool)              // "name@version" dedup
+	nodeByKey := make(map[string]*nodeEntry)       // "name@version" -> entry
+	nameToKeys := make(map[string][]string)        // bare name -> list of "name@version" keys
+
 	for _, pkg := range lock.Packages {
 		key := pkg.Name + "@" + pkg.Version
 		if pkgKeys[key] {
-			continue // Already processed (shouldn't happen in valid lockfile)
+			continue
 		}
 		pkgKeys[key] = true
-		pkgByName[pkg.Name] = pkg.Version // Last version wins for simple name lookups
+
+		id := pkg.Name
+		if nameCount[pkg.Name] > 1 {
+			id = deps.BuildPackageID(pkg.Name, pkg.Version, "")
+		}
+
+		ne := &nodeEntry{id: id, name: pkg.Name, version: pkg.Version}
+		nodeByKey[key] = ne
+		nameToKeys[pkg.Name] = append(nameToKeys[pkg.Name], key)
 
 		hooks.OnFetchStart(opts.Ctx, pkg.Name, 0)
 		meta := dag.Metadata{"version": pkg.Version}
+		if id != pkg.Name {
+			meta["name"] = pkg.Name
+		}
 		if pkg.Source != "" {
 			meta["source"] = pkg.Source
 		}
-		_ = g.AddNode(dag.Node{ID: pkg.Name, Meta: meta})
+		_ = g.AddNode(dag.Node{ID: id, Meta: meta})
 		hooks.OnFetchComplete(opts.Ctx, pkg.Name, 0, len(pkg.Dependencies), nil)
 	}
 
-	// Second pass: add dependency edges
+	// resolveNodeID finds the node ID for a dependency given name and optional version.
+	resolveNodeID := func(name, version string) (string, bool) {
+		if version != "" {
+			key := name + "@" + version
+			if ne, ok := nodeByKey[key]; ok {
+				return ne.id, true
+			}
+		}
+		keys := nameToKeys[name]
+		if len(keys) == 0 {
+			return "", false
+		}
+		return nodeByKey[keys[0]].id, true
+	}
+
+	// Add dependency edges
 	incoming := make(map[string]bool)
 	for _, pkg := range lock.Packages {
+		fromKey := pkg.Name + "@" + pkg.Version
+		fromEntry := nodeByKey[fromKey]
+		if fromEntry == nil {
+			continue
+		}
+
 		for _, depSpec := range pkg.Dependencies {
 			depName, depVersion := parseCargoLockDep(depSpec)
 			if depName == "" {
 				continue
 			}
 
-			// Check if this dependency exists in the lockfile
-			// First try exact name+version match, then just name
-			depKey := depName + "@" + depVersion
-			if !pkgKeys[depKey] {
-				// Try just by name (version might not be specified in older formats)
-				if _, ok := pkgByName[depName]; !ok {
-					continue
-				}
+			targetID, ok := resolveNodeID(depName, depVersion)
+			if !ok {
+				continue
 			}
 
 			edgeMeta := dag.Metadata{}
 			if depVersion != "" {
 				edgeMeta["constraint"] = "=" + depVersion
 			}
-			_ = g.AddEdge(dag.Edge{From: pkg.Name, To: depName, Meta: edgeMeta})
-			incoming[depName] = true
+			_ = g.AddEdge(dag.Edge{From: fromEntry.id, To: targetID, Meta: edgeMeta})
+			incoming[targetID] = true
 		}
 	}
 
@@ -148,12 +188,17 @@ func buildCargoLockGraph(lock cargoLockFile, opts deps.Options) *dag.DAG {
 	_ = g.AddNode(dag.Node{ID: deps.ProjectRootNodeID, Meta: dag.Metadata{"virtual": true}})
 
 	for _, pkg := range lock.Packages {
-		if !incoming[pkg.Name] {
+		key := pkg.Name + "@" + pkg.Version
+		ne := nodeByKey[key]
+		if ne == nil {
+			continue
+		}
+		if !incoming[ne.id] {
 			edgeMeta := dag.Metadata{}
 			if pkg.Version != "" {
 				edgeMeta["constraint"] = "=" + pkg.Version
 			}
-			_ = g.AddEdge(dag.Edge{From: deps.ProjectRootNodeID, To: pkg.Name, Meta: edgeMeta})
+			_ = g.AddEdge(dag.Edge{From: deps.ProjectRootNodeID, To: ne.id, Meta: edgeMeta})
 		}
 	}
 

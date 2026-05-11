@@ -200,8 +200,21 @@ func (r *cargoResolver) solutionToDAG(
 		nsName, realName, version, nodeID string
 	}
 
+	// Count how many versions of each crate were resolved so single-version
+	// crates can use bare names as node IDs.
+	realNameCount := make(map[string]int)
+	for _, nv := range solution {
+		ns := nv.Name.Value()
+		if ns == "$$root" {
+			continue
+		}
+		real, _ := cargoSplitNamespacedName(ns)
+		realNameCount[real]++
+	}
+
 	var entries []resolved
 	nsToNodeID := make(map[string]string)
+	realToNsNames := make(map[string][]string)
 
 	for _, nv := range solution {
 		ns := nv.Name.Value()
@@ -211,44 +224,83 @@ func (r *cargoResolver) solutionToDAG(
 		real, _ := cargoSplitNamespacedName(ns)
 		ver := nv.Version.String()
 
-		id := deps.BuildPackageID(real, ver, "")
+		var id string
 		if ns == rootNsName {
 			id = rootPkg
+		} else if realNameCount[real] > 1 {
+			id = deps.BuildPackageID(real, ver, "")
+		} else {
+			id = real
 		}
 
 		entries = append(entries, resolved{ns, real, ver, id})
 		nsToNodeID[ns] = id
+		realToNsNames[real] = append(realToNsNames[real], ns)
 	}
 
-	// Fetch full metadata (REST API) in parallel for DAG enrichment.
-	packages := deps.ParallelMapOrdered(ctx, 10, entries, func(ctx context.Context, e resolved) *deps.Package {
-		pkg, err := r.fetcher.FetchVersion(ctx, e.realName, e.version, opts.Refresh)
+	// Fetch package metadata in parallel. Use the sparse index (same source
+	// the solver used) for dependency edges, since the REST API includes all
+	// optional deps regardless of features. REST API metadata (description,
+	// downloads) is overlaid where available.
+	type enrichedPackage struct {
+		index *deps.Package // deps from sparse index (for edges)
+		rest  *deps.Package // full metadata from REST API (for display)
+	}
+	packages, _ := deps.ParallelMapOrdered(ctx, 10, entries, func(ctx context.Context, e resolved) enrichedPackage {
+		indexPkg, _ := source.getPackage(e.realName, e.version)
+		restPkg, err := r.fetcher.FetchVersion(ctx, e.realName, e.version, opts.Refresh)
 		if err != nil {
 			opts.Logger("enrich %s@%s: %v", e.realName, e.version, err)
-			pkg, _ = source.getPackage(e.realName, e.version)
 		}
-		return pkg
+		return enrichedPackage{index: indexPkg, rest: restPkg}
 	})
 
+	// First pass: add all nodes
 	for i, e := range entries {
-		pkg := packages[i]
-		if pkg == nil {
+		ep := packages[i]
+		displayPkg := ep.rest
+		if displayPkg == nil {
+			displayPkg = ep.index
+		}
+		if displayPkg == nil {
 			_ = g.AddNode(dag.Node{ID: e.nodeID})
 			continue
 		}
 
-		meta := pkg.Metadata()
+		meta := displayPkg.Metadata()
 		if e.nodeID != e.realName {
 			meta["name"] = e.realName
 		}
 		_ = g.AddNode(dag.Node{ID: e.nodeID, Meta: meta})
+	}
 
-		for _, dep := range pkg.Dependencies {
+	// Second pass: add edges (all nodes exist now)
+	for i, e := range entries {
+		ep := packages[i]
+		edgePkg := ep.index
+		if edgePkg == nil {
+			if ep.rest != nil {
+				edgePkg = ep.rest
+			} else {
+				continue
+			}
+		}
+		for _, dep := range edgePkg.Dependencies {
 			bucket := cargoCompatBucket(dep.Constraint)
 			if bucket == "" {
 				bucket = source.cachedBucket(dep.Name)
 			}
-			childID, ok := nsToNodeID[cargoNamespacedName(dep.Name, bucket)]
+			nsName := cargoNamespacedName(dep.Name, bucket)
+			childID, ok := nsToNodeID[nsName]
+			if !ok {
+				for _, ns := range realToNsNames[dep.Name] {
+					if id, found := nsToNodeID[ns]; found {
+						childID = id
+						ok = true
+						break
+					}
+				}
+			}
 			if !ok {
 				continue
 			}
@@ -257,6 +309,47 @@ func (r *cargoResolver) solutionToDAG(
 				edgeMeta["constraint"] = dep.Constraint
 			}
 			_ = g.AddEdge(dag.Edge{From: e.nodeID, To: childID, Meta: edgeMeta})
+		}
+	}
+
+	// Enrich nodes with external metadata (GitHub stars, repo URLs, etc.)
+	if len(opts.MetadataProviders) > 0 {
+		refs := make([]*deps.PackageRef, 0, len(entries))
+		nodeIDByName := make(map[string]string, len(entries))
+		for i, e := range entries {
+			ep := packages[i]
+			if ep.rest != nil {
+				ref := ep.rest.Ref()
+				refs = append(refs, ref)
+				nodeIDByName[ref.Name] = e.nodeID
+			} else if ep.index != nil {
+				ref := ep.index.Ref()
+				refs = append(refs, ref)
+				nodeIDByName[ref.Name] = e.nodeID
+			}
+		}
+		for _, p := range opts.MetadataProviders {
+			bp, ok := p.(deps.BatchMetadataProvider)
+			if !ok {
+				continue
+			}
+			batch, err := bp.EnrichBatch(ctx, refs, opts.Refresh)
+			if err != nil {
+				opts.Logger("batch enrich (%s): %v", p.Name(), err)
+				continue
+			}
+			for name, extra := range batch {
+				nodeID, ok := nodeIDByName[name]
+				if !ok {
+					continue
+				}
+				if n, found := g.Node(nodeID); found {
+					for k, v := range extra {
+						n.Meta[k] = v
+					}
+				}
+			}
+			break
 		}
 	}
 
