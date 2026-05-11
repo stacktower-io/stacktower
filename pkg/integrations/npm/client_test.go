@@ -126,15 +126,25 @@ func TestClient_ListVersions_ToleratesMalformedEngines(t *testing.T) {
 }
 
 func TestClient_FetchPackageVersion(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/express/4.18.2" {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"description": "Express specific version",
-				"engines":     map[string]any{"node": ">=18"},
-				"dependencies": map[string]string{
+	response := registryResponse{
+		Name: "express",
+		DistTags: distTags{
+			Latest: "4.18.2",
+		},
+		Versions: map[string]versionDetails{
+			"4.18.2": {
+				Description: "Express specific version",
+				Engines:     packageEngines{Node: ">=18"},
+				Dependencies: map[string]string{
 					"qs": "^6.13.0",
 				},
-			})
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/express" {
+			_ = json.NewEncoder(w).Encode(response)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)

@@ -33,8 +33,8 @@ type cargoVersion struct {
 }
 
 var (
-	// Matches semver with optional parts: 1, 1.2, 1.2.3, 1.2.3-beta
-	cargoVersionRE = regexp.MustCompile(`^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([\w.]+))?(?:\+[\w.]+)?$`)
+	// Matches semver with optional parts: 1, 1.2, 1.2.3, 1.2.3-beta, 1.2.3+build-meta
+	cargoVersionRE = regexp.MustCompile(`^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([\w.-]+))?(?:\+[\w.-]+)?$`)
 
 	// Matches constraint operators
 	cargoOperatorRE = regexp.MustCompile(`^\s*(>=?|<=?|=|\^|~)?\s*(.+)$`)
@@ -71,7 +71,7 @@ func (CargoMatcher) ParseVersion(version string) pubgrub.Version {
 	if !cv.valid {
 		return nil
 	}
-	semVer, err := pubgrub.ParseSemanticVersion(fmt.Sprintf("%d.%d.%d", cv.major, cv.minor, cv.patch))
+	semVer, err := pubgrub.ParseSemanticVersion(strings.TrimPrefix(strings.TrimSpace(version), "v"))
 	if err != nil {
 		return pubgrub.SimpleVersion(version)
 	}

@@ -3,8 +3,10 @@ package crates
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +22,37 @@ func TestNewClient(t *testing.T) {
 	}
 }
 
+func TestSparseIndexURL(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"a", "https://index.crates.io/1/a"},
+		{"ab", "https://index.crates.io/2/ab"},
+		{"abc", "https://index.crates.io/3/a/abc"},
+		{"serde", "https://index.crates.io/se/rd/serde"},
+		{"tokio", "https://index.crates.io/to/ki/tokio"},
+		{"thiserror", "https://index.crates.io/th/is/thiserror"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sparseIndexURL(tt.name)
+			if got != tt.want {
+				t.Errorf("sparseIndexURL(%q) = %q, want %q", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func makeIndexNDJSON(entries ...indexEntry) string {
+	var lines []string
+	for _, e := range entries {
+		b, _ := json.Marshal(e)
+		lines = append(lines, string(b))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func TestClient_FetchCrate(t *testing.T) {
 	crateResp := crateResponse{}
 	crateResp.Crate.Name = "serde"
@@ -29,32 +62,34 @@ func TestClient_FetchCrate(t *testing.T) {
 	crateResp.Crate.Repository = "https://github.com/serde-rs/serde"
 	crateResp.Crate.Downloads = 1000000
 
-	depsResp := depsResponse{
-		Dependencies: []struct {
-			CrateID  string `json:"crate_id"`
-			Kind     string `json:"kind"`
-			Optional bool   `json:"optional"`
-			Req      string `json:"req"`
-		}{
-			{CrateID: "serde_derive", Kind: "normal", Optional: false, Req: "^1.0"},
-			{CrateID: "test_dep", Kind: "dev", Optional: false, Req: "^0.1"},
-			{CrateID: "optional_dep", Kind: "normal", Optional: true, Req: "^2.0"},
+	pkg := func(p *string) *string { return p }
+	_ = pkg
+
+	indexData := makeIndexNDJSON(
+		indexEntry{
+			Name:    "serde",
+			Version: "1.0.0",
+			Deps: []indexDep{
+				{Name: "serde_derive", Req: "^1.0", Kind: "normal", Optional: false},
+				{Name: "test_dep", Req: "^0.1", Kind: "dev", Optional: false},
+				{Name: "optional_dep", Req: "^2.0", Kind: "normal", Optional: true},
+			},
 		},
-	}
+	)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/crates/serde":
+		switch {
+		case r.URL.Path == "/crates/serde":
 			json.NewEncoder(w).Encode(crateResp)
-		case "/crates/serde/1.0.0/dependencies":
-			json.NewEncoder(w).Encode(depsResp)
+		case isIndexPath(r.URL.Path, "serde"):
+			fmt.Fprint(w, indexData)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer server.Close()
 
-	c := testClient(t, server.URL)
+	c := testClientWithIndex(t, server.URL)
 
 	info, err := c.FetchCrate(context.Background(), "serde", true)
 	if err != nil {
@@ -86,7 +121,7 @@ func TestClient_FetchCrate_NotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := testClient(t, server.URL)
+	c := testClientWithIndex(t, server.URL)
 
 	_, err := c.FetchCrate(context.Background(), "nonexistent", true)
 	if err == nil {
@@ -98,26 +133,25 @@ func TestClient_FetchCrateVersion(t *testing.T) {
 	crateResp := crateResponse{}
 	crateResp.Crate.Name = "serde"
 	crateResp.Crate.MaxVersion = "1.0.0"
+
+	indexData := makeIndexNDJSON(
+		indexEntry{Name: "serde", Version: "1.0.0", RustVersion: "1.65.0"},
+		indexEntry{Name: "serde", Version: "1.0.1", RustVersion: "1.70.0"},
+	)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/crates/serde":
+		switch {
+		case r.URL.Path == "/crates/serde":
 			_ = json.NewEncoder(w).Encode(crateResp)
-		case "/crates/serde/1.0.1/dependencies":
-			_ = json.NewEncoder(w).Encode(depsResponse{})
-		case "/crates/serde/versions":
-			_ = json.NewEncoder(w).Encode(versionsResponse{
-				Versions: []versionInfo{
-					{Num: "1.0.1", RustVersion: "1.70.0"},
-					{Num: "1.0.0", RustVersion: "1.65.0"},
-				},
-			})
+		case isIndexPath(r.URL.Path, "serde"):
+			fmt.Fprint(w, indexData)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer server.Close()
 
-	c := testClient(t, server.URL)
+	c := testClientWithIndex(t, server.URL)
 	info, err := c.FetchCrateVersion(context.Background(), "serde", "1.0.1", true)
 	if err != nil {
 		t.Fatalf("FetchCrateVersion failed: %v", err)
@@ -130,23 +164,63 @@ func TestClient_FetchCrateVersion(t *testing.T) {
 	}
 }
 
-func TestClient_ListVersionsWithConstraints(t *testing.T) {
+func TestClient_FetchCrateVersionFromIndex(t *testing.T) {
+	indexData := makeIndexNDJSON(
+		indexEntry{
+			Name:        "serde",
+			Version:     "1.0.228",
+			RustVersion: "1.31",
+			Deps: []indexDep{
+				{Name: "serde_derive", Req: "^1.0.228", Kind: "normal", Optional: false},
+			},
+		},
+	)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/crates/serde/versions" {
-			_ = json.NewEncoder(w).Encode(versionsResponse{
-				Versions: []versionInfo{
-					{Num: "1.0.1", RustVersion: "1.70.0"},
-					{Num: "1.0.0", RustVersion: "1.65.0"},
-					{Num: "0.9.0", RustVersion: "1.56.0", Yanked: true},
-				},
-			})
+		if isIndexPath(r.URL.Path, "serde") {
+			fmt.Fprint(w, indexData)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
-	c := testClient(t, server.URL)
+	c := testClientWithIndex(t, server.URL)
+	info, err := c.FetchCrateVersionFromIndex(context.Background(), "serde", "1.0.228", true)
+	if err != nil {
+		t.Fatalf("FetchCrateVersionFromIndex failed: %v", err)
+	}
+	if info.Version != "1.0.228" {
+		t.Fatalf("expected version 1.0.228, got %s", info.Version)
+	}
+	if info.MSRV != "1.31" {
+		t.Fatalf("expected MSRV 1.31, got %s", info.MSRV)
+	}
+	if len(info.Dependencies) != 1 || info.Dependencies[0].Name != "serde_derive" {
+		t.Fatalf("expected serde_derive dep, got %v", info.Dependencies)
+	}
+	if info.Description != "" {
+		t.Fatalf("expected empty description from index-only fetch, got %q", info.Description)
+	}
+}
+
+func TestClient_ListVersionsWithConstraints(t *testing.T) {
+	indexData := makeIndexNDJSON(
+		indexEntry{Name: "serde", Version: "1.0.1", RustVersion: "1.70.0"},
+		indexEntry{Name: "serde", Version: "1.0.0", RustVersion: "1.65.0"},
+		indexEntry{Name: "serde", Version: "0.9.0", RustVersion: "1.56.0", Yanked: true},
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isIndexPath(r.URL.Path, "serde") {
+			fmt.Fprint(w, indexData)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := testClientWithIndex(t, server.URL)
 	got, err := c.ListVersionsWithConstraints(context.Background(), "serde", true)
 	if err != nil {
 		t.Fatalf("ListVersionsWithConstraints failed: %v", err)
@@ -159,40 +233,125 @@ func TestClient_ListVersionsWithConstraints(t *testing.T) {
 	}
 }
 
-func TestClient_LicenseFallbackToVersion(t *testing.T) {
-	// Some crates have null license at crate level but valid license at version level
-	// (e.g., dsl_auto_type). We should fall back to version-level license.
-	crateResp := crateResponse{}
-	crateResp.Crate.Name = "dsl_auto_type"
-	crateResp.Crate.MaxVersion = "0.1.0"
-	crateResp.Crate.License = "" // Empty at crate level
+func TestClient_IndexOnlyDuringSolving(t *testing.T) {
+	restHits := 0
+	indexHits := 0
+
+	indexData := makeIndexNDJSON(
+		indexEntry{
+			Name:        "serde",
+			Version:     "1.0.1",
+			RustVersion: "1.70.0",
+			Deps: []indexDep{
+				{Name: "serde_derive", Req: "^1.0", Kind: "normal"},
+			},
+		},
+		indexEntry{Name: "serde", Version: "1.0.0", RustVersion: "1.65.0"},
+	)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/crates/dsl_auto_type":
-			_ = json.NewEncoder(w).Encode(crateResp)
-		case "/crates/dsl_auto_type/0.1.0/dependencies":
-			_ = json.NewEncoder(w).Encode(depsResponse{})
-		case "/crates/dsl_auto_type/versions":
-			_ = json.NewEncoder(w).Encode(versionsResponse{
-				Versions: []versionInfo{
-					{Num: "0.1.0", License: "MIT OR Apache-2.0"},
-				},
-			})
+		switch {
+		case isIndexPath(r.URL.Path, "serde"):
+			indexHits++
+			fmt.Fprint(w, indexData)
+		case r.URL.Path == "/crates/serde":
+			restHits++
+			resp := crateResponse{}
+			resp.Crate.Name = "serde"
+			resp.Crate.MaxVersion = "1.0.1"
+			json.NewEncoder(w).Encode(resp)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer server.Close()
 
-	c := testClient(t, server.URL)
+	c := testCachedClientWithIndex(t, server.URL)
+
+	// Simulate solving: ListVersions + FetchCrateVersionFromIndex
+	if _, err := c.ListVersions(context.Background(), "serde", false); err != nil {
+		t.Fatalf("ListVersions failed: %v", err)
+	}
+	if _, err := c.ListVersionsWithConstraints(context.Background(), "serde", false); err != nil {
+		t.Fatalf("ListVersionsWithConstraints failed: %v", err)
+	}
+	info, err := c.FetchCrateVersionFromIndex(context.Background(), "serde", "1.0.1", false)
+	if err != nil {
+		t.Fatalf("FetchCrateVersionFromIndex failed: %v", err)
+	}
+	if info.MSRV != "1.70.0" {
+		t.Fatalf("expected MSRV 1.70.0, got %q", info.MSRV)
+	}
+
+	// During solving: only the index should be hit, zero REST API calls
+	if indexHits != 1 {
+		t.Fatalf("sparse index hit %d times, want 1", indexHits)
+	}
+	if restHits != 0 {
+		t.Fatalf("REST API hit %d times during solving, want 0", restHits)
+	}
+
+	// Now simulate DAG enrichment: FetchCrateVersion (needs REST API)
+	full, err := c.FetchCrateVersion(context.Background(), "serde", "1.0.1", false)
+	if err != nil {
+		t.Fatalf("FetchCrateVersion failed: %v", err)
+	}
+	if full.Name != "serde" {
+		t.Fatalf("expected name serde, got %s", full.Name)
+	}
+	if restHits != 1 {
+		t.Fatalf("REST API hit %d times after enrichment, want 1", restHits)
+	}
+}
+
+func TestClient_LicenseFallbackToVersion(t *testing.T) {
+	crateResp := crateResponse{}
+	crateResp.Crate.Name = "dsl_auto_type"
+	crateResp.Crate.MaxVersion = "0.1.0"
+	crateResp.Crate.License = "" // Empty at crate level
+
+	indexData := makeIndexNDJSON(
+		indexEntry{Name: "dsl_auto_type", Version: "0.1.0", License: "MIT OR Apache-2.0"},
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/crates/dsl_auto_type":
+			_ = json.NewEncoder(w).Encode(crateResp)
+		case isIndexPath(r.URL.Path, "dsl_auto_type"):
+			fmt.Fprint(w, indexData)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := testClientWithIndex(t, server.URL)
 	info, err := c.FetchCrate(context.Background(), "dsl_auto_type", true)
 	if err != nil {
 		t.Fatalf("FetchCrate failed: %v", err)
 	}
 	if info.License != "MIT OR Apache-2.0" {
-		t.Errorf("expected license 'MIT OR Apache-2.0' from version fallback, got %q", info.License)
+		t.Errorf("expected license 'MIT OR Apache-2.0' from index fallback, got %q", info.License)
 	}
+}
+
+// isIndexPath checks if the URL path matches the sparse index pattern for a crate.
+func isIndexPath(path, crate string) bool {
+	name := strings.ToLower(crate)
+	n := len(name)
+	var expected string
+	switch {
+	case n == 1:
+		expected = "/1/" + name
+	case n == 2:
+		expected = "/2/" + name
+	case n == 3:
+		expected = "/3/" + name[:1] + "/" + name
+	default:
+		expected = "/" + name[:2] + "/" + name[2:4] + "/" + name
+	}
+	return path == expected
 }
 
 func testClient(t *testing.T, serverURL string) *Client {
@@ -203,5 +362,52 @@ func testClient(t *testing.T, serverURL string) *Client {
 	return &Client{
 		Client:  integrations.NewClient(cache.NewNullCache(), "crates:", time.Hour, headers),
 		baseURL: serverURL,
+	}
+}
+
+func testClientWithIndex(t *testing.T, serverURL string) *Client {
+	t.Helper()
+	headers := map[string]string{
+		"User-Agent": "stacktower/1.0 (https://github.com/stacktower-io/stacktower)",
+	}
+	return &Client{
+		Client:   integrations.NewClient(cache.NewNullCache(), "crates:", time.Hour, headers),
+		baseURL:  serverURL,
+		indexURL: serverURL,
+	}
+}
+
+func testCachedClient(t *testing.T, serverURL string) *Client {
+	t.Helper()
+	backend, err := cache.NewFileCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileCache failed: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+
+	headers := map[string]string{
+		"User-Agent": "stacktower/1.0 (https://github.com/stacktower-io/stacktower)",
+	}
+	return &Client{
+		Client:  integrations.NewClient(backend, "crates:", time.Hour, headers),
+		baseURL: serverURL,
+	}
+}
+
+func testCachedClientWithIndex(t *testing.T, serverURL string) *Client {
+	t.Helper()
+	backend, err := cache.NewFileCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileCache failed: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+
+	headers := map[string]string{
+		"User-Agent": "stacktower/1.0 (https://github.com/stacktower-io/stacktower)",
+	}
+	return &Client{
+		Client:   integrations.NewClient(backend, "crates:", time.Hour, headers),
+		baseURL:  serverURL,
+		indexURL: serverURL,
 	}
 }

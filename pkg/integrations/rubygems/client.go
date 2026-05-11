@@ -212,35 +212,41 @@ func runtimeDeps(deps []dependency) []Dependency {
 	return result
 }
 
-// ListVersions returns all available versions for a gem, sorted from oldest to newest.
-func (c *Client) ListVersions(ctx context.Context, gem string, refresh bool) ([]string, error) {
-	gem = strings.ToLower(strings.TrimSpace(gem))
-	key := gem + ":versions"
+// fetchVersionsResponse fetches and caches the versions list for a gem.
+// Both ListVersions and ListVersionsWithConstraints derive from this single
+// cached response, eliminating duplicate HTTP calls to the same endpoint.
+func (c *Client) fetchVersionsResponse(ctx context.Context, gem string, refresh bool) ([]gemVersionResponse, error) {
+	key := gem + ":versions_response"
 
-	var versions []string
-	err := c.Cached(ctx, key, refresh, &versions, func() error {
+	var data []gemVersionResponse
+	err := c.Cached(ctx, key, refresh, &data, func() error {
 		url := fmt.Sprintf("%s/versions/%s.json", c.baseURL, gem)
-
-		var versionsResp []gemVersionResponse
-		if err := c.Get(ctx, url, &versionsResp); err != nil {
+		if err := c.Get(ctx, url, &data); err != nil {
 			if errors.Is(err, integrations.ErrNotFound) {
 				return fmt.Errorf("%w: gem %s", err, gem)
 			}
 			return err
 		}
-
-		versions = make([]string, 0, len(versionsResp))
-		for _, v := range versionsResp {
-			versions = append(versions, v.Number)
-		}
-
-		// Sort versions semantically (oldest to newest)
-		integrations.SortVersions(versions)
 		return nil
 	})
+	return data, err
+}
+
+// ListVersions returns all available versions for a gem, sorted from oldest to newest.
+func (c *Client) ListVersions(ctx context.Context, gem string, refresh bool) ([]string, error) {
+	gem = strings.ToLower(strings.TrimSpace(gem))
+
+	versionsResp, err := c.fetchVersionsResponse(ctx, gem, refresh)
 	if err != nil {
 		return nil, err
 	}
+
+	versions := make([]string, 0, len(versionsResp))
+	for _, v := range versionsResp {
+		versions = append(versions, v.Number)
+	}
+
+	integrations.SortVersions(versions)
 	return versions, nil
 }
 
@@ -248,28 +254,15 @@ func (c *Client) ListVersions(ctx context.Context, gem string, refresh bool) ([]
 // Returns a map of version -> required_ruby_version (empty string if not specified).
 func (c *Client) ListVersionsWithConstraints(ctx context.Context, gem string, refresh bool) (map[string]string, error) {
 	gem = strings.ToLower(strings.TrimSpace(gem))
-	key := gem + ":version_constraints"
 
-	var result map[string]string
-	err := c.Cached(ctx, key, refresh, &result, func() error {
-		url := fmt.Sprintf("%s/versions/%s.json", c.baseURL, gem)
-
-		var versionsResp []gemVersionResponse
-		if err := c.Get(ctx, url, &versionsResp); err != nil {
-			if errors.Is(err, integrations.ErrNotFound) {
-				return fmt.Errorf("%w: gem %s", err, gem)
-			}
-			return err
-		}
-
-		result = make(map[string]string, len(versionsResp))
-		for _, v := range versionsResp {
-			result[v.Number] = strings.TrimSpace(v.RequiredRubyVersion)
-		}
-		return nil
-	})
+	versionsResp, err := c.fetchVersionsResponse(ctx, gem, refresh)
 	if err != nil {
 		return nil, err
+	}
+
+	result := make(map[string]string, len(versionsResp))
+	for _, v := range versionsResp {
+		result[v.Number] = strings.TrimSpace(v.RequiredRubyVersion)
 	}
 	return result, nil
 }

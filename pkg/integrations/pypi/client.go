@@ -105,13 +105,9 @@ func NewClient(backend cache.Cache, cacheTTL time.Duration, pythonVersion string
 // This method is safe for concurrent use.
 func (c *Client) FetchPackage(ctx context.Context, pkg string, refresh bool) (*PackageInfo, error) {
 	pkg = integrations.NormalizePkgName(pkg)
-	key := pkg
 
 	var info PackageInfo
-	err := c.Cached(ctx, key, refresh, &info, func() error {
-		return c.fetch(ctx, pkg, "", &info)
-	})
-	if err != nil {
+	if err := c.fetch(ctx, pkg, "", refresh, &info); err != nil {
 		return nil, err
 	}
 	return &info, nil
@@ -136,7 +132,7 @@ func (c *Client) FetchPackageVersion(ctx context.Context, pkg, version string, r
 
 	var info PackageInfo
 	err := c.Cached(ctx, key, refresh, &info, func() error {
-		return c.fetch(ctx, pkg, version, &info)
+		return c.fetch(ctx, pkg, version, refresh, &info)
 	})
 	if err != nil {
 		return nil, err
@@ -144,25 +140,26 @@ func (c *Client) FetchPackageVersion(ctx context.Context, pkg, version string, r
 	return &info, nil
 }
 
-func (c *Client) fetch(ctx context.Context, pkg, version string, info *PackageInfo) error {
-	var url string
-	if version != "" {
-		url = fmt.Sprintf("%s/%s/%s/json", c.baseURL, pkg, version)
-	} else {
-		url = fmt.Sprintf("%s/%s/json", c.baseURL, pkg)
-	}
+// fetchProjectResponse fetches and caches the full project JSON for a package.
+// Both ListVersions and ListVersionsWithConstraints derive from this single
+// cached response, eliminating duplicate HTTP calls to the same endpoint.
+func (c *Client) fetchProjectResponse(ctx context.Context, pkg string, refresh bool) (apiResponse, error) {
+	key := pkg + ":project_response"
 
 	var data apiResponse
-	if err := c.Get(ctx, url, &data); err != nil {
-		if errors.Is(err, integrations.ErrNotFound) {
-			if version != "" {
-				return fmt.Errorf("%w: pypi package %s version %s", err, pkg, version)
+	err := c.Cached(ctx, key, refresh, &data, func() error {
+		if err := c.Get(ctx, fmt.Sprintf("%s/%s/json", c.baseURL, pkg), &data); err != nil {
+			if errors.Is(err, integrations.ErrNotFound) {
+				return fmt.Errorf("%w: pypi package %s", err, pkg)
 			}
-			return fmt.Errorf("%w: pypi package %s", err, pkg)
+			return err
 		}
-		return err
-	}
+		return nil
+	})
+	return data, err
+}
 
+func apiResponseToInfo(data apiResponse, c *Client) PackageInfo {
 	urls := make(map[string]string, len(data.Info.ProjectURLs))
 	for k, v := range data.Info.ProjectURLs {
 		if s, ok := v.(string); ok {
@@ -170,15 +167,13 @@ func (c *Client) fetch(ctx context.Context, pkg, version string, info *PackageIn
 		}
 	}
 
-	// Extract license type (short identifier) and preserve full text if it's custom/long
 	licenseType := extractLicenseType(data.Info.License, data.Info.LicenseExpression, data.Info.Classifiers)
 	licenseText := ""
-	// Store full license text if it's long (likely custom terms) and differs from the extracted type
 	if len(data.Info.License) > 100 || strings.Contains(data.Info.License, "\n") {
 		licenseText = data.Info.License
 	}
 
-	*info = PackageInfo{
+	return PackageInfo{
 		Name:           data.Info.Name,
 		Version:        data.Info.Version,
 		RequiresPython: data.Info.RequiresPython,
@@ -190,6 +185,31 @@ func (c *Client) fetch(ctx context.Context, pkg, version string, info *PackageIn
 		HomePage:       data.Info.HomePage,
 		Author:         data.Info.Author,
 	}
+}
+
+func (c *Client) fetch(ctx context.Context, pkg, version string, refresh bool, info *PackageInfo) error {
+	if version != "" {
+		// Per-version endpoint has version-specific metadata (deps, requires_python)
+		url := fmt.Sprintf("%s/%s/%s/json", c.baseURL, pkg, version)
+
+		var data apiResponse
+		if err := c.Get(ctx, url, &data); err != nil {
+			if errors.Is(err, integrations.ErrNotFound) {
+				return fmt.Errorf("%w: pypi package %s version %s", err, pkg, version)
+			}
+			return err
+		}
+
+		*info = apiResponseToInfo(data, c)
+		return nil
+	}
+
+	data, err := c.fetchProjectResponse(ctx, pkg, refresh)
+	if err != nil {
+		return err
+	}
+
+	*info = apiResponseToInfo(data, c)
 	return nil
 }
 
@@ -365,33 +385,18 @@ type apiInfo struct {
 // Callers that need proper version ordering should sort the result with a PEP 440 comparator.
 func (c *Client) ListVersions(ctx context.Context, pkg string, refresh bool) ([]string, error) {
 	pkg = integrations.NormalizePkgName(pkg)
-	key := pkg + ":versions"
 
-	var versions []string
-	err := c.Cached(ctx, key, refresh, &versions, func() error {
-		url := fmt.Sprintf("%s/%s/json", c.baseURL, pkg)
-
-		var data apiResponse
-		if err := c.Get(ctx, url, &data); err != nil {
-			if errors.Is(err, integrations.ErrNotFound) {
-				return fmt.Errorf("%w: pypi package %s", err, pkg)
-			}
-			return err
-		}
-
-		// Extract version strings from releases
-		versions = make([]string, 0, len(data.Releases))
-		for v := range data.Releases {
-			versions = append(versions, v)
-		}
-
-		// Sort versions semantically (oldest to newest)
-		integrations.SortVersions(versions)
-		return nil
-	})
+	data, err := c.fetchProjectResponse(ctx, pkg, refresh)
 	if err != nil {
 		return nil, err
 	}
+
+	versions := make([]string, 0, len(data.Releases))
+	for v := range data.Releases {
+		versions = append(versions, v)
+	}
+
+	integrations.SortVersions(versions)
 	return versions, nil
 }
 
@@ -400,36 +405,20 @@ func (c *Client) ListVersions(ctx context.Context, pkg string, refresh bool) ([]
 // Returns a map of version -> requires_python constraint (empty string if not specified).
 func (c *Client) ListVersionsWithConstraints(ctx context.Context, pkg string, refresh bool) (map[string]string, error) {
 	pkg = integrations.NormalizePkgName(pkg)
-	key := pkg + ":version_constraints"
 
-	var result map[string]string
-	err := c.Cached(ctx, key, refresh, &result, func() error {
-		url := fmt.Sprintf("%s/%s/json", c.baseURL, pkg)
-
-		var data apiResponse
-		if err := c.Get(ctx, url, &data); err != nil {
-			if errors.Is(err, integrations.ErrNotFound) {
-				return fmt.Errorf("%w: pypi package %s", err, pkg)
-			}
-			return err
-		}
-
-		// Extract requires_python from each release's files
-		result = make(map[string]string, len(data.Releases))
-		for version, files := range data.Releases {
-			// All files for a version should have the same requires_python,
-			// so just take the first non-empty one
-			for _, f := range files {
-				if f.RequiresPython != "" {
-					result[version] = f.RequiresPython
-					break
-				}
-			}
-		}
-		return nil
-	})
+	data, err := c.fetchProjectResponse(ctx, pkg, refresh)
 	if err != nil {
 		return nil, err
+	}
+
+	result := make(map[string]string, len(data.Releases))
+	for version, files := range data.Releases {
+		for _, f := range files {
+			if f.RequiresPython != "" {
+				result[version] = f.RequiresPython
+				break
+			}
+		}
 	}
 	return result, nil
 }

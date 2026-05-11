@@ -692,7 +692,40 @@ func (s *pubgrubSource) GetDependencies(name pubgrub.Name, version pubgrub.Versi
 		}
 		terms = append(terms, pubgrub.NewTerm(pubgrub.MakeName(dep.Name), cond))
 	}
+
+	// Speculatively prefetch version lists for discovered dependencies so they
+	// land in the Cached layer before PubGrub's next GetVersions call.
+	s.prefetchDeps(pkg.Dependencies)
+
 	return terms, nil
+}
+
+// prefetchDeps fires bounded background goroutines to warm the cache with
+// version lists for newly discovered dependencies. The data lands in the
+// integrations.Client Cached layer, turning the next GetVersions into a
+// cache hit instead of a blocking HTTP round trip.
+func (s *pubgrubSource) prefetchDeps(dependencies []Dependency) {
+	const maxPrefetch = 5
+
+	var toFetch []string
+	for _, dep := range dependencies {
+		s.mu.Lock()
+		_, known := s.depth[dep.Name]
+		s.mu.Unlock()
+		if !known {
+			toFetch = append(toFetch, dep.Name)
+		}
+		if len(toFetch) >= maxPrefetch {
+			break
+		}
+	}
+
+	for _, name := range toFetch {
+		name := name
+		go func() {
+			_, _ = s.lister.ListVersions(s.ctx, name, s.opts.Refresh)
+		}()
+	}
 }
 
 func (s *pubgrubSource) packageDepth(name string) (int, bool) {

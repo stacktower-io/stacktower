@@ -2,9 +2,11 @@ package crates
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/stacktower-io/stacktower/pkg/cache"
@@ -45,7 +47,8 @@ type CrateInfo struct {
 // Note: crates.io requires a User-Agent header; this client sets one automatically.
 type Client struct {
 	*integrations.Client
-	baseURL string
+	baseURL  string
+	indexURL string // sparse index base URL (defaults to indexBaseURL)
 }
 
 // NewClient creates a crates.io client with the given cache backend.
@@ -62,8 +65,9 @@ func NewClient(backend cache.Cache, cacheTTL time.Duration) *Client {
 	}
 	rl := integrations.DefaultRateLimits["crates"]
 	return &Client{
-		Client:  integrations.NewClientWithRateLimit(backend, "crates:", cacheTTL, headers, rl.RequestsPerSecond, rl.Burst),
-		baseURL: "https://crates.io/api/v1",
+		Client:   integrations.NewClientWithRateLimit(backend, "crates:", cacheTTL, headers, rl.RequestsPerSecond, rl.Burst),
+		baseURL:  "https://crates.io/api/v1",
+		indexURL: indexBaseURL,
 	}
 }
 
@@ -91,7 +95,7 @@ func (c *Client) FetchCrate(ctx context.Context, crate string, refresh bool) (*C
 
 	var info CrateInfo
 	err := c.Cached(ctx, key, refresh, &info, func() error {
-		return c.fetch(ctx, crate, "", &info)
+		return c.fetch(ctx, crate, "", refresh, &info)
 	})
 	if err != nil {
 		return nil, err
@@ -117,7 +121,7 @@ func (c *Client) FetchCrateVersion(ctx context.Context, crate, version string, r
 
 	var info CrateInfo
 	err := c.Cached(ctx, key, refresh, &info, func() error {
-		return c.fetch(ctx, crate, version, &info)
+		return c.fetch(ctx, crate, version, refresh, &info)
 	})
 	if err != nil {
 		return nil, err
@@ -125,9 +129,32 @@ func (c *Client) FetchCrateVersion(ctx context.Context, crate, version string, r
 	return &info, nil
 }
 
-func (c *Client) fetch(ctx context.Context, crate, version string, info *CrateInfo) error {
-	var data crateResponse
-	if err := c.Get(ctx, fmt.Sprintf("%s/crates/%s", c.baseURL, crate), &data); err != nil {
+// FetchCrateVersionFromIndex returns package info using only the sparse index.
+// This is much faster than FetchCrateVersion because it avoids the REST API
+// call for metadata (description, license, downloads, etc.). Use this during
+// dependency resolution where only deps and MSRV are needed.
+func (c *Client) FetchCrateVersionFromIndex(ctx context.Context, crate, version string, refresh bool) (*CrateInfo, error) {
+	entries, err := c.fetchIndex(ctx, crate, refresh)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range entries {
+		if entries[i].Version == version {
+			return &CrateInfo{
+				Name:         entries[i].Name,
+				Version:      version,
+				Dependencies: indexEntryToDeps(entries[i]),
+				MSRV:         entries[i].RustVersion,
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: crate %s version %s", integrations.ErrNotFound, crate, version)
+}
+
+func (c *Client) fetch(ctx context.Context, crate, version string, refresh bool, info *CrateInfo) error {
+	entries, err := c.fetchIndex(ctx, crate, refresh)
+	if err != nil {
 		if errors.Is(err, integrations.ErrNotFound) {
 			return fmt.Errorf("%w: crate %s", err, crate)
 		}
@@ -136,22 +163,45 @@ func (c *Client) fetch(ctx context.Context, crate, version string, info *CrateIn
 
 	targetVersion := version
 	if targetVersion == "" {
-		targetVersion = data.Crate.MaxVersion
+		for i := len(entries) - 1; i >= 0; i-- {
+			if !entries[i].Yanked {
+				targetVersion = entries[i].Version
+				break
+			}
+		}
+		if targetVersion == "" {
+			return fmt.Errorf("no non-yanked versions found for %s", crate)
+		}
 	}
 
-	deps, err := c.fetchDeps(ctx, crate, targetVersion)
+	var entry *indexEntry
+	for i := range entries {
+		if entries[i].Version == targetVersion {
+			entry = &entries[i]
+			break
+		}
+	}
+	if entry == nil {
+		return fmt.Errorf("%w: crate %s version %s", integrations.ErrNotFound, crate, targetVersion)
+	}
+
+	deps := indexEntryToDeps(*entry)
+
+	data, err := c.fetchCrateResponse(ctx, crate, refresh)
 	if err != nil {
-		slog.Debug("crates: failed to fetch dependencies", "crate", crate, "version", targetVersion, "error", err)
+		slog.Debug("crates: failed to fetch crate metadata from REST API", "crate", crate, "error", err)
+		*info = CrateInfo{
+			Name:         crate,
+			Version:      targetVersion,
+			Dependencies: deps,
+			MSRV:         entry.RustVersion,
+		}
+		return nil
 	}
 
-	// Fetch version-specific metadata (MSRV, license)
-	// Some crates have null license at the crate level but valid license at the version level
-	verMeta := c.fetchVersionMeta(ctx, crate, targetVersion)
-
-	// Use crate-level license if available, otherwise fall back to version-specific license
 	license := data.Crate.License
 	if license == "" {
-		license = verMeta.License
+		license = entry.License
 	}
 
 	*info = CrateInfo{
@@ -163,52 +213,115 @@ func (c *Client) fetch(ctx context.Context, crate, version string, info *CrateIn
 		HomePage:     data.Crate.HomePage,
 		Downloads:    data.Crate.Downloads,
 		Dependencies: deps,
-		MSRV:         verMeta.MSRV,
+		MSRV:         entry.RustVersion,
 	}
 	return nil
 }
 
-// versionMeta holds version-specific metadata that may not be available at the crate level.
-type versionMeta struct {
-	MSRV    string // Minimum Supported Rust Version
-	License string // License for this specific version
+func (c *Client) fetchCrateResponse(ctx context.Context, crate string, refresh bool) (crateResponse, error) {
+	key := crate + ":metadata"
+
+	var data crateResponse
+	err := c.Cached(ctx, key, refresh, &data, func() error {
+		return c.Get(ctx, fmt.Sprintf("%s/crates/%s", c.baseURL, crate), &data)
+	})
+	return data, err
 }
 
-// fetchVersionMeta retrieves version-specific metadata (MSRV, license) for a crate version.
-// Some crates have null license at the crate level but valid license at the version level.
-func (c *Client) fetchVersionMeta(ctx context.Context, crate, version string) versionMeta {
-	url := fmt.Sprintf("%s/crates/%s/versions", c.baseURL, crate)
-	var versionsResp versionsResponse
-	if err := c.Get(ctx, url, &versionsResp); err != nil {
-		return versionMeta{}
-	}
+// ---------------------------------------------------------------------------
+// Sparse index: https://index.crates.io/
+// One GET per crate returns ALL versions + ALL deps in NDJSON format.
+// ---------------------------------------------------------------------------
 
-	for _, v := range versionsResp.Versions {
-		if v.Num == version {
-			return versionMeta{MSRV: v.RustVersion, License: v.License}
+const indexBaseURL = "https://index.crates.io"
+
+func sparseIndexPath(crate string) string {
+	name := strings.ToLower(crate)
+	n := len(name)
+	switch {
+	case n <= 0:
+		return ""
+	case n == 1:
+		return "/1/" + name
+	case n == 2:
+		return "/2/" + name
+	case n == 3:
+		return "/3/" + name[:1] + "/" + name
+	default:
+		return "/" + name[:2] + "/" + name[2:4] + "/" + name
+	}
+}
+
+func sparseIndexURL(crate string) string {
+	return indexBaseURL + sparseIndexPath(crate)
+}
+
+type indexEntry struct {
+	Name        string     `json:"name"`
+	Version     string     `json:"vers"`
+	Deps        []indexDep `json:"deps"`
+	Yanked      bool       `json:"yanked"`
+	RustVersion string     `json:"rust_version"`
+	License     string     `json:"license"`
+}
+
+type indexDep struct {
+	Name     string  `json:"name"`
+	Req      string  `json:"req"`
+	Kind     string  `json:"kind"`
+	Optional bool    `json:"optional"`
+	Package  *string `json:"package"` // actual crate name if renamed
+}
+
+func (c *Client) fetchIndex(ctx context.Context, crate string, refresh bool) ([]indexEntry, error) {
+	key := crate + ":index"
+
+	var entries []indexEntry
+	err := c.Cached(ctx, key, refresh, &entries, func() error {
+		path := sparseIndexPath(crate)
+		if path == "" {
+			return fmt.Errorf("invalid crate name: %q", crate)
 		}
-	}
-	return versionMeta{}
+		url := c.indexURL + path
+		text, err := c.GetText(ctx, url)
+		if err != nil {
+			return err
+		}
+
+		lines := strings.Split(strings.TrimSpace(text), "\n")
+		entries = make([]indexEntry, 0, len(lines))
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			var e indexEntry
+			if err := json.Unmarshal([]byte(line), &e); err != nil {
+				continue
+			}
+			entries = append(entries, e)
+		}
+		return nil
+	})
+	return entries, err
 }
 
-func (c *Client) fetchDeps(ctx context.Context, crate, version string) ([]Dependency, error) {
-	url := fmt.Sprintf("%s/crates/%s/%s/dependencies", c.baseURL, crate, version)
-
-	var data depsResponse
-	if err := c.Get(ctx, url, &data); err != nil {
-		return nil, err
-	}
-
+func indexEntryToDeps(entry indexEntry) []Dependency {
 	var deps []Dependency
-	for _, d := range data.Dependencies {
-		if d.Kind == "normal" && !d.Optional {
-			deps = append(deps, Dependency{
-				Name:       d.CrateID,
-				Constraint: d.Req,
-			})
+	for _, d := range entry.Deps {
+		if d.Kind != "normal" || d.Optional {
+			continue
 		}
+		name := d.Name
+		if d.Package != nil && *d.Package != "" {
+			name = *d.Package
+		}
+		deps = append(deps, Dependency{
+			Name:       name,
+			Constraint: d.Req,
+		})
 	}
-	return deps, nil
+	return deps
 }
 
 // ListVersions returns all non-yanked versions for a crate, sorted semantically
@@ -218,31 +331,20 @@ func (c *Client) ListVersions(ctx context.Context, crate string, refresh bool) (
 
 	var versions []string
 	err := c.Cached(ctx, key, refresh, &versions, func() error {
-		var data crateResponse
-		if err := c.Get(ctx, fmt.Sprintf("%s/crates/%s", c.baseURL, crate), &data); err != nil {
+		entries, err := c.fetchIndex(ctx, crate, refresh)
+		if err != nil {
 			if errors.Is(err, integrations.ErrNotFound) {
 				return fmt.Errorf("%w: crate %s", err, crate)
 			}
 			return err
 		}
 
-		// Fetch all versions
-		url := fmt.Sprintf("%s/crates/%s/versions", c.baseURL, crate)
-		var versionsResp versionsResponse
-		if err := c.Get(ctx, url, &versionsResp); err != nil {
-			// Fallback: just return the max_version if versions endpoint fails
-			versions = []string{data.Crate.MaxVersion}
-			return nil
-		}
-
-		versions = make([]string, 0, len(versionsResp.Versions))
-		for _, v := range versionsResp.Versions {
-			if !v.Yanked {
-				versions = append(versions, v.Num)
+		versions = make([]string, 0, len(entries))
+		for _, e := range entries {
+			if !e.Yanked {
+				versions = append(versions, e.Version)
 			}
 		}
-
-		// Sort versions semantically (oldest to newest)
 		integrations.SortVersions(versions)
 		return nil
 	})
@@ -259,21 +361,19 @@ func (c *Client) ListVersionsWithConstraints(ctx context.Context, crate string, 
 
 	var result map[string]string
 	err := c.Cached(ctx, key, refresh, &result, func() error {
-		url := fmt.Sprintf("%s/crates/%s/versions", c.baseURL, crate)
-		var versionsResp versionsResponse
-		if err := c.Get(ctx, url, &versionsResp); err != nil {
+		entries, err := c.fetchIndex(ctx, crate, refresh)
+		if err != nil {
 			if errors.Is(err, integrations.ErrNotFound) {
 				return fmt.Errorf("%w: crate %s", err, crate)
 			}
 			return err
 		}
 
-		result = make(map[string]string, len(versionsResp.Versions))
-		for _, v := range versionsResp.Versions {
-			if v.Yanked {
-				continue
+		result = make(map[string]string, len(entries))
+		for _, e := range entries {
+			if !e.Yanked {
+				result[e.Version] = e.RustVersion
 			}
-			result[v.Num] = v.RustVersion
 		}
 		return nil
 	})
@@ -293,24 +393,4 @@ type crateResponse struct {
 		HomePage    string `json:"homepage"`
 		Downloads   int    `json:"downloads"`
 	} `json:"crate"`
-}
-
-type depsResponse struct {
-	Dependencies []struct {
-		CrateID  string `json:"crate_id"`
-		Kind     string `json:"kind"`
-		Optional bool   `json:"optional"`
-		Req      string `json:"req"` // Version requirement (e.g., "^1.0")
-	} `json:"dependencies"`
-}
-
-type versionsResponse struct {
-	Versions []versionInfo `json:"versions"`
-}
-
-type versionInfo struct {
-	Num         string `json:"num"`
-	Yanked      bool   `json:"yanked"`
-	RustVersion string `json:"rust_version"` // MSRV for this version
-	License     string `json:"license"`      // License for this version (may differ from crate-level)
 }

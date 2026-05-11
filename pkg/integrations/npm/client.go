@@ -82,13 +82,9 @@ func NewClient(backend cache.Cache, cacheTTL time.Duration) *Client {
 // This method is safe for concurrent use.
 func (c *Client) FetchPackage(ctx context.Context, pkg string, refresh bool) (*PackageInfo, error) {
 	pkg = strings.ToLower(strings.TrimSpace(pkg))
-	key := pkg
 
 	var info PackageInfo
-	err := c.Cached(ctx, key, refresh, &info, func() error {
-		return c.fetch(ctx, pkg, "", &info)
-	})
-	if err != nil {
+	if err := c.fetch(ctx, pkg, "", refresh, &info); err != nil {
 		return nil, err
 	}
 	return &info, nil
@@ -109,71 +105,54 @@ func (c *Client) FetchPackage(ctx context.Context, pkg string, refresh bool) (*P
 // This method is safe for concurrent use.
 func (c *Client) FetchPackageVersion(ctx context.Context, pkg, version string, refresh bool) (*PackageInfo, error) {
 	pkg = strings.ToLower(strings.TrimSpace(pkg))
-	key := pkg + "@" + version
 
 	var info PackageInfo
-	err := c.Cached(ctx, key, refresh, &info, func() error {
-		return c.fetch(ctx, pkg, version, &info)
-	})
-	if err != nil {
+	if err := c.fetch(ctx, pkg, version, refresh, &info); err != nil {
 		return nil, err
 	}
 	return &info, nil
 }
 
-func (c *Client) fetch(ctx context.Context, pkg, version string, info *PackageInfo) error {
-	var url string
-	if version != "" {
-		// Use abbreviated endpoint for specific version
-		url = c.baseURL + "/" + pkg + "/" + version
-	} else {
-		url = c.baseURL + "/" + pkg
-	}
+// fetchFullDoc fetches and caches the full registry document for a package.
+// All version metadata, deps, and constraints come from this single response,
+// eliminating duplicate HTTP calls across ListVersions, ListVersionsWithConstraints,
+// FetchPackage, and FetchPackageVersion.
+func (c *Client) fetchFullDoc(ctx context.Context, pkg string, refresh bool) (registryResponse, error) {
+	key := pkg + ":full_doc"
 
-	if version != "" {
-		// Fetch specific version directly
-		var v versionDetails
-		if err := c.Get(ctx, url, &v); err != nil {
+	var data registryResponse
+	err := c.Cached(ctx, key, refresh, &data, func() error {
+		if err := c.Get(ctx, c.baseURL+"/"+pkg, &data); err != nil {
 			if errors.Is(err, integrations.ErrNotFound) {
-				return fmt.Errorf("%w: npm package %s version %s", err, pkg, version)
+				return fmt.Errorf("%w: npm package %s", err, pkg)
 			}
 			return err
 		}
-		license, licenseText := extractLicense(v.License)
-		*info = PackageInfo{
-			Name:         pkg,
-			Version:      version,
-			Description:  v.Description,
-			License:      license,
-			LicenseText:  licenseText,
-			Author:       extractField(v.Author, "name"),
-			Repository:   integrations.NormalizeRepoURL(extractField(v.Repository, "url")),
-			HomePage:     v.HomePage,
-			Dependencies: extractDeps(v.Dependencies),
-			RequiredNode: v.Engines.Node,
-		}
 		return nil
-	}
+	})
+	return data, err
+}
 
-	// Fetch latest version from full package data
-	var data registryResponse
-	if err := c.Get(ctx, url, &data); err != nil {
-		if errors.Is(err, integrations.ErrNotFound) {
-			return fmt.Errorf("%w: npm package %s", err, pkg)
-		}
+func (c *Client) fetch(ctx context.Context, pkg, version string, refresh bool, info *PackageInfo) error {
+	data, err := c.fetchFullDoc(ctx, pkg, refresh)
+	if err != nil {
 		return err
 	}
 
-	latest := data.DistTags.Latest
-	v, ok := data.Versions[latest]
+	targetVersion := version
+	if targetVersion == "" {
+		targetVersion = data.DistTags.Latest
+	}
+
+	v, ok := data.Versions[targetVersion]
 	if !ok {
-		return fmt.Errorf("version %s not found", latest)
+		return fmt.Errorf("%w: npm package %s version %s", integrations.ErrNotFound, pkg, targetVersion)
 	}
 
 	license, licenseText := extractLicense(v.License)
 	*info = PackageInfo{
 		Name:         data.Name,
-		Version:      latest,
+		Version:      targetVersion,
 		Description:  v.Description,
 		License:      license,
 		LicenseText:  licenseText,
@@ -233,33 +212,18 @@ func extractLicense(v any) (license, licenseText string) {
 // Callers that need semver ordering should sort the result with a semver-aware comparator.
 func (c *Client) ListVersions(ctx context.Context, pkg string, refresh bool) ([]string, error) {
 	pkg = strings.ToLower(strings.TrimSpace(pkg))
-	key := pkg + ":versions"
 
-	var versions []string
-	err := c.Cached(ctx, key, refresh, &versions, func() error {
-		url := c.baseURL + "/" + pkg
-
-		var data registryResponse
-		if err := c.Get(ctx, url, &data); err != nil {
-			if errors.Is(err, integrations.ErrNotFound) {
-				return fmt.Errorf("%w: npm package %s", err, pkg)
-			}
-			return err
-		}
-
-		// Extract version strings from versions map
-		versions = make([]string, 0, len(data.Versions))
-		for v := range data.Versions {
-			versions = append(versions, v)
-		}
-
-		// Sort versions semantically (oldest to newest)
-		integrations.SortVersions(versions)
-		return nil
-	})
+	data, err := c.fetchFullDoc(ctx, pkg, refresh)
 	if err != nil {
 		return nil, err
 	}
+
+	versions := make([]string, 0, len(data.Versions))
+	for v := range data.Versions {
+		versions = append(versions, v)
+	}
+
+	integrations.SortVersions(versions)
 	return versions, nil
 }
 
@@ -267,28 +231,15 @@ func (c *Client) ListVersions(ctx context.Context, pkg string, refresh bool) ([]
 // Returns a map of version -> engines.node (empty string if not specified).
 func (c *Client) ListVersionsWithConstraints(ctx context.Context, pkg string, refresh bool) (map[string]string, error) {
 	pkg = strings.ToLower(strings.TrimSpace(pkg))
-	key := pkg + ":version_constraints"
 
-	var result map[string]string
-	err := c.Cached(ctx, key, refresh, &result, func() error {
-		url := c.baseURL + "/" + pkg
-
-		var data registryResponse
-		if err := c.Get(ctx, url, &data); err != nil {
-			if errors.Is(err, integrations.ErrNotFound) {
-				return fmt.Errorf("%w: npm package %s", err, pkg)
-			}
-			return err
-		}
-
-		result = make(map[string]string, len(data.Versions))
-		for version, v := range data.Versions {
-			result[version] = strings.TrimSpace(v.Engines.Node)
-		}
-		return nil
-	})
+	data, err := c.fetchFullDoc(ctx, pkg, refresh)
 	if err != nil {
 		return nil, err
+	}
+
+	result := make(map[string]string, len(data.Versions))
+	for version, v := range data.Versions {
+		result[version] = strings.TrimSpace(v.Engines.Node)
 	}
 	return result, nil
 }

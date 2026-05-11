@@ -18,7 +18,9 @@ func TestCargoMatcher_ParseVersion(t *testing.T) {
 		{"0.1.0", "0.1.0", true},
 		{"1.2", "1.2.0", true},
 		{"1", "1.0.0", true},
-		{"1.2.3-beta.1", "1.2.3", true},
+		{"1.2.3-beta.1", "1.2.3-beta.1", true},
+		{"0.24.0+spec-1.1.0", "0.24.0+spec-1.1.0", true},
+		{"1.2.3-alpha-1", "1.2.3-alpha-1", true},
 		{"invalid", "", false},
 		{"", "", false},
 	}
@@ -88,6 +90,7 @@ func TestCargoMatcher_ParseConstraint(t *testing.T) {
 		// Combined (comma = AND)
 		{">=1.0.0, <2.0.0", "1.5.0", true},
 		{">=1.0.0, <2.0.0", "2.0.0", false},
+		{">=0.24.0, <0.25.0", "0.24.0+spec-1.1.0", true},
 
 		// Wildcard ranges
 		{"1.*", "1.0.0", true},
@@ -135,6 +138,8 @@ func TestParseCargoVersion(t *testing.T) {
 		{"1.2", 1, 2, 0, "", true},
 		{"1", 1, 0, 0, "", true},
 		{"1.2.3-beta.1", 1, 2, 3, "beta.1", true},
+		{"1.2.3-alpha-1", 1, 2, 3, "alpha-1", true},
+		{"0.24.0+spec-1.1.0", 0, 24, 0, "", true},
 		{"0.0.0", 0, 0, 0, "", true},
 		{"invalid", 0, 0, 0, "", false},
 		{"", 0, 0, 0, "", false},
@@ -160,6 +165,80 @@ func TestParseCargoVersion(t *testing.T) {
 			}
 			if cv.prerelease != tt.wantPrerel {
 				t.Errorf("parseCargoVersion(%q).prerelease = %q, want %q", tt.input, cv.prerelease, tt.wantPrerel)
+			}
+		})
+	}
+}
+
+func TestCargoMajorBucket(t *testing.T) {
+	tests := []struct {
+		major, minor, patch int
+		want                string
+	}{
+		{1, 0, 0, "1"},
+		{2, 5, 3, "2"},
+		{0, 2, 3, "0.2"},
+		{0, 9, 0, "0.9"},
+		{0, 0, 3, "0.0.3"},
+		{0, 0, 0, "0.0.0"},
+	}
+	for _, tt := range tests {
+		got := cargoMajorBucket(tt.major, tt.minor, tt.patch)
+		if got != tt.want {
+			t.Errorf("cargoMajorBucket(%d,%d,%d) = %q, want %q", tt.major, tt.minor, tt.patch, got, tt.want)
+		}
+	}
+}
+
+func TestCargoCompatBucket(t *testing.T) {
+	tests := []struct {
+		constraint string
+		want       string
+	}{
+		{"^1.2.3", "1"},
+		{"^2.0.0", "2"},
+		{"^0.2.3", "0.2"},
+		{"^0.0.3", "0.0.3"},
+		{"1.2.3", "1"},
+		{"~1.2.3", "1"},
+		{">=1.0.0, <2.0.0", "1"},
+		{">=0.8.0, <0.9.0", "0.8"},
+		{"=1.5.0", "1"},
+		{"*", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.constraint, func(t *testing.T) {
+			got := cargoCompatBucket(tt.constraint)
+			if got != tt.want {
+				t.Errorf("cargoCompatBucket(%q) = %q, want %q", tt.constraint, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCargoNamespacing(t *testing.T) {
+	tests := []struct {
+		name, bucket   string
+		wantNs         string
+		wantReal, wantBucket string
+	}{
+		{"thiserror", "2", "thiserror/2", "thiserror", "2"},
+		{"thiserror", "1", "thiserror/1", "thiserror", "1"},
+		{"serde", "1", "serde/1", "serde", "1"},
+		{"rand", "0.8", "rand/0.8", "rand", "0.8"},
+		{"tiny", "0.0.3", "tiny/0.0.3", "tiny", "0.0.3"},
+		{"foo", "", "foo", "foo", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.wantNs, func(t *testing.T) {
+			ns := cargoNamespacedName(tt.name, tt.bucket)
+			if ns != tt.wantNs {
+				t.Errorf("cargoNamespacedName(%q, %q) = %q, want %q", tt.name, tt.bucket, ns, tt.wantNs)
+			}
+			real, bucket := cargoSplitNamespacedName(ns)
+			if real != tt.wantReal || bucket != tt.wantBucket {
+				t.Errorf("cargoSplitNamespacedName(%q) = (%q, %q), want (%q, %q)", ns, real, bucket, tt.wantReal, tt.wantBucket)
 			}
 		})
 	}
