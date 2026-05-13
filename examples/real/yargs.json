@@ -2,8 +2,9 @@
   "meta": {
     "dependency_scope": "prod_only",
     "include_prerelease": false,
-    "runtime_source": "package",
-    "runtime_version": "20.19.0"
+    "language": "javascript",
+    "runtime_source": "default",
+    "runtime_version": "22.12.0"
   },
   "nodes": [
     {
@@ -22,7 +23,7 @@
         "repo_last_release": "2025-09-08",
         "repo_license": "MIT",
         "repo_owner": "chalk",
-        "repo_stars": 204,
+        "repo_stars": 202,
         "repo_url": "https://github.com/chalk/ansi-regex",
         "version": "6.2.2"
       }
@@ -43,7 +44,7 @@
         "repo_last_release": "2025-09-08",
         "repo_license": "MIT",
         "repo_owner": "chalk",
-        "repo_stars": 453,
+        "repo_stars": 459,
         "repo_topics": [
           "chalk"
         ],
@@ -63,11 +64,11 @@
         "repo_archived": false,
         "repo_description": "easily create complex multi-column command-line-interfaces.",
         "repo_language": "JavaScript",
-        "repo_last_commit": "2026-03-23",
+        "repo_last_commit": "2026-05-12",
         "repo_last_release": "2025-03-17",
         "repo_license": "ISC",
         "repo_owner": "yargs",
-        "repo_stars": 389,
+        "repo_stars": 391,
         "repo_url": "https://github.com/yargs/cliui",
         "version": "9.0.1"
       }
@@ -87,7 +88,7 @@
         "repo_last_commit": "2025-10-13",
         "repo_license": "MIT",
         "repo_owner": "mathiasbynens",
-        "repo_stars": 1901,
+        "repo_stars": 1905,
         "repo_topics": [
           "emoji",
           "regex",
@@ -116,7 +117,7 @@
         "repo_last_release": "2024-08-29",
         "repo_license": "MIT",
         "repo_owner": "lukeed",
-        "repo_stars": 156,
+        "repo_stars": 155,
         "repo_url": "https://github.com/lukeed/escalade",
         "version": "3.2.0"
       }
@@ -153,13 +154,13 @@
         "repo_archived": false,
         "repo_description": "Determine the East Asian Width of a Unicode character",
         "repo_language": "JavaScript",
-        "repo_last_commit": "2026-02-18",
-        "repo_last_release": "2026-02-18",
+        "repo_last_commit": "2026-05-08",
+        "repo_last_release": "2026-05-08",
         "repo_license": "MIT",
         "repo_owner": "sindresorhus",
-        "repo_stars": 46,
+        "repo_stars": 49,
         "repo_url": "https://github.com/sindresorhus/get-east-asian-width",
-        "version": "1.5.0"
+        "version": "1.6.0"
       }
     },
     {
@@ -174,11 +175,11 @@
         "repo_archived": false,
         "repo_description": "Get the visual width of a string - the number of columns required to display it",
         "repo_language": "JavaScript",
-        "repo_last_commit": "2026-02-18",
-        "repo_last_release": "2026-02-18",
+        "repo_last_commit": "2026-04-27",
+        "repo_last_release": "2026-04-27",
         "repo_license": "MIT",
         "repo_owner": "sindresorhus",
-        "repo_stars": 521,
+        "repo_stars": 524,
         "repo_url": "https://github.com/sindresorhus/string-width",
         "version": "7.2.0"
       }
@@ -199,7 +200,7 @@
         "repo_last_release": "2026-02-26",
         "repo_license": "MIT",
         "repo_owner": "chalk",
-        "repo_stars": 504,
+        "repo_stars": 503,
         "repo_url": "https://github.com/chalk/strip-ansi",
         "version": "7.2.0"
       }
@@ -220,7 +221,7 @@
         "repo_last_release": "2026-02-20",
         "repo_license": "MIT",
         "repo_owner": "chalk",
-        "repo_stars": 136,
+        "repo_stars": 135,
         "repo_url": "https://github.com/chalk/wrap-ansi",
         "version": "9.0.2"
       }
@@ -237,7 +238,7 @@
         "repo_archived": false,
         "repo_description": ":ledger: the bare-bones i18n library used by yargs",
         "repo_language": "JavaScript",
-        "repo_last_commit": "2026-02-25",
+        "repo_last_commit": "2026-03-31",
         "repo_last_release": "2021-04-07",
         "repo_license": "ISC",
         "repo_owner": "yargs",
@@ -257,11 +258,11 @@
         "repo_archived": false,
         "repo_description": " yargs the modern, pirate-themed successor to optimist.",
         "repo_language": "JavaScript",
-        "repo_last_commit": "2026-03-23",
+        "repo_last_commit": "2026-05-10",
         "repo_last_release": "2025-05-27",
         "repo_license": "MIT",
         "repo_owner": "yargs",
-        "repo_stars": 11465,
+        "repo_stars": 11483,
         "repo_url": "https://github.com/yargs/yargs",
         "version": "18.0.0"
       }
@@ -278,22 +279,17 @@
         "repo_archived": false,
         "repo_description": ":muscle: the mighty option parser used by yargs",
         "repo_language": "JavaScript",
-        "repo_last_commit": "2026-03-25",
+        "repo_last_commit": "2026-05-12",
         "repo_last_release": "2025-05-26",
         "repo_license": "ISC",
         "repo_owner": "yargs",
-        "repo_stars": 519,
+        "repo_stars": 517,
         "repo_url": "https://github.com/yargs/yargs-parser",
         "version": "22.0.0"
       }
     }
   ],
   "edges": [
-    {
-      "from": "strip-ansi",
-      "to": "ansi-regex",
-      "constraint": "^6.2.2"
-    },
     {
       "from": "yargs",
       "to": "cliui",
@@ -325,6 +321,21 @@
       "constraint": "^22.0.0"
     },
     {
+      "from": "string-width",
+      "to": "emoji-regex",
+      "constraint": "^10.3.0"
+    },
+    {
+      "from": "string-width",
+      "to": "get-east-asian-width",
+      "constraint": "^1.0.0"
+    },
+    {
+      "from": "string-width",
+      "to": "strip-ansi",
+      "constraint": "^7.1.0"
+    },
+    {
       "from": "cliui",
       "to": "string-width",
       "constraint": "^7.2.0"
@@ -340,19 +351,9 @@
       "constraint": "^9.0.0"
     },
     {
-      "from": "string-width",
-      "to": "emoji-regex",
-      "constraint": "^10.3.0"
-    },
-    {
-      "from": "string-width",
-      "to": "get-east-asian-width",
-      "constraint": "^1.0.0"
-    },
-    {
-      "from": "string-width",
-      "to": "strip-ansi",
-      "constraint": "^7.1.0"
+      "from": "strip-ansi",
+      "to": "ansi-regex",
+      "constraint": "^6.2.2"
     },
     {
       "from": "wrap-ansi",

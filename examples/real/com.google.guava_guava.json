@@ -2,6 +2,7 @@
   "meta": {
     "dependency_scope": "prod_only",
     "include_prerelease": false,
+    "language": "java",
     "runtime_source": "default",
     "runtime_version": "17"
   },
@@ -30,11 +31,11 @@
         "repo_archived": false,
         "repo_description": "Google core libraries for Java",
         "repo_language": "Java",
-        "repo_last_commit": "2026-03-23",
-        "repo_last_release": "2025-09-17",
+        "repo_last_commit": "2026-05-12",
+        "repo_last_release": "2026-04-14",
         "repo_license": "Apache-2.0",
         "repo_owner": "google",
-        "repo_stars": 51513,
+        "repo_stars": 51493,
         "repo_topics": [
           "guava",
           "java"
@@ -59,10 +60,10 @@
         "repo_archived": false,
         "repo_description": "A Java to iOS Objective-C translation tool and runtime.",
         "repo_language": "Java",
-        "repo_last_commit": "2026-03-27",
+        "repo_last_commit": "2026-05-12",
         "repo_license": "Apache-2.0",
         "repo_owner": "google",
-        "repo_stars": 6045,
+        "repo_stars": 6040,
         "repo_url": "https://github.com/google/j2objc",
         "version": "3.1"
       }
@@ -77,11 +78,11 @@
         "repo_archived": false,
         "repo_description": "An artifact of fully-specified annotations to power static-analysis checks, beginning with nullness analysis.",
         "repo_language": "Java",
-        "repo_last_commit": "2026-03-30",
+        "repo_last_commit": "2026-05-04",
         "repo_last_release": "2024-07-17",
         "repo_license": "Apache-2.0",
         "repo_owner": "jspecify",
-        "repo_stars": 1069,
+        "repo_stars": 1093,
         "repo_topics": [
           "java",
           "static-analysis",

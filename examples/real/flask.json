@@ -2,6 +2,7 @@
   "meta": {
     "dependency_scope": "prod_only",
     "include_prerelease": false,
+    "language": "python",
     "runtime_source": "default",
     "runtime_version": "3.11"
   },
@@ -21,7 +22,7 @@
         "repo_last_release": "2024-11-08",
         "repo_license": "MIT",
         "repo_owner": "pallets-eco",
-        "repo_stars": 2037,
+        "repo_stars": 2054,
         "repo_topics": [
           "blinker",
           "python",
@@ -41,11 +42,11 @@
         "repo_archived": false,
         "repo_description": "Python composable command line interface toolkit",
         "repo_language": "Python",
-        "repo_last_commit": "2026-03-15",
-        "repo_last_release": "2025-11-15",
+        "repo_last_commit": "2026-05-08",
+        "repo_last_release": "2026-04-22",
         "repo_license": "BSD-3-Clause",
         "repo_owner": "pallets",
-        "repo_stars": 17355,
+        "repo_stars": 17482,
         "repo_topics": [
           "python",
           "cli",
@@ -53,7 +54,7 @@
           "pallets"
         ],
         "repo_url": "https://github.com/pallets/click",
-        "version": "8.3.1"
+        "version": "8.3.3"
       }
     },
     {
@@ -69,7 +70,7 @@
         "repo_last_commit": "2025-07-09",
         "repo_license": "BSD-3-Clause",
         "repo_owner": "tartley",
-        "repo_stars": 3774,
+        "repo_stars": 3782,
         "repo_url": "https://github.com/tartley/colorama",
         "version": "0.4.6"
       }
@@ -77,9 +78,30 @@
     {
       "id": "flask",
       "license": "BSD-3-Clause",
+      "url": "https://github.com/pallets/flask",
       "meta": {
         "description": "A simple framework for building complex web applications.",
         "license": "BSD-3-Clause",
+        "name": "Flask",
+        "repo_archived": false,
+        "repo_description": "The Python micro framework for building web applications.",
+        "repo_language": "Python",
+        "repo_last_commit": "2026-05-02",
+        "repo_last_release": "2026-02-19",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "pallets",
+        "repo_stars": 71524,
+        "repo_topics": [
+          "python",
+          "flask",
+          "wsgi",
+          "web-framework",
+          "werkzeug",
+          "jinja",
+          "pallets"
+        ],
+        "repo_url": "https://github.com/pallets/flask",
+        "solver_id": "flask",
         "version": "3.1.3"
       }
     },
@@ -97,7 +119,7 @@
         "repo_last_release": "2024-04-16",
         "repo_license": "BSD-3-Clause",
         "repo_owner": "pallets",
-        "repo_stars": 3104,
+        "repo_stars": 3116,
         "repo_topics": [
           "python",
           "security",
@@ -112,33 +134,97 @@
     },
     {
       "id": "jinja2",
-      "license": "BSD License",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/pallets/jinja",
       "meta": {
         "description": "A very fast and expressive template engine.",
-        "license": "BSD License",
+        "license": "BSD-3-Clause",
+        "name": "Jinja2",
+        "repo_archived": false,
+        "repo_description": "A very fast and expressive template engine.",
+        "repo_language": "Python",
+        "repo_last_commit": "2025-06-14",
+        "repo_last_release": "2025-03-05",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "pallets",
+        "repo_stars": 11630,
+        "repo_topics": [
+          "python",
+          "template-engine",
+          "jinja",
+          "jinja2",
+          "templates",
+          "pallets"
+        ],
+        "repo_url": "https://github.com/pallets/jinja",
+        "solver_id": "jinja2",
         "version": "3.1.6"
       }
     },
     {
       "id": "markupsafe",
       "license": "BSD-3-Clause",
+      "url": "https://github.com/pallets/markupsafe",
       "meta": {
         "description": "Safely add untrusted strings to HTML/XML markup.",
         "license": "BSD-3-Clause",
+        "name": "MarkupSafe",
+        "repo_archived": false,
+        "repo_description": "Safely add untrusted strings to HTML/XML markup.",
+        "repo_language": "Python",
+        "repo_last_commit": "2025-09-27",
+        "repo_last_release": "2025-09-27",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "pallets",
+        "repo_stars": 689,
+        "repo_topics": [
+          "python",
+          "html",
+          "template-engine",
+          "html-escape",
+          "markupsafe",
+          "jinja",
+          "pallets"
+        ],
+        "repo_url": "https://github.com/pallets/markupsafe",
+        "solver_id": "markupsafe",
         "version": "3.0.3"
       }
     },
     {
       "id": "werkzeug",
       "license": "BSD-3-Clause",
+      "url": "https://github.com/pallets/werkzeug",
       "meta": {
         "description": "The comprehensive WSGI web application library.",
         "license": "BSD-3-Clause",
-        "version": "3.1.7"
+        "name": "Werkzeug",
+        "repo_archived": false,
+        "repo_description": "The comprehensive WSGI web application library.",
+        "repo_language": "Python",
+        "repo_last_commit": "2026-05-05",
+        "repo_last_release": "2026-04-02",
+        "repo_license": "BSD-3-Clause",
+        "repo_owner": "pallets",
+        "repo_stars": 6860,
+        "repo_topics": [
+          "python",
+          "wsgi",
+          "werkzeug",
+          "http",
+          "pallets"
+        ],
+        "repo_url": "https://github.com/pallets/werkzeug",
+        "solver_id": "werkzeug",
+        "version": "3.1.8"
       }
     }
   ],
   "edges": [
+    {
+      "from": "click",
+      "to": "colorama"
+    },
     {
       "from": "jinja2",
       "to": "markupsafe",
@@ -178,10 +264,6 @@
       "from": "flask",
       "to": "werkzeug",
       "constraint": "\u003e=3.1.0"
-    },
-    {
-      "from": "click",
-      "to": "colorama"
     }
   ]
 }

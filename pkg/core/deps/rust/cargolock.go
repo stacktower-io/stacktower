@@ -108,9 +108,9 @@ func buildCargoLockGraph(lock cargoLockFile, opts deps.Options) *dag.DAG {
 		name    string
 		version string
 	}
-	pkgKeys := make(map[string]bool)              // "name@version" dedup
-	nodeByKey := make(map[string]*nodeEntry)       // "name@version" -> entry
-	nameToKeys := make(map[string][]string)        // bare name -> list of "name@version" keys
+	pkgKeys := make(map[string]bool)         // "name@version" dedup
+	nodeByKey := make(map[string]*nodeEntry) // "name@version" -> entry
+	nameToKeys := make(map[string][]string)  // bare name -> list of "name@version" keys
 
 	for _, pkg := range lock.Packages {
 		key := pkg.Name + "@" + pkg.Version

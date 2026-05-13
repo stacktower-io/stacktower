@@ -278,7 +278,8 @@ func (c *Client) ListVersionsWithConstraints(ctx context.Context, pkg string, re
 func latestStable(versions []p2Version) p2Version {
 	for _, v := range versions {
 		lv := strings.ToLower(v.Version)
-		if strings.Contains(lv, "dev") {
+		if strings.Contains(lv, "dev") || strings.Contains(lv, "alpha") ||
+			strings.Contains(lv, "beta") || strings.Contains(lv, "rc") {
 			continue
 		}
 		if strings.Contains(strings.TrimPrefix(lv, "v"), ".") {

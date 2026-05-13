@@ -4,30 +4,30 @@ import "testing"
 
 func TestBuildAndParsePackageID(t *testing.T) {
 	tests := []struct {
-		name            string
-		inputName       string
-		inputVersion    string
-		inputCommit     string
-		wantID          string
-		wantName        string
-		wantVersion     string
-		wantCommit      string
+		name         string
+		inputName    string
+		inputVersion string
+		inputCommit  string
+		wantID       string
+		wantName     string
+		wantVersion  string
+		wantCommit   string
 	}{
 		{
-			name:        "simple package with version",
-			inputName:   "requests",
+			name:         "simple package with version",
+			inputName:    "requests",
 			inputVersion: "2.31.0",
-			wantID:      "requests@2.31.0",
-			wantName:    "requests",
-			wantVersion: "2.31.0",
+			wantID:       "requests@2.31.0",
+			wantName:     "requests",
+			wantVersion:  "2.31.0",
 		},
 		{
-			name:       "simple package with commit",
-			inputName:  "my-lib",
+			name:        "simple package with commit",
+			inputName:   "my-lib",
 			inputCommit: "abc1234",
-			wantID:     "my-lib@commit:abc1234",
-			wantName:   "my-lib",
-			wantCommit: "abc1234",
+			wantID:      "my-lib@commit:abc1234",
+			wantName:    "my-lib",
+			wantCommit:  "abc1234",
 		},
 		{
 			name:      "simple package name only",
@@ -36,12 +36,12 @@ func TestBuildAndParsePackageID(t *testing.T) {
 			wantName:  "requests",
 		},
 		{
-			name:        "scoped npm package with version",
-			inputName:   "@types/node",
+			name:         "scoped npm package with version",
+			inputName:    "@types/node",
 			inputVersion: "20.1.0",
-			wantID:      "@types/node@20.1.0",
-			wantName:    "@types/node",
-			wantVersion: "20.1.0",
+			wantID:       "@types/node@20.1.0",
+			wantName:     "@types/node",
+			wantVersion:  "20.1.0",
 		},
 		{
 			name:      "scoped npm package name only",
@@ -50,12 +50,12 @@ func TestBuildAndParsePackageID(t *testing.T) {
 			wantName:  "@types/node",
 		},
 		{
-			name:       "scoped npm package with commit",
-			inputName:  "@scope/pkg",
+			name:        "scoped npm package with commit",
+			inputName:   "@scope/pkg",
 			inputCommit: "deadbeef",
-			wantID:     "@scope/pkg@commit:deadbeef",
-			wantName:   "@scope/pkg",
-			wantCommit: "deadbeef",
+			wantID:      "@scope/pkg@commit:deadbeef",
+			wantName:    "@scope/pkg",
+			wantCommit:  "deadbeef",
 		},
 		{
 			name:   "empty name returns empty",

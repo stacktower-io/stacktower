@@ -219,8 +219,8 @@ func TestCargoCompatBucket(t *testing.T) {
 
 func TestCargoNamespacing(t *testing.T) {
 	tests := []struct {
-		name, bucket   string
-		wantNs         string
+		name, bucket         string
+		wantNs               string
 		wantReal, wantBucket string
 	}{
 		{"thiserror", "2", "thiserror/2", "thiserror", "2"},

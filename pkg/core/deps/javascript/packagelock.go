@@ -159,8 +159,8 @@ func buildFromPackages(lock packageLockFile, opts deps.Options) *dag.DAG {
 		version string
 		entry   packageLockEntry
 	}
-	nodes := make(map[string]*nodeInfo)     // nodeID -> info
-	nameToIDs := make(map[string][]string)  // package name -> list of node IDs
+	nodes := make(map[string]*nodeInfo)    // nodeID -> info
+	nameToIDs := make(map[string][]string) // package name -> list of node IDs
 
 	for _, entries := range byName {
 		// Deduplicate by version

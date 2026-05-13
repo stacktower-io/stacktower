@@ -257,13 +257,13 @@ func sparseIndexURL(crate string) string {
 }
 
 type indexEntry struct {
-	Name        string            `json:"name"`
-	Version     string            `json:"vers"`
-	Deps        []indexDep        `json:"deps"`
+	Name        string              `json:"name"`
+	Version     string              `json:"vers"`
+	Deps        []indexDep          `json:"deps"`
 	Features    map[string][]string `json:"features"` // feature name -> dep names or "dep/feature"
-	Yanked      bool              `json:"yanked"`
-	RustVersion string            `json:"rust_version"`
-	License     string            `json:"license"`
+	Yanked      bool                `json:"yanked"`
+	RustVersion string              `json:"rust_version"`
+	License     string              `json:"license"`
 }
 
 type indexDep struct {

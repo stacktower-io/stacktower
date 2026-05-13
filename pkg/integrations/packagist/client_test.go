@@ -255,6 +255,26 @@ func TestLatestStable(t *testing.T) {
 	if got.Version != "dev-main" {
 		t.Errorf("latestStable fallback = %s", got.Version)
 	}
+
+	versions = []p2Version{
+		{Version: "v8.1.0-BETA1"},
+		{Version: "v8.0.9"},
+		{Version: "v8.0.8"},
+	}
+	got = latestStable(versions)
+	if got.Version != "v8.0.9" {
+		t.Errorf("latestStable should skip beta, got %s", got.Version)
+	}
+
+	versions = []p2Version{
+		{Version: "v2.0.0-alpha1"},
+		{Version: "v2.0.0-RC1"},
+		{Version: "v1.9.0"},
+	}
+	got = latestStable(versions)
+	if got.Version != "v1.9.0" {
+		t.Errorf("latestStable should skip alpha/RC, got %s", got.Version)
+	}
 }
 
 func TestP2Version_UnmarshalJSON(t *testing.T) {

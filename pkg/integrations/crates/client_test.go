@@ -341,28 +341,17 @@ func isIndexPath(path, crate string) bool {
 	name := strings.ToLower(crate)
 	n := len(name)
 	var expected string
-	switch {
-	case n == 1:
+	switch n {
+	case 1:
 		expected = "/1/" + name
-	case n == 2:
+	case 2:
 		expected = "/2/" + name
-	case n == 3:
+	case 3:
 		expected = "/3/" + name[:1] + "/" + name
 	default:
 		expected = "/" + name[:2] + "/" + name[2:4] + "/" + name
 	}
 	return path == expected
-}
-
-func testClient(t *testing.T, serverURL string) *Client {
-	t.Helper()
-	headers := map[string]string{
-		"User-Agent": "stacktower/1.0 (https://github.com/stacktower-io/stacktower)",
-	}
-	return &Client{
-		Client:  integrations.NewClient(cache.NewNullCache(), "crates:", time.Hour, headers),
-		baseURL: serverURL,
-	}
 }
 
 func testClientWithIndex(t *testing.T, serverURL string) *Client {
@@ -374,23 +363,6 @@ func testClientWithIndex(t *testing.T, serverURL string) *Client {
 		Client:   integrations.NewClient(cache.NewNullCache(), "crates:", time.Hour, headers),
 		baseURL:  serverURL,
 		indexURL: serverURL,
-	}
-}
-
-func testCachedClient(t *testing.T, serverURL string) *Client {
-	t.Helper()
-	backend, err := cache.NewFileCache(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewFileCache failed: %v", err)
-	}
-	t.Cleanup(func() { _ = backend.Close() })
-
-	headers := map[string]string{
-		"User-Agent": "stacktower/1.0 (https://github.com/stacktower-io/stacktower)",
-	}
-	return &Client{
-		Client:  integrations.NewClient(backend, "crates:", time.Hour, headers),
-		baseURL: serverURL,
 	}
 }
 

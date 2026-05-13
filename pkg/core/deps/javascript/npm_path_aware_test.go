@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stacktower-io/stacktower/pkg/core/dag"
 	"github.com/stacktower-io/stacktower/pkg/core/deps"
 )
 
@@ -150,13 +149,4 @@ func TestNPMResolverDeduplicatesCompatibleVersions(t *testing.T) {
 	if _, ok := g.Node("lodash@4.17.21"); ok {
 		t.Error("expected bare 'lodash', not 'lodash@4.17.21'")
 	}
-}
-
-func hasEdge(g interface{ Edges() []dag.Edge }, from, to string) bool {
-	for _, e := range g.Edges() {
-		if e.From == from && e.To == to {
-			return true
-		}
-	}
-	return false
 }

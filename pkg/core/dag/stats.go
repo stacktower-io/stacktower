@@ -34,7 +34,7 @@ func ComputeStats(g *DAG) *GraphStats {
 
 	stats.DirectDeps = len(g.Children(root))
 
-	// BFS for max depth and total reachable non-synthetic nodes
+	// BFS for max depth (shortest path from root, cycle-safe)
 	depth := map[string]int{root: 0}
 	queue := []string{root}
 	for len(queue) > 0 {
@@ -45,9 +45,8 @@ func ComputeStats(g *DAG) *GraphStats {
 			stats.MaxDepth = d
 		}
 		for _, child := range g.Children(id) {
-			nd := d + 1
-			if prev, ok := depth[child]; !ok || nd > prev {
-				depth[child] = nd
+			if _, ok := depth[child]; !ok {
+				depth[child] = d + 1
 				queue = append(queue, child)
 			}
 		}

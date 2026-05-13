@@ -115,9 +115,9 @@ func (c *Client) fetchMetrics(ctx context.Context, owner, repo string, m *integr
 	// Fetch release and contributors in parallel (both are optional/best-effort).
 	// Results are collected in locals to avoid concurrent writes to m.
 	var (
-		wg            sync.WaitGroup
-		releaseAt     *time.Time
-		contributors  []integrations.Contributor
+		wg           sync.WaitGroup
+		releaseAt    *time.Time
+		contributors []integrations.Contributor
 	)
 	wg.Add(2)
 	go func() {
