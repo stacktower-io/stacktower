@@ -87,6 +87,22 @@ type cargoResolver struct {
 
 func (r *cargoResolver) Name() string { return "crates.io" }
 
+func (r *cargoResolver) Fetch(ctx context.Context, name string, refresh bool) (*deps.Package, error) {
+	return r.fetcher.Fetch(ctx, name, refresh)
+}
+
+func (r *cargoResolver) FetchVersion(ctx context.Context, name, version string, refresh bool) (*deps.Package, error) {
+	return r.fetcher.FetchVersion(ctx, name, version, refresh)
+}
+
+func (r *cargoResolver) ListVersions(ctx context.Context, name string, refresh bool) ([]string, error) {
+	return r.fetcher.ListVersions(ctx, name, refresh)
+}
+
+func (r *cargoResolver) ListVersionsWithConstraints(ctx context.Context, name string, refresh bool) (map[string]string, error) {
+	return r.fetcher.ListVersionsWithConstraints(ctx, name, refresh)
+}
+
 func (r *cargoResolver) Resolve(ctx context.Context, pkg string, opts deps.Options) (*dag.DAG, error) {
 	opts = opts.WithDefaults()
 	hooks := observability.ResolverFromContext(ctx)
