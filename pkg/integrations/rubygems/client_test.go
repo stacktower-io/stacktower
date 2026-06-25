@@ -168,23 +168,6 @@ func TestJoinLicenses(t *testing.T) {
 	}
 }
 
-func TestRubyVersionsEquivalent(t *testing.T) {
-	tests := []struct {
-		a, b string
-		want bool
-	}{
-		{"3.17.0.0", "3.17.0", true},
-		{"v3.17.0.0", "3.17.0", true},
-		{"3.17.0.5", "3.17.0", false},
-		{"1.2.3", "1.2.3", true},
-	}
-	for _, tt := range tests {
-		if got := rubyVersionsEquivalent(tt.a, tt.b); got != tt.want {
-			t.Fatalf("rubyVersionsEquivalent(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
-		}
-	}
-}
-
 func testClient(t *testing.T, serverURL string) *Client {
 	t.Helper()
 	return &Client{

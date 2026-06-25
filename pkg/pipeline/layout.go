@@ -37,12 +37,15 @@ func GenerateLayout(g *dag.DAG, opts Options) (graph.Layout, error) {
 // Note: Nebraska rankings are ALWAYS computed and stored, regardless of opts.Nebraska.
 // The opts.Nebraska flag only controls whether the ranking panel is rendered in the SVG.
 func generateTowerLayout(g *dag.DAG, opts Options) (graph.Layout, error) {
-	// Ensure graph has row assignments
+	// Ensure graph has consistent row assignments
 	workGraph := g
-	if g.MaxRow() == 0 && g.EdgeCount() > 0 {
+	if layout.NeedsLayering(g) {
 		workGraph = g.Clone()
 		layout.EnsureLayered(workGraph)
 	}
+
+	// Scale canvas for dense graphs when the user hasn't set explicit dimensions.
+	opts.AdaptForGraph(workGraph)
 
 	// Build layout options
 	var layoutOpts []layout.Option
@@ -53,12 +56,17 @@ func generateTowerLayout(g *dag.DAG, opts Options) (graph.Layout, error) {
 	// Compute base layout
 	l := layout.Build(workGraph, opts.Width, opts.Height, layoutOpts...)
 
+	// Record the crossing count before merge, which strips subdividers
+	// from RowOrders and would undercount crossings.
+	crossings := dag.CountCrossings(workGraph, l.RowOrders)
+
 	// Apply transforms
 	if opts.Merge {
 		l = transform.MergeSubdividers(l, workGraph)
 	}
 	if opts.Randomize {
-		l = transform.Randomize(l, workGraph, opts.Seed, nil)
+		rOpts := denseRandomizeOpts(workGraph)
+		l = transform.Randomize(l, workGraph, opts.Seed, rOpts)
 	}
 
 	// Set metadata
@@ -76,11 +84,7 @@ func generateTowerLayout(g *dag.DAG, opts Options) (graph.Layout, error) {
 		return exported, err
 	}
 
-	// Record the crossing count on the serialized layout so cache consumers
-	// and diff tooling can read it without re-running the ordering step.
-	if len(exported.Rows) > 0 && len(exported.Edges) > 0 {
-		exported.Crossings = dag.CountCrossings(workGraph, exported.Rows)
-	}
+	exported.Crossings = crossings
 
 	return exported, nil
 }
@@ -133,4 +137,20 @@ func exportNebraska(rankings []feature.NebraskaRanking) []graph.NebraskaRanking 
 		}
 	}
 	return result
+}
+
+// denseRandomizeOpts returns reduced randomization parameters for very large
+// graphs (200+ nodes after normalization), nil for everything else so the
+// defaults apply. Medium towers (50-200 nodes) get full randomization.
+func denseRandomizeOpts(g *dag.DAG) *transform.Options {
+	n := g.NodeCount()
+	if n < 200 {
+		return nil
+	}
+	return &transform.Options{
+		WidthShrink:   0.45,
+		MinBlockWidth: 20.0,
+		MinGap:        3.0,
+		MinOverlap:    6.0,
+	}
 }

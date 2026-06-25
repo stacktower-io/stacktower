@@ -5,6 +5,25 @@ import (
 	"strings"
 )
 
+// Shared patterns for lock file section detection, compiled once at package
+// init rather than on every DetectSections call.
+var (
+	// tomlPackageHeaderRE matches [[package]] sections (uv.lock, poetry.lock, Cargo.lock).
+	tomlPackageHeaderRE = regexp.MustCompile(`^\s*\[\[package\]\]`)
+	// lockNodeModulesRE matches npm v3 lockfile entries: "node_modules/pkg": {
+	lockNodeModulesRE = regexp.MustCompile(`^\s*"node_modules/[^"]+"\s*:\s*\{`)
+	// lockDependenciesKeyRE matches npm v1/v2 top-level "dependencies": {
+	lockDependenciesKeyRE = regexp.MustCompile(`^\s*"dependencies"\s*:\s*\{`)
+	// lockPackageEntryRE matches package entries inside a dependencies object.
+	lockPackageEntryRE = regexp.MustCompile(`^\s*"[^"]+"\s*:\s*\{`)
+	// yarnPackageHeaderRE matches yarn.lock package headers like "pkg@^1.0.0":
+	yarnPackageHeaderRE = regexp.MustCompile(`^"?[^"\s]+@[^"\s]+"?\s*[:,]?\s*$`)
+	// pnpm-lock.yaml patterns (v6+ packages/snapshots sections).
+	pnpmPackageEntryRE    = regexp.MustCompile(`^\s{2}[/'"]?[^:]+@[^:]+['":]`)
+	pnpmPackagesHeaderRE  = regexp.MustCompile(`^packages:`)
+	pnpmSnapshotsHeaderRE = regexp.MustCompile(`^snapshots:`)
+)
+
 // SourceRange identifies a section of a manifest file where dependencies are defined.
 // This is used to highlight the relevant sections in the frontend viewer.
 type SourceRange struct {
@@ -52,6 +71,20 @@ func (d *PyprojectDetector) Supports(filename string) bool {
 	return filename == "pyproject.toml"
 }
 
+// Patterns for pyproject.toml section detection, compiled once.
+var (
+	// tomlSectionHeaderRE matches section headers like [project] or [tool.poetry.dependencies]
+	tomlSectionHeaderRE = regexp.MustCompile(`^\s*\[([^\]]+)\]`)
+	// pep621DepsRE matches PEP 621 inline declarations: dependencies = [...]
+	pep621DepsRE = regexp.MustCompile(`^\s*dependencies\s*=\s*\[`)
+	// optionalDepsEntryRE matches named arrays inside [project.optional-dependencies]
+	optionalDepsEntryRE = regexp.MustCompile(`^\s*([a-zA-Z][-a-zA-Z0-9._]*)\s*=\s*\[`)
+	// flitRequiresRE matches Flit declarations: requires = [...]
+	flitRequiresRE = regexp.MustCompile(`^\s*requires\s*=\s*\[`)
+	// tripleQuoteRE matches TOML multi-line string delimiters
+	tripleQuoteRE = regexp.MustCompile(`'''|"""`)
+)
+
 func (d *PyprojectDetector) DetectSections(content string) []SourceRange {
 	var ranges []SourceRange
 	lines := strings.Split(content, "\n")
@@ -66,19 +99,7 @@ func (d *PyprojectDetector) DetectSections(content string) []SourceRange {
 	inMultiLineString := false
 	multiLineStringDelim := ""
 
-	// Patterns for section headers
-	sectionHeaderRE := regexp.MustCompile(`^\s*\[([^\]]+)\]`)
-
-	// Patterns for inline dependency declarations
-	// PEP 621: dependencies = [...]
-	pep621DepsRE := regexp.MustCompile(`^\s*dependencies\s*=\s*\[`)
-	// PEP 621 optional-dependencies: key = [...] inside [project.optional-dependencies]
-	optionalDepsEntryRE := regexp.MustCompile(`^\s*([a-zA-Z][-a-zA-Z0-9._]*)\s*=\s*\[`)
-	// Flit: requires = [...]
-	flitRequiresRE := regexp.MustCompile(`^\s*requires\s*=\s*\[`)
-
-	// Triple-quote patterns for TOML multi-line strings
-	tripleQuoteRE := regexp.MustCompile(`'''|"""`)
+	sectionHeaderRE := tomlSectionHeaderRE
 
 	currentTableSection := ""
 
@@ -315,12 +336,14 @@ func (d *PackageJSONDetector) Supports(filename string) bool {
 	return filename == "package.json"
 }
 
+// packageJSONDepsRE matches "dependencies": { ... } and related sections.
+var packageJSONDepsRE = regexp.MustCompile(`^\s*"(dependencies|devDependencies|peerDependencies|optionalDependencies)"\s*:\s*\{`)
+
 func (d *PackageJSONDetector) DetectSections(content string) []SourceRange {
 	var ranges []SourceRange
 	lines := strings.Split(content, "\n")
 
-	// Look for "dependencies": { ... } and "devDependencies": { ... }
-	depsRE := regexp.MustCompile(`^\s*"(dependencies|devDependencies|peerDependencies|optionalDependencies)"\s*:\s*\{`)
+	depsRE := packageJSONDepsRE
 
 	bracketDepth := 0
 	var currentSection string
@@ -403,13 +426,18 @@ func (d *GoModDetector) Supports(filename string) bool {
 	return filename == "go.mod"
 }
 
+// Patterns for go.mod require blocks and single require statements.
+var (
+	goModRequireBlockRE  = regexp.MustCompile(`^\s*require\s*\(`)
+	goModRequireSingleRE = regexp.MustCompile(`^\s*require\s+[^\(]`)
+)
+
 func (d *GoModDetector) DetectSections(content string) []SourceRange {
 	var ranges []SourceRange
 	lines := strings.Split(content, "\n")
 
-	// Look for require ( ... ) blocks and single require statements
-	requireBlockRE := regexp.MustCompile(`^\s*require\s*\(`)
-	requireSingleRE := regexp.MustCompile(`^\s*require\s+[^\(]`)
+	requireBlockRE := goModRequireBlockRE
+	requireSingleRE := goModRequireSingleRE
 
 	inBlock := false
 	var startLine int
@@ -458,7 +486,7 @@ func (d *CargoDetector) DetectSections(content string) []SourceRange {
 	var ranges []SourceRange
 	lines := strings.Split(content, "\n")
 
-	sectionHeaderRE := regexp.MustCompile(`^\s*\[([^\]]+)\]`)
+	sectionHeaderRE := tomlSectionHeaderRE
 
 	var currentSection string
 	var startLine int
@@ -518,16 +546,22 @@ func (d *GemfileDetector) Supports(filename string) bool {
 	return filename == "Gemfile"
 }
 
+// Patterns for Gemfile gem statements and group blocks.
+var (
+	gemfileGemRE = regexp.MustCompile(`^\s*gem\s+['"]`)
+	// gemfileGroupRE matches group :name or group :name, :other, ... do
+	gemfileGroupRE = regexp.MustCompile(`^\s*group\s+(.+?)\s+do`)
+	// gemfileSymbolRE matches symbol names like :development, :test
+	gemfileSymbolRE = regexp.MustCompile(`:([a-zA-Z_][a-zA-Z0-9_]*)`)
+)
+
 func (d *GemfileDetector) DetectSections(content string) []SourceRange {
 	var ranges []SourceRange
 	lines := strings.Split(content, "\n")
 
-	// Look for gem 'name' statements and group blocks
-	gemRE := regexp.MustCompile(`^\s*gem\s+['"]`)
-	// Match group :name or group :name, :other, ... do
-	groupRE := regexp.MustCompile(`^\s*group\s+(.+?)\s+do`)
-	// Match symbol names like :development, :test
-	symbolRE := regexp.MustCompile(`:([a-zA-Z_][a-zA-Z0-9_]*)`)
+	gemRE := gemfileGemRE
+	groupRE := gemfileGroupRE
+	symbolRE := gemfileSymbolRE
 
 	inGroup := false
 	var groupStart int
@@ -578,12 +612,14 @@ func (d *ComposerDetector) Supports(filename string) bool {
 	return filename == "composer.json"
 }
 
+// composerDepsRE matches "require": { ... } and "require-dev": { ... }.
+var composerDepsRE = regexp.MustCompile(`^\s*"(require|require-dev)"\s*:\s*\{`)
+
 func (d *ComposerDetector) DetectSections(content string) []SourceRange {
 	var ranges []SourceRange
 	lines := strings.Split(content, "\n")
 
-	// Look for "require": { ... } and "require-dev": { ... }
-	depsRE := regexp.MustCompile(`^\s*"(require|require-dev)"\s*:\s*\{`)
+	depsRE := composerDepsRE
 
 	bracketDepth := 0
 	var currentSection string
@@ -640,12 +676,14 @@ func (d *RequirementsDetector) Supports(filename string) bool {
 		strings.HasPrefix(filename, "requirements") && strings.HasSuffix(filename, ".txt")
 }
 
+// requirementsDepRE matches dependency lines (not comments or blank).
+var requirementsDepRE = regexp.MustCompile(`^\s*[a-zA-Z][-a-zA-Z0-9._]*`)
+
 func (d *RequirementsDetector) DetectSections(content string) []SourceRange {
 	var ranges []SourceRange
 	lines := strings.Split(content, "\n")
 
-	// Match dependency lines (not comments or blank)
-	depRE := regexp.MustCompile(`^\s*[a-zA-Z][-a-zA-Z0-9._]*`)
+	depRE := requirementsDepRE
 
 	var startLine, endLine int
 	inRange := false
@@ -713,7 +751,7 @@ func (d *UvLockDetector) DetectSections(content string) []SourceRange {
 	lines := strings.Split(content, "\n")
 
 	// uv.lock uses [[package]] sections for each dependency
-	packageHeaderRE := regexp.MustCompile(`^\s*\[\[package\]\]`)
+	packageHeaderRE := tomlPackageHeaderRE
 
 	var startLine int
 	inPackage := false
@@ -763,7 +801,7 @@ func (d *PoetryLockDetector) DetectSections(content string) []SourceRange {
 	lines := strings.Split(content, "\n")
 
 	// poetry.lock uses [[package]] sections for each dependency
-	packageHeaderRE := regexp.MustCompile(`^\s*\[\[package\]\]`)
+	packageHeaderRE := tomlPackageHeaderRE
 
 	var startLine int
 	inPackage := false
@@ -814,10 +852,10 @@ func (d *PackageLockJSONDetector) DetectSections(content string) []SourceRange {
 
 	// npm v3 format: "node_modules/packagename": { ... }
 	// npm v2/v1 format: dependencies object with "packagename": { ... }
-	nodeModulesRE := regexp.MustCompile(`^\s*"node_modules/[^"]+"\s*:\s*\{`)
+	nodeModulesRE := lockNodeModulesRE
 	// For npm v1/v2, look for top-level "dependencies": { and entries inside
-	dependenciesKeyRE := regexp.MustCompile(`^\s*"dependencies"\s*:\s*\{`)
-	packageEntryRE := regexp.MustCompile(`^\s*"[^"]+"\s*:\s*\{`)
+	dependenciesKeyRE := lockDependenciesKeyRE
+	packageEntryRE := lockPackageEntryRE
 
 	var startLine int
 	braceDepth := 0
@@ -930,7 +968,7 @@ func (d *CargoLockDetector) DetectSections(content string) []SourceRange {
 	lines := strings.Split(content, "\n")
 
 	// Cargo.lock uses [[package]] sections for each dependency
-	packageHeaderRE := regexp.MustCompile(`^\s*\[\[package\]\]`)
+	packageHeaderRE := tomlPackageHeaderRE
 
 	var startLine int
 	inPackage := false
@@ -983,7 +1021,7 @@ func (d *YarnLockDetector) DetectSections(content string) []SourceRange {
 	//   resolved "..."
 	//   ...
 	// Or yarn v1: packagename@version:
-	packageHeaderRE := regexp.MustCompile(`^"?[^"\s]+@[^"\s]+"?\s*[:,]?\s*$`)
+	packageHeaderRE := yarnPackageHeaderRE
 
 	var startLine int
 	inPackage := false
@@ -1052,9 +1090,9 @@ func (d *PnpmLockDetector) DetectSections(content string) []SourceRange {
 	//   /packagename@version:
 	//     ...
 	// Or snapshots section with similar entries
-	packageEntryRE := regexp.MustCompile(`^\s{2}[/'"]?[^:]+@[^:]+['":]`)
-	packagesHeaderRE := regexp.MustCompile(`^packages:`)
-	snapshotsHeaderRE := regexp.MustCompile(`^snapshots:`)
+	packageEntryRE := pnpmPackageEntryRE
+	packagesHeaderRE := pnpmPackagesHeaderRE
+	snapshotsHeaderRE := pnpmSnapshotsHeaderRE
 
 	var startLine int
 	inPackages := false

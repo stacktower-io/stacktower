@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -33,15 +34,27 @@ func NewFileStore(baseDir string) (*FileStore, error) {
 	return &FileStore{baseDir: baseDir}, nil
 }
 
-func (s *FileStore) sessionPath(sessionID string) string {
-	return filepath.Join(s.baseDir, sessionID+".json")
+// validSessionID matches the characters produced by GenerateID
+// (base64 URL encoding) plus simple human-chosen IDs like "github".
+// Anything else — path separators, dots, etc. — is rejected so a
+// caller-supplied ID can never escape the session directory.
+var validSessionID = regexp.MustCompile(`^[A-Za-z0-9_=-]+$`)
+
+func (s *FileStore) sessionPath(sessionID string) (string, error) {
+	if !validSessionID.MatchString(sessionID) {
+		return "", fmt.Errorf("invalid session ID %q", sessionID)
+	}
+	return filepath.Join(s.baseDir, sessionID+".json"), nil
 }
 
 func (s *FileStore) Get(ctx context.Context, sessionID string) (*Session, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	path := s.sessionPath(sessionID)
+	path, err := s.sessionPath(sessionID)
+	if err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -57,7 +70,7 @@ func (s *FileStore) Get(ctx context.Context, sessionID string) (*Session, error)
 
 	if sess.IsExpired() {
 		os.Remove(path)
-		return nil, nil
+		return nil, ErrExpired
 	}
 	return &sess, nil
 }
@@ -66,14 +79,51 @@ func (s *FileStore) Set(ctx context.Context, sess *Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	path, err := s.sessionPath(sess.ID)
+	if err != nil {
+		return err
+	}
+
 	data, err := json.MarshalIndent(sess, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal session: %w", err)
 	}
 
-	path := s.sessionPath(sess.ID)
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	// Atomic write (temp + rename) so a crash or concurrent reader never
+	// observes a torn session file containing a partial access token.
+	if err := writeFileAtomic(path, data, 0600); err != nil {
 		return fmt.Errorf("write session file: %w", err)
+	}
+	return nil
+}
+
+// writeFileAtomic writes data to a unique temp file in the same directory and
+// renames it over path.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
 	}
 	return nil
 }
@@ -82,7 +132,10 @@ func (s *FileStore) Delete(ctx context.Context, sessionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	path := s.sessionPath(sessionID)
+	path, err := s.sessionPath(sessionID)
+	if err != nil {
+		return err
+	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove session file: %w", err)
 	}
@@ -167,5 +220,7 @@ func (c *CLIStore) DeleteSession(ctx context.Context) error {
 
 // Path returns the session file path.
 func (c *CLIStore) Path() string {
-	return c.store.sessionPath(c.sessionID)
+	// The fixed CLI session ID always passes validation.
+	path, _ := c.store.sessionPath(c.sessionID)
+	return path
 }

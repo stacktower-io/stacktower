@@ -3,6 +3,7 @@ package crates
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -333,6 +334,32 @@ func TestClient_LicenseFallbackToVersion(t *testing.T) {
 	}
 	if info.License != "MIT OR Apache-2.0" {
 		t.Errorf("expected license 'MIT OR Apache-2.0' from index fallback, got %q", info.License)
+	}
+}
+
+func TestClient_FetchCrate_AllYanked_NotFound(t *testing.T) {
+	indexData := makeIndexNDJSON(
+		indexEntry{Name: "ghost", Version: "0.1.0", Yanked: true},
+		indexEntry{Name: "ghost", Version: "0.2.0", Yanked: true},
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isIndexPath(r.URL.Path, "ghost") {
+			fmt.Fprint(w, indexData)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := testClientWithIndex(t, server.URL)
+
+	_, err := c.FetchCrate(context.Background(), "ghost", true)
+	if err == nil {
+		t.Fatal("expected error when all versions are yanked")
+	}
+	if !errors.Is(err, integrations.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
 

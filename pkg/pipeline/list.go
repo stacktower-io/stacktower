@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/stacktower-io/stacktower/pkg/cache"
 	"github.com/stacktower-io/stacktower/pkg/core/deps"
@@ -163,35 +162,26 @@ func fetchRuntimeConstraints(ctx context.Context, resolver deps.Resolver, pkg st
 	return fetchRuntimeConstraintsIndividual(ctx, fetcher, pkg, versions, refresh), nil
 }
 
-// fetchRuntimeConstraintsIndividual fetches constraints one at a time with concurrency limiting.
+// fetchRuntimeConstraintsIndividual fetches constraints per version with
+// bounded concurrency; cancellation stops scheduling further fetches.
 func fetchRuntimeConstraintsIndividual(ctx context.Context, fetcher deps.Fetcher, pkg string, versions []string, refresh bool) map[string]string {
-	constraints := make(map[string]string)
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-
-	sem := make(chan struct{}, 10)
-
-	for _, v := range versions {
-		wg.Add(1)
-		go func(version string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			info, err := fetcher.FetchVersion(ctx, pkg, version, refresh)
-			if err != nil {
-				return
-			}
-
-			if info.RuntimeConstraint != "" {
-				mu.Lock()
-				constraints[version] = info.RuntimeConstraint
-				mu.Unlock()
-			}
-		}(v)
+	results, err := deps.ParallelMapOrdered(ctx, 10, versions, func(ctx context.Context, version string) string {
+		info, err := fetcher.FetchVersion(ctx, pkg, version, refresh)
+		if err != nil {
+			return ""
+		}
+		return info.RuntimeConstraint
+	})
+	if err != nil {
+		return map[string]string{}
 	}
 
-	wg.Wait()
+	constraints := make(map[string]string)
+	for i, c := range results {
+		if c != "" {
+			constraints[versions[i]] = c
+		}
+	}
 	return constraints
 }
 

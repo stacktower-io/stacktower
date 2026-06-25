@@ -76,8 +76,9 @@ func TestSPDXID(t *testing.T) {
 		want  string
 	}{
 		{"flask", "SPDXRef-flask"},
-		{"@angular/core", "SPDXRef--angular-core"},
+		{"@angular/core", "SPDXRef-npm-angular-core"},
 		{"golang.org/x/sync", "SPDXRef-golang.org-x-sync"},
+		{"weird__name", "SPDXRef-weird-name"},
 	}
 	for _, tt := range tests {
 		got := spdxID(tt.input)

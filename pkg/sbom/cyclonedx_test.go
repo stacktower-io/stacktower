@@ -123,6 +123,76 @@ func TestGenerateCycloneDX_WithVulns(t *testing.T) {
 	}
 }
 
+func TestGenerateCycloneDX_VulnDetails(t *testing.T) {
+	g := buildTestGraph()
+	report := &security.Report{
+		Findings: []security.Finding{
+			{
+				ID:         "GHSA-1234",
+				Aliases:    []string{"CVE-2024-0001"},
+				Package:    "werkzeug",
+				Version:    "3.1.0",
+				Summary:    "debug console RCE",
+				Severity:   security.SeverityHigh,
+				References: []string{"https://example.com/advisory"},
+			},
+		},
+	}
+
+	data, err := GenerateCycloneDX(g, Options{Language: "python", VulnReport: report})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var bom map[string]any
+	if err := json.Unmarshal(data, &bom); err != nil {
+		t.Fatal(err)
+	}
+
+	vulns := bom["vulnerabilities"].([]any)
+	v := vulns[0].(map[string]any)
+	if v["id"] != "GHSA-1234" {
+		t.Errorf("id = %v, want GHSA-1234", v["id"])
+	}
+	if v["description"] != "debug console RCE" {
+		t.Errorf("description = %v", v["description"])
+	}
+	refs, _ := v["references"].([]any)
+	if len(refs) != 1 || refs[0].(map[string]any)["id"] != "CVE-2024-0001" {
+		t.Errorf("references = %v", v["references"])
+	}
+	advisories, _ := v["advisories"].([]any)
+	if len(advisories) != 1 || advisories[0].(map[string]any)["url"] != "https://example.com/advisory" {
+		t.Errorf("advisories = %v", v["advisories"])
+	}
+}
+
+func TestGenerateCycloneDX_NoSyntheticVulnFallback(t *testing.T) {
+	g := buildTestGraph()
+	// Annotate a node with severity only — without a stored report, no
+	// vulnerabilities section should be emitted (no fake vuln-<pkg> IDs).
+	for _, n := range g.Nodes() {
+		if n.ID == "werkzeug" {
+			n.Meta[security.MetaVulnSeverity] = "high"
+		}
+	}
+
+	data, err := GenerateCycloneDX(g, Options{Language: "python"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var bom map[string]any
+	if err := json.Unmarshal(data, &bom); err != nil {
+		t.Fatal(err)
+	}
+	if vulns, present := bom["vulnerabilities"]; present {
+		if list, ok := vulns.([]any); ok && len(list) > 0 {
+			t.Errorf("expected no synthetic vulnerabilities, got %v", vulns)
+		}
+	}
+}
+
 func TestGenerateCycloneDX_LanguageFromMeta(t *testing.T) {
 	g := buildTestGraph() // has language=python in meta
 	data, err := GenerateCycloneDX(g, Options{})

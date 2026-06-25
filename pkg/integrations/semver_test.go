@@ -19,6 +19,12 @@ func TestParseSemver(t *testing.T) {
 		{"1.2.3+build", SemanticVersion{Original: "1.2.3+build", Major: 1, Minor: 2, Patch: 3, Build: "build", Valid: true}},
 		{"1.2.3-rc.1+build", SemanticVersion{Original: "1.2.3-rc.1+build", Major: 1, Minor: 2, Patch: 3, Prerelease: "rc.1", Build: "build", Valid: true}},
 		{"invalid", SemanticVersion{Original: "invalid", Valid: false}},
+		// Hyphenated prerelease identifiers (valid per semver spec)
+		{"1.2.3-alpha-1", SemanticVersion{Original: "1.2.3-alpha-1", Major: 1, Minor: 2, Patch: 3, Prerelease: "alpha-1", Valid: true}},
+		{"1.2.3+build-77", SemanticVersion{Original: "1.2.3+build-77", Major: 1, Minor: 2, Patch: 3, Build: "build-77", Valid: true}},
+		// Go pseudo-versions
+		{"v0.0.0-20230101120000-abcdef123456", SemanticVersion{Original: "v0.0.0-20230101120000-abcdef123456", Major: 0, Minor: 0, Patch: 0, Prerelease: "20230101120000-abcdef123456", Valid: true, Pseudo: true}},
+		{"v1.2.4-0.20230101120000-abcdef123456", SemanticVersion{Original: "v1.2.4-0.20230101120000-abcdef123456", Major: 1, Minor: 2, Patch: 4, Prerelease: "0.20230101120000-abcdef123456", Valid: true, Pseudo: true}},
 	}
 
 	for _, tt := range tests {
@@ -27,7 +33,7 @@ func TestParseSemver(t *testing.T) {
 			if got.Original != tt.want.Original || got.Major != tt.want.Major ||
 				got.Minor != tt.want.Minor || got.Patch != tt.want.Patch ||
 				got.Prerelease != tt.want.Prerelease || got.Build != tt.want.Build ||
-				got.Valid != tt.want.Valid {
+				got.Valid != tt.want.Valid || got.Pseudo != tt.want.Pseudo {
 				t.Errorf("ParseSemver(%q) = %+v, want %+v", tt.input, got, tt.want)
 			}
 		})
@@ -62,6 +68,11 @@ func TestSemanticVersionCompare(t *testing.T) {
 		// Invalid versions
 		{"invalid", "1.0.0", 1},  // invalid sorts to end
 		{"1.0.0", "invalid", -1}, // valid before invalid
+
+		// Go pseudo-versions sort below the tagged release they precede
+		{"v1.2.4-0.20230101120000-abcdef123456", "v1.2.4", -1},
+		{"v1.2.4-0.20230101120000-abcdef123456", "v1.2.3", 1},
+		{"v0.0.0-20230101120000-abcdef123456", "v0.1.0", -1},
 	}
 
 	for _, tt := range tests {

@@ -86,6 +86,7 @@ type statsVulnsJSON struct {
 	High     int                 `json:"high"`
 	Medium   int                 `json:"medium"`
 	Low      int                 `json:"low"`
+	Unknown  int                 `json:"unknown,omitempty"`
 	Affected []statsAffectedJSON `json:"affected"`
 }
 
@@ -228,6 +229,7 @@ func writeStatsJSON(w io.Writer, r ui.StatsReport) error {
 			High:     r.VulnHigh,
 			Medium:   r.VulnMedium,
 			Low:      r.VulnLow,
+			Unknown:  r.VulnUnknown,
 			Affected: affected,
 		}
 	}
@@ -328,6 +330,10 @@ func collectVulnData(g *dag.DAG, root string, r *ui.StatsReport) {
 			r.VulnMedium++
 		case security.SeverityLow:
 			r.VulnLow++
+		default:
+			// Anything else (including explicit "unknown") still counts so
+			// totals match the affected-package list.
+			r.VulnUnknown++
 		}
 
 		r.VulnAffected = append(r.VulnAffected, ui.VulnAffectedPkg{

@@ -1,6 +1,7 @@
 package layout
 
 import (
+	"log/slog"
 	"slices"
 	"time"
 
@@ -84,11 +85,19 @@ func WithTopDownWidths() Option {
 	return func(c *config) { c.topDownFlow = true }
 }
 
-// EnsureLayered ensures the graph has row assignments for tower layout.
-// If the graph has no rows assigned (MaxRow == 0), this assigns layers.
+// NeedsLayering reports whether the graph requires (re-)layering before a
+// tower layout can be computed. This catches both unlayered graphs (all rows
+// zero) and graphs with stale or inconsistent row metadata, e.g. loaded from
+// a hand-edited graph.json.
+func NeedsLayering(g *dag.DAG) bool {
+	return g.EdgeCount() > 0 && !transform.IsLayered(g)
+}
+
+// EnsureLayered ensures the graph has consistent row assignments for tower
+// layout, re-running layer assignment when they are missing or stale.
 // This modifies the graph in place.
 func EnsureLayered(g *dag.DAG) {
-	if g.MaxRow() == 0 && g.EdgeCount() > 0 {
+	if NeedsLayering(g) {
 		transform.AssignLayers(g)
 	}
 }
@@ -97,10 +106,24 @@ func EnsureLayered(g *dag.DAG) {
 // width and height constraints. It applies row ordering, width computation,
 // and coordinate assignment.
 //
-// Build requires that the graph has row assignments. If the graph was loaded
-// from a file without normalization, call EnsureLayered first, or the caller
-// should handle layer assignment.
+// Build requires that the graph has been subdivided so every edge spans
+// exactly one row and every column reaches the bottom. Passing an
+// un-normalized graph (multi-row edges or mid-row sinks) will produce a
+// layout with zero-width blocks and incorrect crossing counts. Call
+// [transform.Normalize] or at minimum [EnsureLayered] + [transform.Subdivide]
+// before Build to satisfy these invariants.
 func Build(g *dag.DAG, width, height float64, opts ...Option) Layout {
+	if g.EdgeCount() > 0 {
+		for _, e := range g.EdgesIter() {
+			src, _ := g.Node(e.From)
+			dst, _ := g.Node(e.To)
+			if src != nil && dst != nil && dst.Row != src.Row+1 {
+				slog.Warn("layout.Build: graph has multi-row edges; results may be incorrect — call transform.Normalize first",
+					"from", e.From, "to", e.To, "fromRow", src.Row, "toRow", dst.Row)
+				break
+			}
+		}
+	}
 	cfg := config{
 		orderer:     defaultOrderer,
 		auxRatio:    defaultAuxRatio,
@@ -122,7 +145,7 @@ func Build(g *dag.DAG, width, height float64, opts ...Option) Layout {
 	}
 	heights := computeRowHeights(g, height-2*marginY, cfg.auxRatio)
 	bottoms := computeRowBottoms(heights)
-	blocks := assembleBlocks(g, orders, widths, heights, bottoms, marginX, marginY)
+	blocks := assembleBlocks(g, orders, widths, heights, bottoms, marginX, marginY, width-2*marginX)
 
 	return Layout{
 		FrameWidth:  width,
@@ -172,39 +195,85 @@ func computeRowBottoms(heights map[int]float64) map[int]float64 {
 		return nil
 	}
 
-	maxRow := 0
+	// Stack rows in ascending row order. Iterating the sorted keys (rather
+	// than 0..maxRow) guarantees every row with a height gets a bottom, even
+	// if row IDs don't start at 0 or have gaps — a missed assignment would
+	// silently place that row's blocks at y=0, overlapping other rows.
+	rows := make([]int, 0, len(heights))
 	for r := range heights {
-		maxRow = max(maxRow, r)
+		rows = append(rows, r)
 	}
+	slices.Sort(rows)
 
 	bottoms := make(map[int]float64, len(heights))
 	y := 0.0
-	for r := range maxRow + 1 {
-		if h, ok := heights[r]; ok {
-			bottoms[r] = y
-			y += h
-		}
+	for _, r := range rows {
+		bottoms[r] = y
+		y += heights[r]
 	}
 	return bottoms
 }
 
-func assembleBlocks(g *dag.DAG, orders map[int][]string, widths map[string]float64, heights, bottoms map[int]float64, marginX, marginY float64) map[string]Block {
+// assembleBlocks places blocks row by row from the bottom up. Within a row,
+// blocks are normally packed edge-to-edge in order, but members of vertical
+// subdivider chains (long-edge pipes and foundation pillars) are pinned to
+// the exact horizontal extent of their segment in the row below, so a column
+// keeps one width and one position across all of its rows instead of
+// wobbling with each row's independent packing. Flexible blocks between
+// pinned columns share the remaining span proportionally to their computed
+// widths, keeping every row a contiguous partition of the frame.
+func assembleBlocks(g *dag.DAG, orders map[int][]string, widths map[string]float64, heights, bottoms map[int]float64, marginX, marginY, innerWidth float64) map[string]Block {
+	rows := make([]int, 0, len(orders))
+	for r := range orders {
+		rows = append(rows, r)
+	}
+	slices.Sort(rows)
+
+	mates := chainMatesBelow(g)
 	blocks := make(map[string]Block, g.NodeCount())
-	for row, ids := range orders {
-		x := marginX
+	rightEdge := marginX + innerWidth
+
+	for i := len(rows) - 1; i >= 0; i-- {
+		row := rows[i]
+		ids := orders[row]
 		y := bottoms[row] + marginY
 		h := heights[row]
 
-		for _, id := range ids {
-			w := widths[id]
-			blocks[id] = Block{
-				NodeID: id,
-				Left:   x,
-				Right:  x + w,
-				Bottom: y,
-				Top:    y + h,
+		pins := selectPins(ids, mates, blocks, marginX, rightEdge)
+
+		cursor := marginX
+		prevIdx := -1
+		for p := 0; p <= len(pins); p++ {
+			segEnd := rightEdge
+			pinIdx := len(ids)
+			if p < len(pins) {
+				segEnd = pins[p].left
+				pinIdx = pins[p].idx
 			}
-			x += w
+
+			flex := ids[prevIdx+1 : pinIdx]
+			switch {
+			case len(flex) > 0:
+				placeFlexible(blocks, flex, widths, cursor, segEnd, y, h)
+			case segEnd > cursor+eps && p > 0:
+				// Nothing flexible fills this span: stretch the left
+				// flanking pinned column for this row only. The column gets
+				// a step here, which the merge pass treats as a boundary.
+				stretched := blocks[ids[pins[p-1].idx]]
+				stretched.Right = segEnd
+				blocks[ids[pins[p-1].idx]] = stretched
+			case segEnd > cursor+eps:
+				// Gap before the first pin with nothing to fill it: extend
+				// the pinned column to the left frame edge.
+				pins[p].left = cursor
+			}
+
+			if p < len(pins) {
+				id := ids[pinIdx]
+				blocks[id] = Block{NodeID: id, Left: pins[p].left, Right: pins[p].right, Bottom: y, Top: y + h}
+				cursor = pins[p].right
+				prevIdx = pinIdx
+			}
 		}
 	}
 	return blocks

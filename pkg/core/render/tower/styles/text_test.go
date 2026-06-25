@@ -141,7 +141,7 @@ func TestTruncateLabel(t *testing.T) {
 	}
 }
 
-func TestTruncateLabelEndsWithDots(t *testing.T) {
+func TestTruncateLabelContainsDots(t *testing.T) {
 	block := Block{
 		ID:    "this-is-a-very-very-long-package-name",
 		Label: "this-is-a-very-very-long-package-name",
@@ -151,12 +151,15 @@ func TestTruncateLabelEndsWithDots(t *testing.T) {
 
 	got := TruncateLabel(block, false)
 	if len(got) >= len(block.Label) {
-		// Label wasn't truncated, that's fine
 		return
 	}
 
-	if !strings.HasSuffix(got, "..") {
-		t.Errorf("TruncateLabel() = %q, truncated label should end with '..'", got)
+	if !strings.Contains(got, "..") {
+		t.Errorf("TruncateLabel() = %q, truncated label should contain '..'", got)
+	}
+	// Middle truncation preserves the end of the string.
+	if !strings.HasSuffix(got, block.Label[len(block.Label)-3:]) {
+		t.Errorf("TruncateLabel() = %q, expected to preserve the tail of the label", got)
 	}
 }
 
@@ -291,5 +294,24 @@ func TestFontSizeForEdgeCases(t *testing.T) {
 					tt.availWidth, tt.availH, tt.textLen, got, fontSizeMin, fontSizeMax)
 			}
 		})
+	}
+}
+
+func TestMiddleTruncate(t *testing.T) {
+	tests := []struct {
+		input    string
+		maxChars int
+		want     string
+	}{
+		{"micromark-extension-gfm", 15, "microm..ion-gfm"},
+		{"abcdefg", 6, "ab..fg"},
+		{"abcdefgh", 7, "ab..fgh"},
+		{"abcd", 3, "a.."},
+	}
+	for _, tt := range tests {
+		got := middleTruncate(tt.input, tt.maxChars)
+		if got != tt.want {
+			t.Errorf("middleTruncate(%q, %d) = %q, want %q", tt.input, tt.maxChars, got, tt.want)
+		}
 	}
 }

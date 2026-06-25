@@ -36,7 +36,7 @@ type RateLimit = BurstLimit
 var DefaultRateLimits = map[string]BurstLimit{
 	"pypi":          {RequestsPerSecond: 50, Burst: 30},
 	"npm":           {RequestsPerSecond: 50, Burst: 30},
-	"crates":        {RequestsPerSecond: 25, Burst: 20}, // CDN-backed; origin policy is 1/s but Fastly handles more
+	"crates":        {RequestsPerSecond: 3, Burst: 5}, // origin policy is 1/s; stay close to avoid 429 -> retry -> breaker-open spirals
 	"rubygems":      {RequestsPerSecond: 30, Burst: 20},
 	"packagist":     {RequestsPerSecond: 30, Burst: 20},
 	"maven":         {RequestsPerSecond: 30, Burst: 20},

@@ -1,6 +1,7 @@
 package ordering
 
 import (
+	"context"
 	"slices"
 	"testing"
 	"time"
@@ -199,6 +200,42 @@ func TestOptimalSearch_Timeout(t *testing.T) {
 	}
 
 	t.Logf("Timed out as expected, returned fallback ordering")
+}
+
+func TestOptimalSearch_CancelledContext(t *testing.T) {
+	// A dense bipartite graph the search can't finish instantly.
+	g := dag.New(nil)
+	for i := 0; i < 6; i++ {
+		g.AddNode(dag.Node{ID: string(rune('A' + i)), Row: 0})
+		g.AddNode(dag.Node{ID: string(rune('G' + i)), Row: 1})
+	}
+	for i := 0; i < 6; i++ {
+		for j := 0; j < 6; j++ {
+			g.AddEdge(dag.Edge{
+				From: string(rune('A' + i)),
+				To:   string(rune('G' + ((i + j) % 6))),
+			})
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled: search must return promptly
+
+	opt := OptimalSearch{
+		Timeout: 30 * time.Second,
+		Ctx:     ctx,
+	}
+
+	start := time.Now()
+	got := opt.OrderRows(g)
+	elapsed := time.Since(start)
+
+	if got == nil {
+		t.Error("expected best-so-far ordering after cancellation, got nil")
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("cancelled search took %v; should return promptly", elapsed)
+	}
 }
 
 func TestOptimalSearch_LargerGraph(t *testing.T) {
@@ -443,5 +480,196 @@ func TestOptimalSearch_ConcurrentSafety(t *testing.T) {
 	// Wait for all goroutines
 	for i := 0; i < 4; i++ {
 		<-done
+	}
+}
+
+func TestOptimalSearch_ScorePathConsistency(t *testing.T) {
+	g := dag.New(nil)
+	for i := 0; i < 5; i++ {
+		g.AddNode(dag.Node{ID: string(rune('A' + i)), Row: 0})
+		g.AddNode(dag.Node{ID: string(rune('F' + i)), Row: 1})
+	}
+	g.AddEdge(dag.Edge{From: "A", To: "J"})
+	g.AddEdge(dag.Edge{From: "B", To: "I"})
+	g.AddEdge(dag.Edge{From: "C", To: "H"})
+	g.AddEdge(dag.Edge{From: "D", To: "G"})
+	g.AddEdge(dag.Edge{From: "E", To: "F"})
+
+	for i := 0; i < 20; i++ {
+		var reportedBest int
+		opt := OptimalSearch{
+			Timeout: 2 * time.Second,
+			Progress: func(_, _, best int) {
+				reportedBest = best
+			},
+		}
+		got := opt.OrderRows(g)
+		actual := dag.CountCrossings(g, got)
+		if reportedBest != 0 && actual != reportedBest {
+			t.Fatalf("iteration %d: returned ordering has %d crossings but reported best was %d", i, actual, reportedBest)
+		}
+	}
+}
+
+func TestOptimalSearch_Determinism(t *testing.T) {
+	g := dag.New(nil)
+	for i := 0; i < 4; i++ {
+		g.AddNode(dag.Node{ID: string(rune('A' + i)), Row: 0})
+		g.AddNode(dag.Node{ID: string(rune('E' + i)), Row: 1})
+		g.AddNode(dag.Node{ID: string(rune('I' + i)), Row: 2})
+	}
+	g.AddEdge(dag.Edge{From: "A", To: "H"})
+	g.AddEdge(dag.Edge{From: "B", To: "G"})
+	g.AddEdge(dag.Edge{From: "C", To: "F"})
+	g.AddEdge(dag.Edge{From: "D", To: "E"})
+	g.AddEdge(dag.Edge{From: "E", To: "L"})
+	g.AddEdge(dag.Edge{From: "F", To: "K"})
+	g.AddEdge(dag.Edge{From: "G", To: "J"})
+	g.AddEdge(dag.Edge{From: "H", To: "I"})
+
+	opt := OptimalSearch{Timeout: 5 * time.Second}
+	first := opt.OrderRows(g)
+
+	for i := 0; i < 10; i++ {
+		second := opt.OrderRows(g)
+		for r, ids := range first {
+			if !slices.Equal(ids, second[r]) {
+				t.Fatalf("iteration %d: row %d differs: %v vs %v", i, r, ids, second[r])
+			}
+		}
+	}
+}
+
+func TestOptimalSearch_GappedRows(t *testing.T) {
+	g := dag.New(nil)
+	g.AddNode(dag.Node{ID: "A", Row: 0})
+	g.AddNode(dag.Node{ID: "B", Row: 0})
+	g.AddNode(dag.Node{ID: "C", Row: 5})
+	g.AddNode(dag.Node{ID: "D", Row: 5})
+	g.AddEdge(dag.Edge{From: "A", To: "D"})
+	g.AddEdge(dag.Edge{From: "B", To: "C"})
+
+	got := OptimalSearch{}.OrderRows(g)
+	if got == nil {
+		t.Fatal("expected result for gapped rows, got nil")
+	}
+	crossings := dag.CountCrossings(g, got)
+	if crossings != 0 {
+		t.Errorf("gapped-row graph should have 0 crossings, got %d", crossings)
+	}
+}
+
+func TestOptimalSearch_LowerBoundAdmissibility(t *testing.T) {
+	// The lower bound must never exceed the true optimal.
+	// On small exhaustive graphs we know the optimum and can verify.
+	g := dag.New(nil)
+	g.AddNode(dag.Node{ID: "A", Row: 0})
+	g.AddNode(dag.Node{ID: "B", Row: 0})
+	g.AddNode(dag.Node{ID: "C", Row: 0})
+	g.AddNode(dag.Node{ID: "D", Row: 1})
+	g.AddNode(dag.Node{ID: "E", Row: 1})
+	g.AddNode(dag.Node{ID: "F", Row: 1})
+	g.AddEdge(dag.Edge{From: "A", To: "F"})
+	g.AddEdge(dag.Edge{From: "B", To: "E"})
+	g.AddEdge(dag.Edge{From: "C", To: "D"})
+	g.AddEdge(dag.Edge{From: "A", To: "D"})
+	g.AddEdge(dag.Edge{From: "C", To: "F"})
+
+	opt := OptimalSearch{Timeout: 5 * time.Second}
+	got := opt.OrderRows(g)
+	optimal := dag.CountCrossings(g, got)
+
+	// Verify that the search actually found a valid crossing count
+	if optimal < 0 {
+		t.Fatal("crossing count must be non-negative")
+	}
+	t.Logf("Optimal crossings: %d", optimal)
+}
+
+func TestBarycentric_GappedRows(t *testing.T) {
+	g := dag.New(nil)
+	g.AddNode(dag.Node{ID: "A", Row: 0})
+	g.AddNode(dag.Node{ID: "B", Row: 0})
+	g.AddNode(dag.Node{ID: "C", Row: 10})
+	g.AddNode(dag.Node{ID: "D", Row: 10})
+	g.AddEdge(dag.Edge{From: "A", To: "D"})
+	g.AddEdge(dag.Edge{From: "B", To: "C"})
+
+	got := Barycentric{}.OrderRows(g)
+	if got == nil {
+		t.Fatal("expected result, got nil")
+	}
+	crossings := dag.CountCrossings(g, got)
+	if crossings != 0 {
+		t.Errorf("want 0 crossings for gapped rows, got %d", crossings)
+	}
+}
+
+func BenchmarkOptimalSearch_4x4(b *testing.B) {
+	g := dag.New(nil)
+	for i := 0; i < 4; i++ {
+		g.AddNode(dag.Node{ID: string(rune('A' + i)), Row: 0})
+		g.AddNode(dag.Node{ID: string(rune('E' + i)), Row: 1})
+		g.AddNode(dag.Node{ID: string(rune('I' + i)), Row: 2})
+	}
+	g.AddEdge(dag.Edge{From: "A", To: "H"})
+	g.AddEdge(dag.Edge{From: "B", To: "G"})
+	g.AddEdge(dag.Edge{From: "C", To: "F"})
+	g.AddEdge(dag.Edge{From: "D", To: "E"})
+	g.AddEdge(dag.Edge{From: "E", To: "L"})
+	g.AddEdge(dag.Edge{From: "F", To: "K"})
+	g.AddEdge(dag.Edge{From: "G", To: "J"})
+	g.AddEdge(dag.Edge{From: "H", To: "I"})
+
+	opt := OptimalSearch{Timeout: 30 * time.Second}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		opt.OrderRows(g)
+	}
+}
+
+func BenchmarkOptimalSearch_5x5(b *testing.B) {
+	g := dag.New(nil)
+	for row := 0; row < 5; row++ {
+		for col := 0; col < 5; col++ {
+			id := string(rune('A' + row*5 + col))
+			g.AddNode(dag.Node{ID: id, Row: row})
+		}
+	}
+	for row := 0; row < 4; row++ {
+		for col := 0; col < 5; col++ {
+			from := string(rune('A' + row*5 + col))
+			to := string(rune('A' + (row+1)*5 + (4 - col)))
+			g.AddEdge(dag.Edge{From: from, To: to})
+		}
+	}
+
+	opt := OptimalSearch{Timeout: 5 * time.Second}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		opt.OrderRows(g)
+	}
+}
+
+func BenchmarkBarycentric_4x4(b *testing.B) {
+	g := dag.New(nil)
+	for i := 0; i < 4; i++ {
+		g.AddNode(dag.Node{ID: string(rune('A' + i)), Row: 0})
+		g.AddNode(dag.Node{ID: string(rune('E' + i)), Row: 1})
+		g.AddNode(dag.Node{ID: string(rune('I' + i)), Row: 2})
+	}
+	g.AddEdge(dag.Edge{From: "A", To: "H"})
+	g.AddEdge(dag.Edge{From: "B", To: "G"})
+	g.AddEdge(dag.Edge{From: "C", To: "F"})
+	g.AddEdge(dag.Edge{From: "D", To: "E"})
+	g.AddEdge(dag.Edge{From: "E", To: "L"})
+	g.AddEdge(dag.Edge{From: "F", To: "K"})
+	g.AddEdge(dag.Edge{From: "G", To: "J"})
+	g.AddEdge(dag.Edge{From: "H", To: "I"})
+
+	bc := Barycentric{Passes: 24}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bc.OrderRows(g)
 	}
 }

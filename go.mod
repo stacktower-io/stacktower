@@ -14,6 +14,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/pflag v1.0.10
+	golang.org/x/mod v0.37.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/term v0.42.0
 	golang.org/x/time v0.14.0
@@ -42,7 +43,7 @@ require (
 	github.com/tetratelabs/wazero v1.10.1 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d // indirect
-	golang.org/x/image v0.39.0 // indirect
+	golang.org/x/image v0.41.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 )

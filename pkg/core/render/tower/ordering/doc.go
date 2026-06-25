@@ -32,16 +32,33 @@
 // guarantee. It's used both standalone and as the initial bound for optimal
 // search.
 //
-// # Optimal Search
+// # Optimized Search
 //
-// [OptimalSearch] uses branch-and-bound with PQ-tree pruning to find the
-// true minimum-crossing ordering. The key innovations:
+// [OptimalSearch] uses branch-and-bound with PQ-tree pruning and OSCM lower
+// bounds to minimize edge crossings. It is a constrained anytime search:
+// candidate permutations per row are capped, PQ-tree constraints restrict
+// the search space (Consecutive Ones Property), and a configurable timeout
+// stops the search gracefully. The result is the best ordering found, not
+// a proven global optimum.
+//
+// Key techniques:
 //
 //   - PQ-tree constraints: Children of the same parent should be adjacent;
 //     subdivider chains must stay together. This prunes invalid orderings.
+//     Constraints that fail to reduce are skipped individually (clone-and-skip)
+//     rather than discarding all pruning.
 //
 //   - Barycentric initialization: The heuristic provides a tight initial
 //     bound, enabling aggressive pruning from the start.
+//
+//   - Per-depth candidate caching: PQ-tree enumeration is precomputed once
+//     per row, removing it from the DFS hot path entirely.
+//
+//   - OSCM lower-bound pruning: A suffix sum of order-independent minimum
+//     crossings per layer pair prunes branches that cannot improve the best.
+//
+//   - Index-based hot path: The DFS inner loop operates on integer indices
+//     with precomputed parent lists, avoiding string hashing and DAG lookups.
 //
 //   - Incremental crossing count: Crossings are computed layer-by-layer
 //     using Fenwick trees, with early termination when the bound is exceeded.
@@ -50,8 +67,9 @@
 //     concurrently using goroutines.
 //
 // For most real-world dependency graphs (dozens to low hundreds of nodes),
-// optimal search finds the true minimum in seconds. A configurable timeout
-// ensures graceful fallback to the best-found solution.
+// the search finds zero-crossing or near-minimal orderings in seconds.
+// Rows wider than 30 nodes are frozen at their barycentric order (single
+// candidate) while the rest of the graph is still searched.
 //
 // # Usage
 //
@@ -70,13 +88,13 @@
 //	}
 //	orders := orderer.OrderRows(g)
 //
-// # Quality Presets
+// # Timeout Presets
 //
-// The [Quality] type provides preset configurations:
+// Predefined timeout constants provide sensible defaults:
 //
-//   - [QualityFast]: 100ms timeout, suitable for interactive use
-//   - [QualityBalanced]: 5s timeout, good for most graphs
-//   - [QualityOptimal]: 60s timeout, for publication-quality output
+//   - [DefaultTimeoutFast]: 100ms, suitable for interactive use
+//   - [DefaultTimeoutBalanced]: 5s, good for most graphs
+//   - [DefaultTimeoutOptimal]: 60s, for publication-quality output
 //
 // # Algorithm Selection
 //
@@ -85,7 +103,7 @@
 //   - Interactive/preview rendering
 //   - When "good enough" suffices
 //
-// Use optimal search for:
+// Use optimized search for:
 //   - Publication or showcase output
 //   - Smaller graphs where crossing-free is achievable
 //   - When visual quality is critical

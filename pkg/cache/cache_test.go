@@ -77,6 +77,30 @@ func TestDefaultKeyer(t *testing.T) {
 		t.Error("Different GraphKeyOpts should produce different keys")
 	}
 
+	// Every GraphKeyOpts field must affect the key: a cache hit with any of
+	// these fields differing would return the wrong graph.
+	base := GraphKeyOpts{MaxDepth: 10, MaxNodes: 100}
+	variants := map[string]GraphKeyOpts{
+		"MaxDepth":          {MaxDepth: 11, MaxNodes: 100},
+		"MaxNodes":          {MaxDepth: 10, MaxNodes: 101},
+		"Enriched":          {MaxDepth: 10, MaxNodes: 100, Enriched: true},
+		"SecurityScan":      {MaxDepth: 10, MaxNodes: 100, SecurityScan: true},
+		"IncludePrerelease": {MaxDepth: 10, MaxNodes: 100, IncludePrerelease: true},
+		"DependencyScope":   {MaxDepth: 10, MaxNodes: 100, DependencyScope: "all"},
+		"RuntimeVersion":    {MaxDepth: 10, MaxNodes: 100, RuntimeVersion: "3.11"},
+		"FetchContributors": {MaxDepth: 10, MaxNodes: 100, FetchContributors: true},
+		"RootName":          {MaxDepth: 10, MaxNodes: 100, RootName: "my-app"},
+		"ManifestFilename":  {MaxDepth: 10, MaxNodes: 100, ManifestFilename: "poetry.lock"},
+		"ManifestDir":       {MaxDepth: 10, MaxNodes: 100, ManifestDir: "abc123"},
+		"Authenticated":     {MaxDepth: 10, MaxNodes: 100, Authenticated: true},
+	}
+	baseKey := k.GraphKey("python", "fastapi", base)
+	for field, opts := range variants {
+		if k.GraphKey("python", "fastapi", opts) == baseKey {
+			t.Errorf("GraphKeyOpts.%s does not affect the cache key", field)
+		}
+	}
+
 	// LayoutKey
 	lk1 := k.LayoutKey("hash123", LayoutKeyOpts{VizType: "tower", Width: 800})
 	lk2 := k.LayoutKey("hash123", LayoutKeyOpts{VizType: "nodelink", Width: 800})

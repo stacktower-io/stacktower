@@ -58,7 +58,22 @@ func (c *InstrumentedCache) Dir() string {
 	return ""
 }
 
+// knownKeyTypes are the artifact-type segments produced by Keyer
+// implementations. Scoped keyers prepend prefixes (e.g. "user:123:graph:…"),
+// so the type segment is not necessarily first.
+var knownKeyTypes = map[string]bool{
+	"graph":    true,
+	"layout":   true,
+	"artifact": true,
+	"http":     true,
+}
+
 func keyType(key string) string {
+	for _, part := range strings.Split(key, ":") {
+		if knownKeyTypes[part] {
+			return part
+		}
+	}
 	if i := strings.Index(key, ":"); i > 0 {
 		return key[:i]
 	}

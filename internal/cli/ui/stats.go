@@ -55,6 +55,7 @@ type StatsReport struct {
 	VulnHigh     int               `json:"vuln_high,omitempty"`
 	VulnMedium   int               `json:"vuln_medium,omitempty"`
 	VulnLow      int               `json:"vuln_low,omitempty"`
+	VulnUnknown  int               `json:"vuln_unknown,omitempty"`
 	VulnAffected []VulnAffectedPkg `json:"vuln_affected,omitempty"`
 	HasVulnData  bool              `json:"-"`
 
@@ -157,12 +158,16 @@ func WriteStats(w io.Writer, r StatsReport) {
 	if r.HasVulnData {
 		fmt.Fprintln(w)
 		writeSection(w, "Vulnerabilities")
-		fmt.Fprintf(w, "  %s critical · %s high · %s medium · %s low\n",
+		line := fmt.Sprintf("  %s critical · %s high · %s medium · %s low",
 			styleStatsNum.Render(fmt.Sprintf("%d", r.VulnCritical)),
 			styleStatsNum.Render(fmt.Sprintf("%d", r.VulnHigh)),
 			styleStatsNum.Render(fmt.Sprintf("%d", r.VulnMedium)),
 			styleStatsNum.Render(fmt.Sprintf("%d", r.VulnLow)),
 		)
+		if r.VulnUnknown > 0 {
+			line += fmt.Sprintf(" · %s unknown", styleStatsNum.Render(fmt.Sprintf("%d", r.VulnUnknown)))
+		}
+		fmt.Fprintln(w, line)
 		if len(r.VulnAffected) > 0 {
 			parts := make([]string, len(r.VulnAffected))
 			for i, v := range r.VulnAffected {

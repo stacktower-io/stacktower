@@ -7,6 +7,7 @@ import (
 )
 
 // BuildPURL constructs a Package URL per the purl specification.
+// All name segments and the version are percent-encoded.
 // See https://github.com/package-url/purl-spec
 func BuildPURL(language, name, version string) string {
 	purlType := purlTypeFromLanguage(language)
@@ -14,25 +15,37 @@ func BuildPURL(language, name, version string) string {
 		return ""
 	}
 
-	// Handle scoped npm packages: @scope/name -> %40scope/name
-	encodedName := name
-	if purlType == "npm" && strings.HasPrefix(name, "@") {
-		parts := strings.SplitN(name[1:], "/", 2)
-		if len(parts) == 2 {
-			encodedName = fmt.Sprintf("%%40%s/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]))
-		}
+	// Maven coordinates use group:artifact; purl uses group/artifact.
+	if purlType == "maven" {
+		name = strings.Replace(name, ":", "/", 1)
 	}
 
-	// Handle Maven group:artifact -> group/artifact
-	if purlType == "maven" && strings.Contains(name, ":") {
-		parts := strings.SplitN(name, ":", 2)
-		encodedName = fmt.Sprintf("%s/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]))
-	}
+	encodedName := encodePURLSegments(name)
 
 	if version != "" {
-		return fmt.Sprintf("pkg:%s/%s@%s", purlType, encodedName, version)
+		return fmt.Sprintf("pkg:%s/%s@%s", purlType, encodedName, encodePURLPart(version))
 	}
 	return fmt.Sprintf("pkg:%s/%s", purlType, encodedName)
+}
+
+// encodePURLSegments percent-encodes each "/"-separated segment of a purl
+// name (slashes separate namespace segments and are kept literal).
+func encodePURLSegments(name string) string {
+	segments := strings.Split(name, "/")
+	for i, seg := range segments {
+		segments[i] = encodePURLPart(seg)
+	}
+	return strings.Join(segments, "/")
+}
+
+// encodePURLPart percent-encodes a single purl segment or version.
+// In addition to standard path-segment escaping, '@' and ':' must be encoded
+// because they act as separators in the purl grammar.
+func encodePURLPart(s string) string {
+	escaped := url.PathEscape(s)
+	escaped = strings.ReplaceAll(escaped, "@", "%40")
+	escaped = strings.ReplaceAll(escaped, ":", "%3A")
+	return escaped
 }
 
 func purlTypeFromLanguage(language string) string {

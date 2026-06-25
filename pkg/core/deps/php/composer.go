@@ -64,10 +64,17 @@ func (c *ComposerJSON) Parse(path string, opts deps.Options) (*deps.ManifestResu
 	}
 
 	var g *dag.DAG
+	includesTransitive := false
 	if c.resolver != nil {
 		g, err = deps.ResolveAndMerge(opts.Ctx, c.resolver, directDeps, opts)
 		if err != nil {
-			return nil, err
+			// Fall back to a shallow graph of direct dependencies when resolution
+			// fails (e.g. timeout, network issues, unsatisfiable constraints).
+			// This ensures users always see their declared dependencies.
+			opts.Logger("resolution failed, falling back to direct deps: %v", err)
+			g = deps.ShallowGraphFromDeps(directDeps)
+		} else {
+			includesTransitive = true
 		}
 	} else {
 		g = deps.ShallowGraphFromDeps(directDeps)
@@ -85,7 +92,7 @@ func (c *ComposerJSON) Parse(path string, opts deps.Options) (*deps.ManifestResu
 	return &deps.ManifestResult{
 		Graph:              g,
 		Type:               c.Type(),
-		IncludesTransitive: c.resolver != nil,
+		IncludesTransitive: includesTransitive,
 		RootPackage:        comp.Name,
 		RuntimeVersion:     extractPHPVersion(phpConstraint),
 		RuntimeConstraint:  phpConstraint,

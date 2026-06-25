@@ -57,6 +57,51 @@ func TestDiff_AddedOnly(t *testing.T) {
 	}
 }
 
+func TestDiff_DepthChange(t *testing.T) {
+	// before: A -> B -> C (C at depth 2)
+	before := makeDiffGraph(
+		[]struct{ id, version string }{{"A", "1.0"}, {"B", "1.0"}, {"C", "1.0"}},
+		[][2]string{{"A", "B"}, {"B", "C"}},
+	)
+	// after: A -> B -> C and A -> C (C promoted to depth 1), C version bumped
+	after := makeDiffGraph(
+		[]struct{ id, version string }{{"A", "1.0"}, {"B", "1.0"}, {"C", "2.0"}},
+		[][2]string{{"A", "B"}, {"B", "C"}, {"A", "C"}},
+	)
+
+	d := Diff(before, after)
+	if len(d.Updated) != 1 || d.Updated[0].ID != "C" {
+		t.Fatalf("expected C updated, got %v", d.Updated)
+	}
+	if d.Updated[0].DepthChange != -1 {
+		t.Errorf("DepthChange = %d, want -1 (shallower)", d.Updated[0].DepthChange)
+	}
+
+	// Reverse direction: C demoted from depth 1 to depth 2.
+	d = Diff(after, before)
+	if len(d.Updated) != 1 || d.Updated[0].DepthChange != 1 {
+		t.Errorf("reverse DepthChange = %v, want 1 (deeper)", d.Updated)
+	}
+}
+
+func TestBFSDepths(t *testing.T) {
+	g := makeDiffGraph(
+		[]struct{ id, version string }{{"A", "1"}, {"B", "1"}, {"C", "1"}, {"D", "1"}},
+		[][2]string{{"A", "B"}, {"B", "C"}, {"A", "C"}, {"C", "D"}},
+	)
+	depths := bfsDepths(g, "A")
+	want := map[string]int{"A": 0, "B": 1, "C": 1, "D": 2}
+	for id, d := range want {
+		if depths[id] != d {
+			t.Errorf("depth[%s] = %d, want %d", id, depths[id], d)
+		}
+	}
+
+	if got := bfsDepths(g, "missing"); len(got) != 0 {
+		t.Errorf("expected empty depths for missing root, got %v", got)
+	}
+}
+
 func TestDiff_RemovedOnly(t *testing.T) {
 	before := makeDiffGraph(
 		[]struct{ id, version string }{{"A", "1.0"}, {"B", "2.0"}},

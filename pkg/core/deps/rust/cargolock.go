@@ -141,6 +141,10 @@ func buildCargoLockGraph(lock cargoLockFile, opts deps.Options) *dag.DAG {
 	}
 
 	// resolveNodeID finds the node ID for a dependency given name and optional version.
+	// When the dependency string has no version (older lockfile format) and
+	// the crate exists at multiple versions, fall back to the highest version
+	// so the choice is deterministic and matches Cargo's preference for the
+	// newest compatible release (map iteration order would be arbitrary).
 	resolveNodeID := func(name, version string) (string, bool) {
 		if version != "" {
 			key := name + "@" + version
@@ -152,7 +156,13 @@ func buildCargoLockGraph(lock cargoLockFile, opts deps.Options) *dag.DAG {
 		if len(keys) == 0 {
 			return "", false
 		}
-		return nodeByKey[keys[0]].id, true
+		best := keys[0]
+		for _, key := range keys[1:] {
+			if compareCargoVersionStrings(nodeByKey[key].version, nodeByKey[best].version) > 0 {
+				best = key
+			}
+		}
+		return nodeByKey[best].id, true
 	}
 
 	// Add dependency edges
@@ -203,6 +213,40 @@ func buildCargoLockGraph(lock cargoLockFile, opts deps.Options) *dag.DAG {
 	}
 
 	return g
+}
+
+// compareCargoVersionStrings compares two crate version strings.
+// Returns >0 if a > b, <0 if a < b, 0 if equal. Stable versions sort above
+// prereleases of the same release; unparseable versions sort below parseable
+// ones (and against each other by plain string comparison).
+func compareCargoVersionStrings(a, b string) int {
+	av, bv := parseCargoVersion(a), parseCargoVersion(b)
+	switch {
+	case !av.valid && !bv.valid:
+		return strings.Compare(a, b)
+	case !av.valid:
+		return -1
+	case !bv.valid:
+		return 1
+	}
+	if av.major != bv.major {
+		return av.major - bv.major
+	}
+	if av.minor != bv.minor {
+		return av.minor - bv.minor
+	}
+	if av.patch != bv.patch {
+		return av.patch - bv.patch
+	}
+	switch {
+	case av.prerelease == bv.prerelease:
+		return 0
+	case av.prerelease == "":
+		return 1
+	case bv.prerelease == "":
+		return -1
+	}
+	return strings.Compare(av.prerelease, bv.prerelease)
 }
 
 // parseCargoLockDep parses a Cargo.lock dependency string.

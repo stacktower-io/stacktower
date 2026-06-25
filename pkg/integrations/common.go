@@ -113,25 +113,31 @@ func TimeoutForRegistry(registry string) time.Duration {
 	return DefaultTimeout
 }
 
-// NormalizePkgName converts a package name to its canonical form.
-// Applies lowercase and replaces underscores with hyphens, following PEP 503
-// normalization rules used by PyPI and other registries.
+// pkgNameSeparatorRE matches runs of PEP 503 separator characters
+// (hyphen, underscore, dot) that normalize to a single hyphen.
+var pkgNameSeparatorRE = regexp.MustCompile(`[-_.]+`)
+
+// NormalizePkgName converts a package name to its canonical form following
+// PEP 503 normalization rules as used by PyPI: lowercase, with each run of
+// hyphens, underscores, and dots collapsed to a single hyphen.
 //
 // Normalization steps:
 //  1. Trim leading and trailing whitespace
 //  2. Convert to lowercase
-//  3. Replace all underscores with hyphens
+//  3. Replace each run of [-_.] characters with a single hyphen
 //
 // Examples:
 //
 //	NormalizePkgName("FastAPI")      → "fastapi"
 //	NormalizePkgName("my_package")   → "my-package"
+//	NormalizePkgName("zope.interface") → "zope-interface"
+//	NormalizePkgName("my--pkg__name") → "my-pkg-name"
 //	NormalizePkgName("  Spaces  ")   → "spaces"
 //
 // An empty string input returns an empty string.
 // This function is safe for concurrent use.
 func NormalizePkgName(name string) string {
-	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), "_", "-")
+	return pkgNameSeparatorRE.ReplaceAllString(strings.ToLower(strings.TrimSpace(name)), "-")
 }
 
 var repoURLReplacer = strings.NewReplacer(
@@ -192,17 +198,31 @@ var repoURLKeys = []string{"Source", "Repository", "Code", "Homepage"}
 // This function is safe for concurrent use if re is not mutated.
 // Panics if re is nil.
 func ExtractRepoURL(re *regexp.Regexp, urls map[string]string, homepage string) (owner, repo string, ok bool) {
+	return ExtractRepoURLFunc(func(u string) (string, string, bool) {
+		if m := re.FindStringSubmatch(u); len(m) >= 3 {
+			return m[1], strings.TrimSuffix(m[2], ".git"), true
+		}
+		return "", "", false
+	}, urls, homepage)
+}
+
+// ExtractRepoURLFunc is the generalized form of [ExtractRepoURL]: it searches
+// urls (preferred keys first, then remaining keys in sorted order) and
+// finally homepage, returning the first match produced by matchURL.
+//
+// Use this instead of [ExtractRepoURL] when a two-capture-group regex cannot
+// express the host's URL structure (e.g. GitLab nested groups).
+//
+// URLs containing "/sponsors/" are skipped to avoid false positives.
+// This function is safe for concurrent use if matchURL is.
+// Panics if matchURL is nil.
+func ExtractRepoURLFunc(matchURL func(url string) (owner, repo string, ok bool), urls map[string]string, homepage string) (owner, repo string, ok bool) {
 	match := func(u string) bool {
 		if strings.Contains(u, "/sponsors/") {
 			return false
 		}
-		if m := re.FindStringSubmatch(u); len(m) >= 3 {
-			owner = m[1]
-			repo = strings.TrimSuffix(m[2], ".git")
-			ok = true
-			return true
-		}
-		return false
+		owner, repo, ok = matchURL(u)
+		return ok
 	}
 
 	// Try preferred keys first (deterministic order).

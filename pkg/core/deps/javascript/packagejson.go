@@ -72,30 +72,46 @@ func (p *PackageJSON) Parse(path string, opts deps.Options) (*deps.ManifestResul
 	}, nil
 }
 
-// extractPackageDepsWithConstraints extracts dependencies with version constraints
+// extractPackageDepsWithConstraints extracts dependencies with version constraints.
+// TODO: support npm/yarn/pnpm workspaces (the "workspaces" field) by parsing
+// member package.json files. Out of scope for now.
 func extractPackageDepsWithConstraints(pkg packageFile, scope string) []deps.Dependency {
 	var result []deps.Dependency
-	for name, constraint := range pkg.Dependencies {
+	seen := make(map[string]bool)
+	add := func(name, constraint string) {
+		if seen[name] {
+			return
+		}
+		seen[name] = true
 		result = append(result, deps.Dependency{Name: name, Constraint: constraint})
+	}
+	for name, constraint := range pkg.Dependencies {
+		add(name, constraint)
+	}
+	// optionalDependencies are installed by default by npm (only excluded
+	// with --omit=optional), so they count as production scope.
+	for name, constraint := range pkg.OptionalDependencies {
+		add(name, constraint)
 	}
 	if scope == deps.DependencyScopeAll {
 		for name, constraint := range pkg.DevDependencies {
-			result = append(result, deps.Dependency{Name: name, Constraint: constraint})
+			add(name, constraint)
 		}
 	}
 	for name, constraint := range pkg.PeerDependencies {
-		result = append(result, deps.Dependency{Name: name, Constraint: constraint})
+		add(name, constraint)
 	}
 	return result
 }
 
 type packageFile struct {
-	Name             string            `json:"name"`
-	Version          string            `json:"version"`
-	Dependencies     map[string]string `json:"dependencies"`
-	DevDependencies  map[string]string `json:"devDependencies"`
-	PeerDependencies map[string]string `json:"peerDependencies"`
-	Engines          packageEngines    `json:"engines"`
+	Name                 string            `json:"name"`
+	Version              string            `json:"version"`
+	Dependencies         map[string]string `json:"dependencies"`
+	DevDependencies      map[string]string `json:"devDependencies"`
+	PeerDependencies     map[string]string `json:"peerDependencies"`
+	OptionalDependencies map[string]string `json:"optionalDependencies"`
+	Engines              packageEngines    `json:"engines"`
 }
 
 type packageEngines struct {

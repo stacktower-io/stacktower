@@ -156,6 +156,125 @@ require (
 	}
 }
 
+func TestParseGoModFileComplete_ReplaceDirectives(t *testing.T) {
+	content := `module github.com/example/app
+
+go 1.21
+
+require (
+	github.com/old/module v1.0.0
+	github.com/other/module v2.0.0
+	github.com/local/module v0.5.0
+	github.com/untouched/module v3.0.0
+)
+
+replace github.com/old/module => github.com/new/module v1.5.0
+
+replace (
+	github.com/other/module v2.0.0 => github.com/forked/module v2.1.0
+	github.com/local/module => ../local-module
+)
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "go.mod")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, _ := os.Open(path)
+	defer f.Close()
+
+	result := parseGoModFileComplete(f)
+
+	got := make(map[string]deps.Dependency, len(result.directDeps))
+	for _, dep := range result.directDeps {
+		got[dep.Name] = dep
+	}
+
+	// Single-line replace: module path and version swapped in
+	if dep, ok := got["github.com/new/module"]; !ok {
+		t.Error("expected replaced module github.com/new/module, original still present")
+	} else {
+		if dep.Pinned != "v1.5.0" {
+			t.Errorf("replaced module Pinned = %q, want v1.5.0", dep.Pinned)
+		}
+		if dep.Constraint != "=v1.5.0" {
+			t.Errorf("replaced module Constraint = %q, want =v1.5.0", dep.Constraint)
+		}
+	}
+	if _, ok := got["github.com/old/module"]; ok {
+		t.Error("original module github.com/old/module should have been replaced")
+	}
+
+	// Block-form, version-specific replace
+	if dep, ok := got["github.com/forked/module"]; !ok {
+		t.Error("expected replaced module github.com/forked/module")
+	} else if dep.Pinned != "v2.1.0" {
+		t.Errorf("forked module Pinned = %q, want v2.1.0", dep.Pinned)
+	}
+
+	// Local filesystem replacement: original module kept, Pinned cleared so
+	// the resolver doesn't try to fetch it from the module proxy.
+	if dep, ok := got["github.com/local/module"]; !ok {
+		t.Error("expected locally-replaced module to keep its original name")
+	} else {
+		if dep.Pinned != "" {
+			t.Errorf("locally-replaced module Pinned = %q, want empty", dep.Pinned)
+		}
+		if dep.Constraint != "=v0.5.0" {
+			t.Errorf("locally-replaced module Constraint = %q, want =v0.5.0 (kept for display)", dep.Constraint)
+		}
+	}
+
+	// Modules without a replace directive are untouched
+	if dep, ok := got["github.com/untouched/module"]; !ok || dep.Pinned != "v3.0.0" {
+		t.Errorf("untouched module = %#v, want Pinned v3.0.0", dep)
+	}
+}
+
+func TestParseReplaceLine(t *testing.T) {
+	tests := []struct {
+		line        string
+		wantOld     string
+		wantPath    string
+		wantVersion string
+		wantLocal   bool
+		wantOK      bool
+	}{
+		{"github.com/a/b => github.com/c/d v1.2.3", "github.com/a/b", "github.com/c/d", "v1.2.3", false, true},
+		{"github.com/a/b v1.0.0 => github.com/c/d v1.2.3", "github.com/a/b", "github.com/c/d", "v1.2.3", false, true},
+		{"github.com/a/b => ../local", "github.com/a/b", "../local", "", true, true},
+		{"github.com/a/b => ./sub/dir", "github.com/a/b", "./sub/dir", "", true, true},
+		{"github.com/a/b => github.com/c/d v1.2.3 // comment", "github.com/a/b", "github.com/c/d", "v1.2.3", false, true},
+		{"no arrow here", "", "", "", false, false},
+		{"=> github.com/c/d v1.0.0", "", "", "", false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			old, repl, ok := parseReplaceLine(tt.line)
+			if ok != tt.wantOK {
+				t.Fatalf("parseReplaceLine(%q) ok = %v, want %v", tt.line, ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if old != tt.wantOld {
+				t.Errorf("old = %q, want %q", old, tt.wantOld)
+			}
+			if repl.path != tt.wantPath {
+				t.Errorf("path = %q, want %q", repl.path, tt.wantPath)
+			}
+			if repl.version != tt.wantVersion {
+				t.Errorf("version = %q, want %q", repl.version, tt.wantVersion)
+			}
+			if repl.local != tt.wantLocal {
+				t.Errorf("local = %v, want %v", repl.local, tt.wantLocal)
+			}
+		})
+	}
+}
+
 func TestParseRequireLineComplete_Variations(t *testing.T) {
 	tests := []struct {
 		line       string

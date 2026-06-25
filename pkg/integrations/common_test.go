@@ -2,8 +2,68 @@ package integrations
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 )
+
+// TestNormalizePkgName_PEP503 covers the full PEP 503 rule: runs of
+// hyphens, underscores, and dots collapse to a single hyphen.
+// (Basic lowercase/trim cases are covered by TestNormalizePkgName.)
+func TestNormalizePkgName_PEP503(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"zope.interface", "zope-interface"},
+		{"backports.zoneinfo", "backports-zoneinfo"},
+		{"my--package", "my-package"},
+		{"my__package", "my-package"},
+		{"a-_.b", "a-b"},
+		{"Mixed_Separators.Here--Now", "mixed-separators-here-now"},
+	}
+
+	for _, tt := range tests {
+		if got := NormalizePkgName(tt.input); got != tt.want {
+			t.Errorf("NormalizePkgName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestExtractRepoURLFunc(t *testing.T) {
+	// Matcher that handles multi-segment namespaces (GitLab-style).
+	match := func(u string) (string, string, bool) {
+		const prefix = "https://example.com/"
+		if !strings.HasPrefix(u, prefix) {
+			return "", "", false
+		}
+		segs := strings.Split(strings.Trim(strings.TrimPrefix(u, prefix), "/"), "/")
+		if len(segs) < 2 {
+			return "", "", false
+		}
+		return strings.Join(segs[:len(segs)-1], "/"), segs[len(segs)-1], true
+	}
+
+	owner, repo, ok := ExtractRepoURLFunc(match, map[string]string{
+		"Source": "https://example.com/group/sub/proj",
+	}, "")
+	if !ok || owner != "group/sub" || repo != "proj" {
+		t.Errorf("got owner=%q repo=%q ok=%v, want group/sub proj true", owner, repo, ok)
+	}
+
+	// Sponsor URLs are skipped even if the matcher would accept them.
+	_, _, ok = ExtractRepoURLFunc(match, map[string]string{
+		"Funding": "https://example.com/sponsors/someone",
+	}, "")
+	if ok {
+		t.Error("sponsors URL should be skipped")
+	}
+
+	// Homepage fallback.
+	owner, repo, ok = ExtractRepoURLFunc(match, nil, "https://example.com/me/thing")
+	if !ok || owner != "me" || repo != "thing" {
+		t.Errorf("homepage fallback: got owner=%q repo=%q ok=%v", owner, repo, ok)
+	}
+}
 
 func TestExtractRepoURL(t *testing.T) {
 	githubPattern := regexp.MustCompile(`https?://github\.com/([^/]+)/([^/]+)`)

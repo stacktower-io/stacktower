@@ -9,13 +9,23 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/stacktower-io/stacktower/pkg/integrations"
 )
+
+// decodeJSON decodes a JSON response body into v, capping the read at
+// [integrations.MaxResponseSize] to prevent memory exhaustion from
+// oversized or malicious responses.
+func decodeJSON(body io.Reader, v any) error {
+	return json.NewDecoder(io.LimitReader(body, integrations.MaxResponseSize)).Decode(v)
+}
 
 // AppConfig holds GitHub App configuration.
 type AppConfig struct {
@@ -143,7 +153,7 @@ func (c *AppClient) ExchangeCode(ctx context.Context, code string) (*UserAccessT
 		ErrorDesc    string `json:"error_description"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeJSON(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
@@ -194,7 +204,7 @@ func (c *AppClient) RefreshAccessToken(ctx context.Context, refreshToken string)
 		ErrorDesc    string `json:"error_description"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeJSON(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
@@ -255,7 +265,7 @@ func (c *AppClient) GetUserInstallations(ctx context.Context, userToken string) 
 		Installations []Installation `json:"installations"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeJSON(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
@@ -316,7 +326,7 @@ func (c *AppClient) GetInstallationToken(ctx context.Context, installationID int
 		ExpiresAt time.Time `json:"expires_at"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeJSON(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
@@ -369,7 +379,7 @@ func (c *AppClient) FetchUser(ctx context.Context, userToken string) (*User, err
 	}
 
 	var user User
-	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
+	if err := decodeJSON(resp.Body, &user); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
@@ -408,7 +418,7 @@ func (c *AppClient) fetchPrimaryEmail(ctx context.Context, userToken string) (st
 		Verified bool   `json:"verified"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&emails); err != nil {
+	if err := decodeJSON(resp.Body, &emails); err != nil {
 		return "", nil
 	}
 
@@ -450,7 +460,7 @@ func (c *AppClient) RequestDeviceCode(ctx context.Context) (*AppDeviceCodeRespon
 	defer resp.Body.Close()
 
 	var result AppDeviceCodeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeJSON(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
@@ -518,7 +528,7 @@ func (c *AppClient) checkDeviceToken(ctx context.Context, deviceCode string) (*U
 		ErrorDesc    string `json:"error_description"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeJSON(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
@@ -537,40 +547,21 @@ func (c *AppClient) checkDeviceToken(ctx context.Context, deviceCode string) (*U
 
 // GetAppInstallationCount returns the total number of GitHub App installations.
 // Uses the App's JWT to authenticate and fetch from GET /app/installations.
+//
+// GitHub doesn't return a total_count for /app/installations, so the pages
+// are counted directly via countAllInstallations.
 func (c *AppClient) GetAppInstallationCount(ctx context.Context) (int64, error) {
 	jwtToken, err := c.generateJWT()
 	if err != nil {
 		return 0, fmt.Errorf("generate JWT: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/app/installations?per_page=1", nil)
-	if err != nil {
-		return 0, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+jwtToken)
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("GitHub API error: HTTP %d", resp.StatusCode)
-	}
-
-	var result []Installation
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, fmt.Errorf("decode response: %w", err)
-	}
-
-	// The total count is in the Link header or we need to parse pagination
-	// Simpler: check the Link header for total, or count from response
-	// GitHub doesn't return total_count for /app/installations, so we need to paginate
-	// For efficiency, let's just count all installations with minimal data
 	return c.countAllInstallations(ctx, jwtToken)
 }
+
+// maxInstallationPages caps installation pagination (100 items per page).
+// Apps with more than 10,000 installations report a truncated count.
+const maxInstallationPages = 100
 
 // countAllInstallations iterates through all pages to count installations.
 func (c *AppClient) countAllInstallations(ctx context.Context, jwtToken string) (int64, error) {
@@ -591,8 +582,16 @@ func (c *AppClient) countAllInstallations(ctx context.Context, jwtToken string) 
 			return total, err
 		}
 
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			if resp.StatusCode == 429 {
+				return total, &integrations.RateLimitedError{RetryAfter: 60}
+			}
+			return total, fmt.Errorf("list installations: HTTP %d", resp.StatusCode)
+		}
+
 		var installs []Installation
-		if err := json.NewDecoder(resp.Body).Decode(&installs); err != nil {
+		if err := decodeJSON(resp.Body, &installs); err != nil {
 			resp.Body.Close()
 			return total, err
 		}
@@ -605,6 +604,9 @@ func (c *AppClient) countAllInstallations(ctx context.Context, jwtToken string) 
 			break
 		}
 		page++
+		if page > maxInstallationPages {
+			break // Safety limit
+		}
 	}
 
 	return total, nil

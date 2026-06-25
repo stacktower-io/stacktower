@@ -82,6 +82,9 @@ func curvedEdge(x1, y1, x2, y2 float64) string {
 
 func rotationFor(id string, w, h float64) float64 {
 	maxAngle := math.Atan(maxEdgeShift/max(w, h)) * 180 / math.Pi
+	// For very small blocks the computed angle can be large (up to ~20°).
+	// Cap it so dense towers don't look chaotic.
+	maxAngle = min(maxAngle, 3.0)
 	rng := newRNG(hash(id, 999))
 	return (rng.next()*2 - 1) * maxAngle
 }

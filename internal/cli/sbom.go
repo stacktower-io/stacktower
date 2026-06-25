@@ -8,6 +8,7 @@ import (
 	"github.com/stacktower-io/stacktower/internal/cli/ui"
 	"github.com/stacktower-io/stacktower/pkg/buildinfo"
 	"github.com/stacktower-io/stacktower/pkg/sbom"
+	"github.com/stacktower-io/stacktower/pkg/security"
 )
 
 func (c *CLI) sbomCommand() *cobra.Command {
@@ -73,6 +74,25 @@ func (c *CLI) runSBOM(input, format, output, encoding, specVersion string) error
 		)
 	}
 
+	if specVersion != "" {
+		switch sbomFmt {
+		case sbom.FormatCycloneDX:
+			if specVersion != "1.5" && specVersion != "1.6" {
+				return NewUserError(
+					fmt.Sprintf("unsupported CycloneDX spec version: %q", specVersion),
+					"Supported versions: 1.5, 1.6 (default).",
+				)
+			}
+		case sbom.FormatSPDX:
+			if specVersion != "2.3" {
+				return NewUserError(
+					fmt.Sprintf("unsupported SPDX spec version: %q", specVersion),
+					"SPDX output always uses version 2.3; omit --spec-version or pass 2.3.",
+				)
+			}
+		}
+	}
+
 	opts := sbom.Options{
 		Format:      sbomFmt,
 		Encoding:    sbomEncoding,
@@ -84,6 +104,10 @@ func (c *CLI) runSBOM(input, format, output, encoding, specVersion string) error
 	if lang, ok := g.Meta()["language"].(string); ok {
 		opts.Language = lang
 	}
+
+	// Recover full vulnerability findings stored during --security-scan so
+	// the SBOM carries real OSV/GHSA identifiers.
+	opts.VulnReport = security.ReportFromMeta(g)
 
 	var data []byte
 	switch sbomFmt {

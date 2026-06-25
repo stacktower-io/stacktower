@@ -146,9 +146,20 @@ func (c *CLI) runRender(ctx context.Context, input string, opts pipeline.Options
 	} else {
 		crossings = layout.Crossings
 	}
+	// "optimal" is the flag value, but the search is bounded (candidate caps,
+	// timeout, wide-row fallback) so label the result honestly as "optimized"
+	// and qualify how the search ended.
 	orderingName := opts.Ordering
-	if orderingName == "" {
-		orderingName = "optimal"
+	if orderingName == "" || orderingName == "optimal" {
+		orderingName = "optimized"
+	}
+	if orderer != nil && !layoutHit {
+		switch {
+		case orderer.outcome.Fallback:
+			orderingName += " (barycentric fallback: row too wide)"
+		case orderer.outcome.TimedOut:
+			orderingName += " (timed out, best effort)"
+		}
 	}
 	style := layout.Style
 	if style == "" {
@@ -190,9 +201,10 @@ type optimalOrderer struct {
 	ordering.OptimalSearch
 	cli       *CLI
 	ctx       context.Context
-	crossings int       // Last computed crossings count
-	startTime time.Time // For duration tracking
-	rowCount  int       // Number of rows being ordered
+	crossings int                  // Last computed crossings count
+	outcome   ordering.OutcomeInfo // How the search concluded (timeout/fallback)
+	startTime time.Time            // For duration tracking
+	rowCount  int                  // Number of rows being ordered
 }
 
 // newOptimalOrderer creates an optimal orderer bound to the caller's ctx.
@@ -205,6 +217,11 @@ func (c *CLI) newOptimalOrderer(ctx context.Context, timeoutSec int) ordering.Or
 		Timeout:  time.Duration(timeoutSec) * time.Second,
 		Progress: o.onProgress,
 		Debug:    o.onDebug,
+		Outcome:  func(info ordering.OutcomeInfo) { o.outcome = info },
+		// Wire the caller's context so Ctrl-C aborts the search immediately
+		// (returning the best ordering found) instead of waiting out the
+		// full timeout.
+		Ctx: ctx,
 	}
 	return o
 }
@@ -220,6 +237,13 @@ func (o *optimalOrderer) onDebug(info ordering.DebugInfo) {
 	o.cli.Logger.Debug("search complete", "rows", info.TotalRows, "depth", info.MaxDepth)
 }
 
+// Fingerprint identifies this orderer configuration for layout cache keys.
+// Two runs with the same ordering algorithm and timeout may share cached
+// layouts; different timeouts may produce different (best-so-far) results.
+func (o *optimalOrderer) Fingerprint() string {
+	return fmt.Sprintf("optimal:%s", o.Timeout)
+}
+
 // OrderRows implements ordering.Orderer.
 func (o *optimalOrderer) OrderRows(g *dag.DAG) map[int][]string {
 	o.startTime = time.Now()
@@ -231,7 +255,10 @@ func (o *optimalOrderer) OrderRows(g *dag.DAG) map[int][]string {
 	o.crossings = dag.CountCrossings(g, result)
 
 	observability.Pipeline().OnOrderingComplete(o.ctx, o.crossings, time.Since(o.startTime))
-	o.cli.Logger.Debug("ordering result", "crossings", o.crossings)
+	o.cli.Logger.Debug("ordering result",
+		"crossings", o.crossings,
+		"timedOut", o.outcome.TimedOut,
+		"fallback", o.outcome.Fallback)
 
 	return result
 }
@@ -279,7 +306,7 @@ func writeArtifacts(p artifactWriteParams) error {
 	}
 
 	if p.renderStats.OrderingRan && p.renderStats.Crossings == 0 {
-		ui.PrintSuccess("Render complete (optimal layout)")
+		ui.PrintSuccess("Render complete (no edge crossings)")
 	} else if p.renderStats.Crossings > 0 {
 		ui.PrintInfo("Render complete (%d crossings remaining)", p.renderStats.Crossings)
 	} else {

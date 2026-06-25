@@ -1,15 +1,17 @@
 package goproxy
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/modfile"
+	"golang.org/x/mod/module"
 
 	"github.com/stacktower-io/stacktower/pkg/cache"
 	"github.com/stacktower-io/stacktower/pkg/integrations"
@@ -205,6 +207,9 @@ func (c *Client) FetchLicense(ctx context.Context, mod string, refresh bool) str
 	var lic string
 	_ = c.Cached(ctx, key, refresh, &lic, func() error {
 		lic = c.fetchLicense(ctx, mod)
+		if lic == "" {
+			return errors.New("license not found")
+		}
 		return nil
 	})
 	return lic
@@ -279,9 +284,28 @@ var (
 // fetchRepository attempts to discover the canonical VCS repository for module
 // paths that don't directly reveal their host (for example gopkg.in vanity
 // paths). It inspects go-import / go-source meta tags served at ?go-get=1.
+//
+// The module path is untrusted input (it comes from arbitrary go.mod files),
+// so the host is validated and pre-resolved before any request is made; see
+// ssrf.go.
 func (c *Client) fetchRepository(ctx context.Context, mod string) string {
-	url := fmt.Sprintf("https://%s?go-get=1", mod)
-	body, err := c.GetText(ctx, url)
+	host, rest, ok := splitVanityModule(mod)
+	if !ok || !allowedVanityHost(host) || !resolvesToPublicIP(ctx, host) {
+		return ""
+	}
+
+	// Build the URL structurally so the module path can't smuggle a query,
+	// fragment, port, or userinfo into the request.
+	u := url.URL{
+		Scheme:   "https",
+		Host:     host,
+		RawQuery: "go-get=1",
+	}
+	if rest != "" {
+		u.Path = "/" + rest
+	}
+
+	body, err := c.GetText(ctx, u.String())
 	if err != nil {
 		return ""
 	}
@@ -356,57 +380,77 @@ func (c *Client) fetchGoMod(ctx context.Context, mod, version string) (*goModPar
 	if err != nil {
 		return nil, err
 	}
-	return parseGoModComplete(strings.NewReader(body))
+	return parseGoModComplete([]byte(body))
 }
 
-// parseGoModComplete parses a go.mod file and returns both direct and indirect
+// parseGoModComplete parses a go.mod file using the canonical
+// golang.org/x/mod/modfile parser and returns direct and indirect
 // dependencies along with the go version directive.
-func parseGoModComplete(r io.Reader) (*goModParseResult, error) {
+//
+// Directive handling:
+//   - replace: applied to matching requirements (module-targeted replacements
+//     only; local filesystem replacements keep the original requirement since
+//     the local path is meaningless outside the source repo).
+//   - exclude: excluded versions are dropped from the dependency list.
+func parseGoModComplete(data []byte) (*goModParseResult, error) {
+	f, err := modfile.Parse("go.mod", data, nil)
+	if err != nil {
+		// Fall back to lax parsing (require/go directives only) so a single
+		// malformed directive doesn't make the whole module unparseable.
+		f, err = modfile.ParseLax("go.mod", data, nil)
+		if err != nil {
+			return nil, fmt.Errorf("parse go.mod: %w", err)
+		}
+	}
+
 	result := &goModParseResult{}
+	if f.Go != nil {
+		result.goVersion = f.Go.Version
+	}
+
+	// replace old [v] => new v. Version-specific replacements take priority
+	// over wildcard (versionless old) ones, matching go tooling semantics.
+	replaceExact := make(map[module.Version]module.Version)
+	replaceAll := make(map[string]module.Version)
+	for _, r := range f.Replace {
+		if r.New.Version == "" {
+			// Local filesystem replacement; not resolvable via the proxy.
+			continue
+		}
+		if r.Old.Version == "" {
+			replaceAll[r.Old.Path] = r.New
+		} else {
+			replaceExact[r.Old] = r.New
+		}
+	}
+
+	excluded := make(map[module.Version]bool)
+	for _, e := range f.Exclude {
+		excluded[e.Mod] = true
+	}
+
 	seenDirect := make(map[string]bool)
 	seenIndirect := make(map[string]bool)
-	inRequire := false
 
-	scanner := bufio.NewScanner(r)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-
-		// Skip comments and empty lines
-		if line == "" || strings.HasPrefix(line, "//") {
+	for _, req := range f.Require {
+		mod := req.Mod
+		if excluded[mod] {
 			continue
 		}
-
-		// Extract go version directive
-		if strings.HasPrefix(line, "go ") {
-			result.goVersion = strings.TrimSpace(strings.TrimPrefix(line, "go "))
-			continue
+		if rep, ok := replaceExact[mod]; ok {
+			mod = rep
+		} else if rep, ok := replaceAll[mod.Path]; ok {
+			mod = rep
 		}
 
-		// Handle require block
-		if strings.HasPrefix(line, "require (") || line == "require(" {
-			inRequire = true
-			continue
+		constraint := ""
+		if mod.Version != "" {
+			// Go modules use exact version pins, prefix with = for clarity
+			constraint = "=" + mod.Version
 		}
-		if inRequire && line == ")" {
-			inRequire = false
-			continue
-		}
+		dep := Dependency{Name: mod.Path, Constraint: constraint}
 
-		// Single-line require
-		if strings.HasPrefix(line, "require ") && !strings.Contains(line, "(") {
-			line = strings.TrimPrefix(line, "require ")
-		} else if !inRequire {
-			continue
-		}
-
-		// Parse module path and version from require line
-		// Format: module/path v1.2.3 [// indirect]
-		dep, isIndirect := parseRequireLineComplete(line)
-		if dep.Name == "" {
-			continue
-		}
-
-		if isIndirect {
+		if req.Indirect {
 			if !seenIndirect[dep.Name] {
 				seenIndirect[dep.Name] = true
 				result.indirectDeps = append(result.indirectDeps, dep)
@@ -419,35 +463,7 @@ func parseGoModComplete(r io.Reader) (*goModParseResult, error) {
 		}
 	}
 
-	return result, scanner.Err()
-}
-
-// parseRequireLineComplete parses a require line and returns a Dependency
-// along with a flag indicating if it's an indirect dependency.
-func parseRequireLineComplete(line string) (Dependency, bool) {
-	isIndirect := strings.Contains(line, "// indirect")
-
-	// Remove inline comments
-	if idx := strings.Index(line, "//"); idx != -1 {
-		line = line[:idx]
-	}
-
-	line = strings.TrimSpace(line)
-	fields := strings.Fields(line)
-	if len(fields) >= 1 {
-		// Strip quotes from old-style go.mod files
-		name := strings.Trim(fields[0], `"`)
-		constraint := ""
-		if len(fields) >= 2 {
-			version := strings.Trim(fields[1], `"`)
-			// Go modules use exact version pins, prefix with = for clarity
-			if version != "" {
-				constraint = "=" + version
-			}
-		}
-		return Dependency{Name: name, Constraint: constraint}, isIndirect
-	}
-	return Dependency{}, false
+	return result, nil
 }
 
 // ListVersions returns all available versions for a module, sorted from oldest to newest.

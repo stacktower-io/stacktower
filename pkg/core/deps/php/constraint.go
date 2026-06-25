@@ -28,19 +28,20 @@ var _ deps.ConstraintParser = ComposerMatcher{}
 
 // composerVersion holds a parsed Composer version
 type composerVersion struct {
-	original  string
-	major     int
-	minor     int
-	patch     int
-	stability string // dev, alpha, beta, RC
-	valid     bool
-	hasMinor  bool
-	hasPatch  bool
+	original      string
+	major         int
+	minor         int
+	patch         int
+	stability     string // dev, alpha, beta, rc, stable
+	stabilityFull string // full suffix including number, e.g. "beta1", "rc.2"
+	valid         bool
+	hasMinor      bool
+	hasPatch      bool
 }
 
 var (
 	// Matches Composer version: v1.2.3, 1.2.3-beta, 1.2.3@dev
-	composerVersionRE = regexp.MustCompile(`^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-.]?(dev|alpha|beta|rc|stable)[\d.]*)?(?:@(dev|alpha|beta|rc|stable))?$`)
+	composerVersionRE = regexp.MustCompile(`^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-.]?((dev|alpha|beta|rc|stable)[\d.]*))?(?:@(dev|alpha|beta|rc|stable))?$`)
 
 	// Matches constraint operators
 	composerOperatorRE = regexp.MustCompile(`^\s*(>=?|<=?|!=|\^|~|=)?\s*(.+)$`)
@@ -68,22 +69,32 @@ func parseComposerVersion(v string) composerVersion {
 		cv.hasPatch = true
 	}
 	if m[4] != "" {
-		cv.stability = m[4]
-	}
-	if m[5] != "" {
+		cv.stabilityFull = strings.Trim(m[4], ".")
 		cv.stability = m[5]
+	}
+	if m[6] != "" {
+		// "@dev" style stability flags affect resolution preference only;
+		// they are not part of the version itself.
+		cv.stability = m[6]
 	}
 
 	return cv
 }
 
 // ParseVersion converts a Composer version string to a PubGrub SemanticVersion.
+// Stability suffixes are preserved (e.g. "1.2.3-beta" stays "1.2.3-beta") so
+// that prerelease versions order below the corresponding stable release and
+// don't collide with it.
 func (ComposerMatcher) ParseVersion(version string) pubgrub.Version {
 	cv := parseComposerVersion(version)
 	if !cv.valid {
 		return nil
 	}
-	semVer, err := pubgrub.ParseSemanticVersion(fmt.Sprintf("%d.%d.%d", cv.major, cv.minor, cv.patch))
+	normalized := fmt.Sprintf("%d.%d.%d", cv.major, cv.minor, cv.patch)
+	if cv.stabilityFull != "" && cv.stabilityFull != "stable" {
+		normalized += "-" + cv.stabilityFull
+	}
+	semVer, err := pubgrub.ParseSemanticVersion(normalized)
 	if err != nil {
 		return pubgrub.SimpleVersion(version)
 	}
@@ -104,9 +115,12 @@ func (ComposerMatcher) ParseConstraint(constraint string) pubgrub.Condition {
 		return pubgrub.NewVersionSetCondition(vs)
 	}
 
-	// Handle "||" (OR) - union of ranges
-	if strings.Contains(constraint, "||") {
-		parts := strings.Split(constraint, "||")
+	// Handle OR - union of ranges. Composer accepts both "||" and a single
+	// "|" as the OR operator. Normalize "||" to "|" first so the subsequent
+	// split doesn't produce empty parts, then split on "|".
+	if strings.Contains(constraint, "|") {
+		normalized := strings.ReplaceAll(constraint, "||", "|")
+		parts := strings.Split(normalized, "|")
 		var ranges []string
 		for _, part := range parts {
 			part = strings.TrimSpace(part)

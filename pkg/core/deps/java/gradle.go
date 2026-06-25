@@ -84,7 +84,6 @@ var gradleConfigurations = map[string]bool{
 	"api":                 true,
 	"compile":             true, // deprecated but still used
 	"runtimeOnly":         true,
-	"compileOnly":         true,
 	"runtimeClasspath":    true,
 	"compileClasspath":    true,
 	"annotationProcessor": true,
@@ -93,7 +92,7 @@ var gradleConfigurations = map[string]bool{
 	"ksp":  true, // Kotlin Symbol Processing
 }
 
-// gradleTestConfigurations lists test-related configurations to skip.
+// gradleTestConfigurations lists configurations to skip for production graphs.
 var gradleTestConfigurations = map[string]bool{
 	"testImplementation":        true,
 	"testCompile":               true,
@@ -101,6 +100,11 @@ var gradleTestConfigurations = map[string]bool{
 	"testCompileOnly":           true,
 	"androidTestImplementation": true,
 	"debugImplementation":       true,
+	// compileOnly is Gradle's equivalent of Maven's "provided" scope: the
+	// dependency is needed at compile time but not packaged or required at
+	// runtime. pom.go skips provided-scope dependencies, so skip compileOnly
+	// here for consistency.
+	"compileOnly": true,
 }
 
 // depStringPattern matches dependency declarations like:

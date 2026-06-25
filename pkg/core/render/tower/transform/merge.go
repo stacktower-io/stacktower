@@ -2,6 +2,7 @@ package transform
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/stacktower-io/stacktower/pkg/core/dag"
 	"github.com/stacktower-io/stacktower/pkg/core/render/tower/layout"
@@ -29,7 +30,7 @@ func MergeSubdividers(l layout.Layout, g *dag.DAG) layout.Layout {
 			// multiple groups. The group containing the master keeps the master's ID
 			// to match RowOrders.
 			if len(subgroups) > 1 && !group.containsMaster {
-				key = fmt.Sprintf("%s@%.0f", master, b.Left)
+				key = fmt.Sprintf("%s@%.0f-%.0f", master, b.Left, b.Right)
 			}
 			blocks[key] = b
 		}
@@ -80,6 +81,28 @@ func groupByPosition(l layout.Layout, g *dag.DAG, members []string) []positionGr
 	for _, grp := range groups {
 		result = append(result, *grp)
 	}
+	slices.SortFunc(result, func(a, b positionGroup) int {
+		ab, bb := merge(a.blocks, ""), merge(b.blocks, "")
+		if ab.Left != bb.Left {
+			if ab.Left < bb.Left {
+				return -1
+			}
+			return 1
+		}
+		if ab.Right != bb.Right {
+			if ab.Right < bb.Right {
+				return -1
+			}
+			return 1
+		}
+		if a.containsMaster != b.containsMaster {
+			if a.containsMaster {
+				return -1
+			}
+			return 1
+		}
+		return 0
+	})
 	return result
 }
 

@@ -53,6 +53,16 @@ type Vulnerability struct {
 
 	// References to advisories, patches, etc.
 	References []Reference `json:"references,omitempty"`
+
+	// DatabaseSpecific carries database-dependent metadata. GHSA records
+	// (the source of most ecosystem advisories) provide a plain severity
+	// string here ("CRITICAL", "HIGH", "MODERATE", "LOW").
+	DatabaseSpecific DatabaseSpecific `json:"database_specific,omitempty"`
+}
+
+// DatabaseSpecific contains database-dependent vulnerability metadata.
+type DatabaseSpecific struct {
+	Severity string `json:"severity,omitempty"`
 }
 
 // SeverityEntry contains a CVSS score or severity string.
@@ -83,8 +93,9 @@ type Range struct {
 // Event marks a point in the version history where the vulnerability
 // was introduced or fixed.
 type Event struct {
-	Introduced string `json:"introduced,omitempty"`
-	Fixed      string `json:"fixed,omitempty"`
+	Introduced   string `json:"introduced,omitempty"`
+	Fixed        string `json:"fixed,omitempty"`
+	LastAffected string `json:"last_affected,omitempty"`
 }
 
 // Reference is a link to an advisory, patch, or other resource.

@@ -2,6 +2,7 @@ package deps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 	"github.com/contriboss/pubgrub-go"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/stacktower-io/stacktower/pkg/cache"
 	"github.com/stacktower-io/stacktower/pkg/core/dag"
 	"github.com/stacktower-io/stacktower/pkg/core/deps/constraints"
 	"github.com/stacktower-io/stacktower/pkg/observability"
@@ -138,18 +140,20 @@ func (r *PubGrubResolver) Resolve(ctx context.Context, pkg string, opts Options)
 	resolvedOpts := opts.WithDefaults()
 
 	source := &pubgrubSource{
-		ctx:            ctx,
-		fetcher:        r.fetcher,
-		lister:         r.lister,
-		parser:         r.parser,
-		opts:           resolvedOpts,
-		rootPkg:        pkg,
-		cache:          make(map[string]*Package),
-		seen:           make(map[string]bool),
-		depth:          make(map[string]int),
-		hintedVersions: make(map[string]map[string]bool),
-		prereleaseDeps: make(map[string]bool),
-		prefetchSem:    make(chan struct{}, 10),
+		ctx:                    ctx,
+		fetcher:                r.fetcher,
+		lister:                 r.lister,
+		parser:                 r.parser,
+		opts:                   resolvedOpts,
+		rootPkg:                pkg,
+		cache:                  make(map[string]*Package),
+		seen:                   make(map[string]bool),
+		depth:                  make(map[string]int),
+		hintedVersions:         make(map[string]map[string]bool),
+		prereleaseDeps:         make(map[string]bool),
+		prefetched:             make(map[string]bool),
+		runtimeConstraintCache: make(map[string]map[string]string),
+		prefetchSem:            make(chan struct{}, 10),
 	}
 	// Wait for speculative prefetches and clear cache after resolution.
 	defer func() {
@@ -433,21 +437,22 @@ func pruneResolvedGraph(g *dag.DAG, rootPkg string, maxDepth, maxNodes int) *dag
 }
 
 // enrichBatch tries to use BatchMetadataProvider for all providers.
-// Returns combined enrichment map, or nil if no batch provider was found.
+// Returns the combined enrichment map, or nil if no batch provider succeeded
+// (caller falls back to the per-package worker pool). A failing provider does
+// not discard results already collected from other batch providers.
 func (r *PubGrubResolver) enrichBatch(
 	ctx context.Context,
 	refs []*PackageRef,
 	opts Options,
 ) map[string]map[string]any {
 	combined := make(map[string]map[string]any)
-	foundBatch := false
+	succeeded := false
 
 	for _, p := range opts.MetadataProviders {
 		bp, ok := p.(BatchMetadataProvider)
 		if !ok {
 			continue
 		}
-		foundBatch = true
 
 		// Fire progress hooks for observability
 		for _, ref := range refs {
@@ -457,9 +462,12 @@ func (r *PubGrubResolver) enrichBatch(
 		batch, err := bp.EnrichBatch(ctx, refs, opts.Refresh)
 		if err != nil {
 			opts.Logger("batch enrich (%s): %v", p.Name(), err)
-			// Fall through -- will return nil so caller uses per-package fallback
-			return nil
+			for _, ref := range refs {
+				observability.ResolverFromContext(ctx).OnFetchComplete(ctx, ref.Name, 0, 0, err)
+			}
+			continue
 		}
+		succeeded = true
 
 		for _, ref := range refs {
 			observability.ResolverFromContext(ctx).OnFetchComplete(ctx, ref.Name, 0, 0, nil)
@@ -473,7 +481,7 @@ func (r *PubGrubResolver) enrichBatch(
 		}
 	}
 
-	if !foundBatch {
+	if !succeeded {
 		return nil
 	}
 	return combined
@@ -492,7 +500,7 @@ func (r *PubGrubResolver) enrichParallel(
 		depth    int
 	}
 
-	workers := min(DefaultWorkers, len(packages))
+	workers := min(opts.WithDefaults().Workers, len(packages))
 	jobs := make([]enrichJob, 0, len(packages))
 	for nodeName, pkg := range packages {
 		jobs = append(jobs, enrichJob{nodeName: nodeName, pkg: pkg, depth: depths[nodeName]})
@@ -585,6 +593,17 @@ type pubgrubSource struct {
 	// when prereleases are otherwise excluded globally.
 	prereleaseDeps map[string]bool
 
+	// prefetched records packages whose version list was already freshly
+	// fetched by a completed prefetch during this resolution. When Refresh is
+	// set, GetVersions consults this so it doesn't bypass the cache and fetch
+	// the same data a second time.
+	prefetched map[string]bool
+
+	// runtimeConstraintCache caches ListVersionsWithConstraints results per
+	// package within this resolution to avoid repeated registry calls during
+	// PubGrub backtracking.
+	runtimeConstraintCache map[string]map[string]string
+
 	// fetchGroup deduplicates concurrent fetches for the same package@version.
 	fetchGroup singleflight.Group
 
@@ -601,10 +620,20 @@ func (s *pubgrubSource) GetVersions(name pubgrub.Name) ([]pubgrub.Version, error
 	if s.ctx.Err() != nil {
 		return nil, s.ctx.Err()
 	}
+	// If a prefetch already refreshed this package's version list during this
+	// resolution, the cached data is fresh; don't bypass the cache again.
+	refresh := s.opts.Refresh && !s.wasPrefetched(name.Value())
+
 	observability.ResolverFromContext(s.ctx).OnFetchStart(s.ctx, name.Value(), 0)
-	versions, err := s.lister.ListVersions(s.ctx, name.Value(), s.opts.Refresh)
+	versions, err := s.lister.ListVersions(s.ctx, name.Value(), refresh)
 	observability.ResolverFromContext(s.ctx).OnFetchComplete(s.ctx, name.Value(), 0, 0, err)
 	if err != nil {
+		if errors.Is(err, cache.ErrNotFound) {
+			// Package doesn't exist in the registry (virtual/platform package).
+			// Return empty so PubGrub marks it as having no versions and backtracks.
+			s.opts.Logger("package %s not found in registry, skipping", name.Value())
+			return nil, nil
+		}
 		return nil, err
 	}
 
@@ -614,8 +643,18 @@ func (s *pubgrubSource) GetVersions(name pubgrub.Name) ([]pubgrub.Version, error
 	var runtimeConstraints map[string]string
 	if s.opts.RuntimeVersion != "" {
 		if rcLister, ok := s.fetcher.(RuntimeConstraintLister); ok {
-			if constraints, rcErr := rcLister.ListVersionsWithConstraints(s.ctx, name.Value(), s.opts.Refresh); rcErr == nil {
-				runtimeConstraints = constraints
+			s.mu.Lock()
+			cached, hasCached := s.runtimeConstraintCache[name.Value()]
+			s.mu.Unlock()
+			if hasCached {
+				runtimeConstraints = cached
+			} else {
+				if rc, rcErr := rcLister.ListVersionsWithConstraints(s.ctx, name.Value(), refresh); rcErr == nil {
+					runtimeConstraints = rc
+					s.mu.Lock()
+					s.runtimeConstraintCache[name.Value()] = rc
+					s.mu.Unlock()
+				}
 			}
 		}
 	}
@@ -647,6 +686,9 @@ func (s *pubgrubSource) GetVersions(name pubgrub.Name) ([]pubgrub.Version, error
 	if len(result) == 0 {
 		pkg, err := s.fetcher.Fetch(s.ctx, name.Value(), s.opts.Refresh)
 		if err != nil {
+			if errors.Is(err, cache.ErrNotFound) {
+				return nil, nil
+			}
 			return nil, err
 		}
 		if pkg.Version != "" && (includePrerelease || !IsPrereleaseVersion(pkg.Version)) {
@@ -697,6 +739,10 @@ func (s *pubgrubSource) GetDependencies(name pubgrub.Name, version pubgrub.Versi
 
 	pkg, err := s.getPackage(name.Value(), version.String())
 	if err != nil {
+		if errors.Is(err, cache.ErrNotFound) {
+			s.opts.Logger("package %s@%s not found, treating as leaf", name.Value(), version.String())
+			return nil, nil
+		}
 		s.opts.Logger("fetch %s@%s: %v", name.Value(), version.String(), err)
 		return nil, err
 	}
@@ -749,9 +795,9 @@ func (s *pubgrubSource) prefetchDeps(dependencies []Dependency) {
 	var toFetch []string
 	for _, dep := range dependencies {
 		s.mu.Lock()
-		_, known := s.depth[dep.Name]
+		alreadyPrefetched := s.prefetched[dep.Name]
 		s.mu.Unlock()
-		if !known {
+		if !alreadyPrefetched {
 			toFetch = append(toFetch, dep.Name)
 		}
 		if len(toFetch) >= maxPrefetch {
@@ -770,9 +816,27 @@ func (s *pubgrubSource) prefetchDeps(dependencies []Dependency) {
 			case <-s.ctx.Done():
 				return
 			}
-			_, _ = s.lister.ListVersions(s.ctx, name, s.opts.Refresh)
+			if _, err := s.lister.ListVersions(s.ctx, name, s.opts.Refresh); err == nil {
+				// Only mark as prefetched after a successful fetch so a later
+				// GetVersions under Refresh doesn't trust a stale cache entry.
+				s.markPrefetched(name)
+			}
 		}()
 	}
+}
+
+func (s *pubgrubSource) markPrefetched(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.prefetched != nil {
+		s.prefetched[name] = true
+	}
+}
+
+func (s *pubgrubSource) wasPrefetched(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.prefetched[name]
 }
 
 func (s *pubgrubSource) packageDepth(name string) (int, bool) {
@@ -842,6 +906,8 @@ func (s *pubgrubSource) clearCache() {
 	s.depth = nil
 	s.hintedVersions = nil
 	s.prereleaseDeps = nil
+	s.prefetched = nil
+	s.runtimeConstraintCache = nil
 }
 
 // getPackage fetches and caches a package by name and version.

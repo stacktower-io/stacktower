@@ -63,13 +63,25 @@ type specifier struct {
 	version parsedVersion // The version to compare against
 }
 
-// parsedVersion holds a parsed semver-like version
+// parsedVersion holds a parsed PEP 440 version. It is a pragmatic subset of
+// the full specification: epoch, a three-component release tuple, one
+// pre-release segment (a/b/rc), one post-release segment, one dev segment,
+// and a local version label.
 type parsedVersion struct {
 	original   string
+	epoch      int // "1!2.0" -> epoch 1 (default 0)
 	major      int
 	minor      int
 	patch      int
-	prerelease bool
+	preType    string // normalized: "a", "b", or "rc"
+	preNum     int    // "1.0a2" -> 2
+	hasPre     bool
+	postNum    int // "1.0.post1" -> 1
+	hasPost    bool
+	devNum     int // "1.0.dev3" -> 3
+	hasDev     bool
+	local      string // "1.0+local.tag" -> "local.tag" (ignored for ordering)
+	prerelease bool   // true when a pre-release or dev segment is present
 	valid      bool
 }
 
@@ -77,9 +89,25 @@ var (
 	// Matches constraint operators and version
 	specRE = regexp.MustCompile(`^\s*(~=|===?|!=|<=?|>=?)\s*([^\s,]+)\s*$`)
 
-	// Matches version components
-	versionRE = regexp.MustCompile(`^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-._]?(a|alpha|b|beta|c|rc|pre|dev|post).*)?$`)
+	// Matches PEP 440 version components:
+	// [epoch!]release[{a|b|rc}N][.postN][.devN][+local]
+	versionRE = regexp.MustCompile(`^(?:(\d+)!)?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-._]?(a|alpha|b|beta|c|rc|pre|preview)[-._]?(\d*))?(?:[-._]?(post|rev|r)[-._]?(\d*))?(?:[-._]?(dev)[-._]?(\d*))?(?:\+([a-z0-9]+(?:[-._][a-z0-9]+)*))?$`)
 )
+
+// normalizePreType maps PEP 440 pre-release spellings to canonical forms:
+// alpha -> a, beta -> b, c/pre/preview -> rc.
+func normalizePreType(t string) string {
+	switch t {
+	case "alpha":
+		return "a"
+	case "beta":
+		return "b"
+	case "c", "pre", "preview":
+		return "rc"
+	default:
+		return t
+	}
+}
 
 // parseConstraint splits a constraint string into individual specifiers.
 // Example: ">=1.0,<2.0" -> [specifier{op:">=", version:1.0}, specifier{op:"<", version:2.0}]
@@ -128,30 +156,115 @@ func parseVersion(v string) parsedVersion {
 	}
 
 	pv.valid = true
-	pv.major, _ = strconv.Atoi(m[1])
-	if m[2] != "" {
-		pv.minor, _ = strconv.Atoi(m[2])
+	if m[1] != "" {
+		pv.epoch, _ = strconv.Atoi(m[1])
 	}
+	pv.major, _ = strconv.Atoi(m[2])
 	if m[3] != "" {
-		pv.patch, _ = strconv.Atoi(m[3])
+		pv.minor, _ = strconv.Atoi(m[3])
 	}
 	if m[4] != "" {
-		pv.prerelease = true
+		pv.patch, _ = strconv.Atoi(m[4])
 	}
+	if m[5] != "" {
+		pv.hasPre = true
+		pv.preType = normalizePreType(m[5])
+		if m[6] != "" {
+			pv.preNum, _ = strconv.Atoi(m[6])
+		}
+	}
+	if m[7] != "" {
+		pv.hasPost = true
+		if m[8] != "" {
+			pv.postNum, _ = strconv.Atoi(m[8])
+		}
+	}
+	if m[9] != "" {
+		pv.hasDev = true
+		if m[10] != "" {
+			pv.devNum, _ = strconv.Atoi(m[10])
+		}
+	}
+	pv.local = m[11]
+	// Post-releases and local versions are NOT pre-releases: pip installs
+	// them by default. Only pre (aN/bN/rcN) and dev segments are.
+	pv.prerelease = pv.hasPre || pv.hasDev
 
 	return pv
 }
 
-// compareVersions compares two versions.
+// segmentRank orders the version segment kinds per PEP 440 for an identical
+// release tuple: dev < pre < final < post.
+func segmentRank(v parsedVersion) int {
+	switch {
+	case v.hasPre:
+		return 1
+	case v.hasPost:
+		return 3
+	case v.hasDev:
+		return 0
+	default:
+		return 2
+	}
+}
+
+// preTypeRank orders pre-release types: a < b < rc.
+func preTypeRank(t string) int {
+	switch t {
+	case "a":
+		return 0
+	case "b":
+		return 1
+	default: // rc
+		return 2
+	}
+}
+
+// compareVersions compares two versions with PEP 440 ordering:
+// epoch first, then the release tuple, then segment kind
+// (dev < pre (a < b < rc) < final < post). Local version labels are
+// ignored for ordering (pragmatic subset of the spec).
 // Returns: >0 if a > b, <0 if a < b, 0 if equal
 func compareVersions(a, b parsedVersion) int {
+	if a.epoch != b.epoch {
+		return a.epoch - b.epoch
+	}
 	if a.major != b.major {
 		return a.major - b.major
 	}
 	if a.minor != b.minor {
 		return a.minor - b.minor
 	}
-	return a.patch - b.patch
+	if a.patch != b.patch {
+		return a.patch - b.patch
+	}
+	if ra, rb := segmentRank(a), segmentRank(b); ra != rb {
+		return ra - rb
+	}
+	// Same segment kind: compare within the segment.
+	if a.hasPre && b.hasPre {
+		if ta, tb := preTypeRank(a.preType), preTypeRank(b.preType); ta != tb {
+			return ta - tb
+		}
+		if a.preNum != b.preNum {
+			return a.preNum - b.preNum
+		}
+	}
+	if a.hasPost && b.hasPost && a.postNum != b.postNum {
+		return a.postNum - b.postNum
+	}
+	// A dev sub-segment sorts below the same version without one
+	// (e.g. 1.0a1.dev1 < 1.0a1, 1.0.post1.dev1 < 1.0.post1).
+	if a.hasDev != b.hasDev {
+		if a.hasDev {
+			return -1
+		}
+		return 1
+	}
+	if a.hasDev && a.devNum != b.devNum {
+		return a.devNum - b.devNum
+	}
+	return 0
 }
 
 // satisfiesAll checks if a version satisfies all specifiers.
@@ -227,17 +340,9 @@ func (v pep440Version) Sort(other pubgrub.Version) int {
 	} else {
 		op = parseVersion(other.String())
 	}
-	if cmp := compareVersions(v.parsed, op); cmp != 0 {
-		return cmp
-	}
-	// Same numeric components: pre-release < stable (PEP 440 §6)
-	if v.parsed.prerelease == op.prerelease {
-		return 0
-	}
-	if v.parsed.prerelease {
-		return -1
-	}
-	return 1
+	// compareVersions implements full PEP 440 ordering including
+	// dev/pre/post segments, so no extra tiebreak is needed here.
+	return compareVersions(v.parsed, op)
 }
 
 // makePEP440Version builds a pep440Version from an already-parsed parsedVersion.
@@ -286,17 +391,20 @@ func (PEP440Matcher) ParseConstraint(constraint string) pubgrub.Condition {
 		case "<=":
 			specSet = pubgrub.NewUpperBoundVersionSet(v, true)
 		case "<":
-			// When bound is a stable version (e.g., <1.0.0), exclude prereleases
-			// of that version too. Users expect <1.0.0 to mean "before the 1.0
-			// release series", not "anything that sorts before 1.0.0".
-			// Achieve this by using a synthetic dev0 prerelease as the bound.
-			if !s.version.prerelease {
+			// When bound is a plain final version (e.g., <1.0.0), exclude
+			// prereleases of that version too. Users expect <1.0.0 to mean
+			// "before the 1.0 release series", not "anything that sorts
+			// before 1.0.0". Achieve this by using a synthetic dev0
+			// prerelease as the bound.
+			if !s.version.hasPre && !s.version.hasPost && !s.version.hasDev {
 				devBound := pep440Version{
 					original: fmt.Sprintf("%d.%d.%d.dev0", s.version.major, s.version.minor, s.version.patch),
 					parsed: parsedVersion{
+						epoch:      s.version.epoch,
 						major:      s.version.major,
 						minor:      s.version.minor,
 						patch:      s.version.patch,
+						hasDev:     true,
 						prerelease: true,
 						valid:      true,
 					},
@@ -313,14 +421,14 @@ func (PEP440Matcher) ParseConstraint(constraint string) pubgrub.Condition {
 				ceil = pep440Version{
 					original: fmt.Sprintf("%d.%d.0", s.version.major, s.version.minor+1),
 					parsed: parsedVersion{
-						major: s.version.major, minor: s.version.minor + 1, valid: true,
+						epoch: s.version.epoch, major: s.version.major, minor: s.version.minor + 1, valid: true,
 					},
 				}
 			} else {
 				ceil = pep440Version{
 					original: fmt.Sprintf("%d.0.0", s.version.major+1),
 					parsed: parsedVersion{
-						major: s.version.major + 1, valid: true,
+						epoch: s.version.epoch, major: s.version.major + 1, valid: true,
 					},
 				}
 			}

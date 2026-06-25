@@ -18,6 +18,7 @@
     {
       "id": "com.google.guava:failureaccess",
       "meta": {
+        "description": "Contains\n    com.google.common.util.concurrent.internal.InternalFutureFailureAccess and\n    InternalFutures. Most users will never need to use this artifact. Its\n    classes are conceptually a part of Guava, but they're in this separate\n    artifact so that Android libraries can use them without pulling in all of\n    Guava (just as they can use ListenableFuture by depending on the\n    listenablefuture artifact).",
         "version": "1.0.3"
       }
     },
@@ -26,16 +27,17 @@
       "license": "Apache-2.0",
       "url": "https://github.com/google/guava",
       "meta": {
+        "description": "Guava is a suite of core and expanded libraries that include\n    utility classes, Google's collections, I/O classes, and\n    much more.",
         "homepage": "https://github.com/google/guava",
         "license": "Apache-2.0",
         "repo_archived": false,
         "repo_description": "Google core libraries for Java",
         "repo_language": "Java",
-        "repo_last_commit": "2026-05-12",
+        "repo_last_commit": "2026-06-08",
         "repo_last_release": "2026-04-14",
         "repo_license": "Apache-2.0",
         "repo_owner": "google",
-        "repo_stars": 51493,
+        "repo_stars": 51474,
         "repo_topics": [
           "guava",
           "java"
@@ -47,23 +49,24 @@
     {
       "id": "com.google.guava:listenablefuture",
       "meta": {
+        "description": "An empty artifact that Guava depends on to signal that it is providing\n    ListenableFuture -- but is also available in a second \"version\" that\n    contains com.google.common.util.concurrent.ListenableFuture class, without\n    any other Guava classes. The idea is:\n\n    - If users want only ListenableFuture, they depend on listenablefuture-1.0.\n\n    - If users want all of Guava, they depend on guava, which, as of Guava\n    27.0, depends on\n    listenablefuture-9999.0-empty-to-avoid-conflict-with-guava. The 9999.0-...\n    version number is enough for some build systems (notably, Gradle) to select\n    that empty artifact over the \"real\" listenablefuture-1.0 -- avoiding a\n    conflict with the copy of ListenableFuture in guava itself. If users are\n    using an older version of Guava or a build system other than Gradle, they\n    may see class conflicts. If so, they can solve them by manually excluding\n    the listenablefuture artifact or manually forcing their build systems to\n    use 9999.0-....",
         "version": "9999.0-empty-to-avoid-conflict-with-guava"
       }
     },
     {
       "id": "com.google.j2objc:j2objc-annotations",
-      "license": "Apache-2.0",
+      "license": "Apache License, Version 2.0",
       "url": "https://github.com/google/j2objc",
       "meta": {
+        "description": "A set of annotations that provide additional information to the J2ObjC\n    translator to modify the result of translation.",
         "homepage": "https://github.com/google/j2objc/",
-        "license": "Apache-2.0",
+        "license": "Apache License, Version 2.0",
         "repo_archived": false,
         "repo_description": "A Java to iOS Objective-C translation tool and runtime.",
         "repo_language": "Java",
-        "repo_last_commit": "2026-05-12",
-        "repo_license": "Apache-2.0",
+        "repo_last_commit": "2026-06-11",
         "repo_owner": "google",
-        "repo_stars": 6040,
+        "repo_stars": 6042,
         "repo_url": "https://github.com/google/j2objc",
         "version": "3.1"
       }
@@ -73,16 +76,17 @@
       "license": "Apache-2.0",
       "url": "https://github.com/jspecify/jspecify",
       "meta": {
+        "description": "An artifact of well-named and well-specified annotations to power static analysis checks",
         "homepage": "http://jspecify.org/",
         "license": "Apache-2.0",
         "repo_archived": false,
         "repo_description": "An artifact of fully-specified annotations to power static-analysis checks, beginning with nullness analysis.",
         "repo_language": "Java",
-        "repo_last_commit": "2026-05-04",
+        "repo_last_commit": "2026-06-08",
         "repo_last_release": "2024-07-17",
         "repo_license": "Apache-2.0",
         "repo_owner": "jspecify",
-        "repo_stars": 1093,
+        "repo_stars": 1099,
         "repo_topics": [
           "java",
           "static-analysis",

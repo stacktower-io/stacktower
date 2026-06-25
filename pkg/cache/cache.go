@@ -78,6 +78,11 @@ type GraphKeyOpts struct {
 	IncludePrerelease bool   `json:"include_prerelease,omitempty"` // Whether prerelease versions were included
 	DependencyScope   string `json:"dependency_scope,omitempty"`   // Whether graph includes prod-only or all dependency groups
 	RuntimeVersion    string `json:"runtime_version,omitempty"`    // Target runtime version for marker evaluation (e.g., "3.11" for Python)
+	FetchContributors bool   `json:"fetch_contributors,omitempty"` // Whether GitHub contributor data was fetched (affects Nebraska rankings)
+	RootName          string `json:"root_name,omitempty"`          // Custom root node name applied after parsing
+	ManifestFilename  string `json:"manifest_filename,omitempty"`  // Manifest filename (selects the parser for ambiguous content)
+	ManifestDir       string `json:"manifest_dir,omitempty"`       // Hash of the manifest's parent directory (parsers read sibling files for workspace context)
+	Authenticated     bool   `json:"authenticated,omitempty"`      // Whether a GitHub token was available during enrichment (affects metadata quality)
 }
 
 // LayoutKeyOpts defines parameters that affect layout computation.
@@ -91,6 +96,7 @@ type LayoutKeyOpts struct {
 	Merge     bool    `json:"merge,omitempty"`
 	Randomize bool    `json:"randomize,omitempty"`
 	Seed      uint64  `json:"seed,omitempty"`
+	Orderer   string  `json:"orderer,omitempty"` // Fingerprint of a custom orderer implementation (type + config)
 }
 
 // ArtifactKeyOpts defines parameters that affect artifact rendering.

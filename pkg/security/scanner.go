@@ -2,6 +2,7 @@ package security
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/stacktower-io/stacktower/pkg/core/dag"
@@ -49,6 +50,11 @@ type Report struct {
 	// VulnerableDeps is the number of dependencies with at least one finding.
 	VulnerableDeps int `json:"vulnerable_deps"`
 
+	// Unscanned lists package names that could not be scanned (e.g. no
+	// resolved version was available, so version-specific vulnerability
+	// matching would produce false positives).
+	Unscanned []string `json:"unscanned,omitempty"`
+
 	// ScannedAt is the timestamp when the scan was performed.
 	ScannedAt time.Time `json:"scanned_at"`
 }
@@ -94,6 +100,12 @@ type Finding struct {
 // vulnerability severity for a given package. The value is a Severity string.
 const MetaVulnSeverity = "vuln_severity"
 
+// MetaVulnFindings is the graph-level metadata key used to store the full
+// JSON-encoded vulnerability [Report] produced during --security-scan.
+// Consumers (e.g. SBOM export) can recover real vulnerability IDs, aliases,
+// summaries, and references from it.
+const MetaVulnFindings = "vuln_findings"
+
 // =============================================================================
 // Graph Integration
 // =============================================================================
@@ -130,6 +142,34 @@ func AnnotateGraph(g *dag.DAG, report *Report) {
 			n.Meta[MetaVulnSeverity] = string(sev)
 		}
 	}
+}
+
+// StoreReport serializes the full report into graph-level metadata under
+// [MetaVulnFindings] so downstream consumers (SBOM export) can access real
+// vulnerability identifiers. Safe to call with a nil report (no-op).
+func StoreReport(g *dag.DAG, report *Report) {
+	if report == nil {
+		return
+	}
+	data, err := json.Marshal(report)
+	if err != nil {
+		return
+	}
+	g.Meta()[MetaVulnFindings] = string(data)
+}
+
+// ReportFromMeta recovers a report stored by [StoreReport] from graph-level
+// metadata. Returns nil if no report is stored or it cannot be decoded.
+func ReportFromMeta(g *dag.DAG) *Report {
+	raw, ok := g.Meta()[MetaVulnFindings].(string)
+	if !ok || raw == "" {
+		return nil
+	}
+	var report Report
+	if err := json.Unmarshal([]byte(raw), &report); err != nil {
+		return nil
+	}
+	return &report
 }
 
 // EcosystemFromLanguage maps stacktower language identifiers to OSV ecosystem names.
@@ -245,7 +285,8 @@ func DependenciesFromDAG(g *dag.DAG, language string) []Dependency {
 	return deps
 }
 
-// StripVulnData removes vulnerability severity metadata from all nodes in a DAG.
+// StripVulnData removes vulnerability metadata from a DAG: per-node severity
+// annotations and the graph-level findings report.
 // This is used when ShowVulns is false — the renderers will not see vuln data.
 func StripVulnData(g *dag.DAG) {
 	for _, n := range g.Nodes() {
@@ -253,6 +294,7 @@ func StripVulnData(g *dag.DAG) {
 			delete(n.Meta, MetaVulnSeverity)
 		}
 	}
+	delete(g.Meta(), MetaVulnFindings)
 }
 
 // =============================================================================

@@ -168,14 +168,14 @@ func TestWeightedMedian(t *testing.T) {
 		name      string
 		neighbors []string
 		positions map[string]int
-		wantMed   int
+		wantMed   float64
 		wantHas   bool
 	}{
 		{
 			name:      "two neighbors",
 			neighbors: []string{"P1", "P2"},
 			positions: map[string]int{"P1": 0, "P2": 2},
-			wantMed:   0, // left median for even count
+			wantMed:   1, // mean of the two middle positions for even count
 			wantHas:   true,
 		},
 		{
@@ -212,7 +212,7 @@ func TestWeightedMedian(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			gotMed, gotHas := weightedMedian(tt.neighbors, tt.positions)
 			if gotMed != tt.wantMed {
-				t.Errorf("median: want %d, got %d", tt.wantMed, gotMed)
+				t.Errorf("median: want %v, got %v", tt.wantMed, gotMed)
 			}
 			if gotHas != tt.wantHas {
 				t.Errorf("hasEdges: want %t, got %t", tt.wantHas, gotHas)

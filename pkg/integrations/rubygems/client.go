@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -301,26 +300,4 @@ type gemVersionResponse struct {
 type dependency struct {
 	Name         string `json:"name"`
 	Requirements string `json:"requirements"` // Version requirement (e.g., "~> 6.0")
-}
-
-func rubyVersionsEquivalent(a, b string) bool {
-	normalize := func(v string) string {
-		v = strings.TrimSpace(strings.TrimPrefix(v, "v"))
-		parts := strings.Split(v, ".")
-		clean := make([]string, 0, len(parts))
-		for _, p := range parts {
-			if p == "" {
-				return v
-			}
-			if _, err := strconv.Atoi(p); err != nil {
-				return v
-			}
-			clean = append(clean, p)
-		}
-		for len(clean) > 1 && clean[len(clean)-1] == "0" {
-			clean = clean[:len(clean)-1]
-		}
-		return strings.Join(clean, ".")
-	}
-	return normalize(a) == normalize(b)
 }

@@ -150,7 +150,7 @@ func (c *Client) fetch(ctx context.Context, pkg, version string, refresh bool, i
 
 	versions, ok := data.Packages[pkg]
 	if !ok || len(versions) == 0 {
-		return fmt.Errorf("no versions found for %s", pkg)
+		return fmt.Errorf("%w: no versions found for packagist package %s", integrations.ErrNotFound, pkg)
 	}
 
 	var v p2Version
@@ -228,7 +228,7 @@ func (c *Client) ListVersions(ctx context.Context, pkg string, refresh bool) ([]
 
 	pkgVersions, ok := data.Packages[pkg]
 	if !ok || len(pkgVersions) == 0 {
-		return nil, fmt.Errorf("no versions found for %s", pkg)
+		return nil, fmt.Errorf("%w: no versions found for packagist package %s", integrations.ErrNotFound, pkg)
 	}
 
 	versions := make([]string, 0, len(pkgVersions))
@@ -260,7 +260,7 @@ func (c *Client) ListVersionsWithConstraints(ctx context.Context, pkg string, re
 		}
 
 		if len(data.Package.Versions) == 0 {
-			return fmt.Errorf("no versions found for %s", pkg)
+			return fmt.Errorf("%w: no versions found for packagist package %s", integrations.ErrNotFound, pkg)
 		}
 
 		result = make(map[string]string, len(data.Package.Versions))
@@ -275,16 +275,41 @@ func (c *Client) ListVersionsWithConstraints(ctx context.Context, pkg string, re
 	return result, nil
 }
 
+// latestStable returns the highest stable version from the list.
+//
+// Stability is determined from the parsed version, not via substring matching
+// (which misclassifies names like "device-1.0" as dev or "force-1.0" as RC):
+//   - branch versions ("dev-main", "2.x-dev") are skipped
+//   - versions without a dot (branch aliases like "v3") are skipped
+//   - versions with a prerelease suffix (-alpha, -beta, -RC1, ...) are skipped
+//
+// Falls back to the first version if no stable version exists.
 func latestStable(versions []p2Version) p2Version {
-	for _, v := range versions {
-		lv := strings.ToLower(v.Version)
-		if strings.Contains(lv, "dev") || strings.Contains(lv, "alpha") ||
-			strings.Contains(lv, "beta") || strings.Contains(lv, "rc") {
+	bestIdx := -1
+	var bestParsed integrations.SemanticVersion
+
+	for i, v := range versions {
+		lv := strings.ToLower(strings.TrimSpace(v.Version))
+		// Composer branch versions: "dev-main", "2.x-dev".
+		if strings.HasPrefix(lv, "dev-") || strings.HasSuffix(lv, "-dev") {
 			continue
 		}
-		if strings.Contains(strings.TrimPrefix(lv, "v"), ".") {
-			return v
+		// Bare majors like "v3" are branch aliases, not releases.
+		if !strings.Contains(strings.TrimPrefix(lv, "v"), ".") {
+			continue
 		}
+		parsed := integrations.ParseSemver(v.Version)
+		if !parsed.Valid || parsed.Prerelease != "" {
+			continue
+		}
+		if bestIdx == -1 || parsed.Compare(bestParsed) > 0 {
+			bestIdx = i
+			bestParsed = parsed
+		}
+	}
+
+	if bestIdx >= 0 {
+		return versions[bestIdx]
 	}
 	return versions[0]
 }

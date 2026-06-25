@@ -1,6 +1,7 @@
 package java
 
 import (
+	"encoding/xml"
 	"os"
 	"path/filepath"
 	"testing"
@@ -104,6 +105,114 @@ func TestPOMParser_Parse(t *testing.T) {
 	// Verify root package
 	if result.RootPackage != "com.example:my-app" {
 		t.Errorf("RootPackage = %q, want %q", result.RootPackage, "com.example:my-app")
+	}
+}
+
+func TestPOMParser_Parse_DependencyManagement(t *testing.T) {
+	dir := t.TempDir()
+	pomFile := filepath.Join(dir, "pom.xml")
+	content := `<?xml version="1.0" encoding="UTF-8"?>
+<project>
+  <groupId>com.example</groupId>
+  <artifactId>my-app</artifactId>
+  <version>1.0.0</version>
+
+  <properties>
+    <guava.version>33.0.0-jre</guava.version>
+    <jackson.version>2.16.1</jackson.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>com.google.guava</groupId>
+        <artifactId>guava</artifactId>
+        <version>${guava.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.slf4j</groupId>
+        <artifactId>slf4j-api</artifactId>
+        <version>2.0.9</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.google.guava</groupId>
+      <artifactId>guava</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+  </dependencies>
+</project>`
+
+	if err := os.WriteFile(pomFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var pom pomProject
+	data, err := os.ReadFile(pomFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := xml.Unmarshal(data, &pom); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	result := extractDependenciesWithVersions(&pom)
+	got := make(map[string]string, len(result))
+	for _, dep := range result {
+		got[dep.Name] = dep.Constraint
+	}
+
+	tests := []struct {
+		coord       string
+		wantVersion string
+	}{
+		// Version managed by dependencyManagement, via a property
+		{"com.google.guava:guava", "33.0.0-jre"},
+		// Version managed by dependencyManagement, declared inline
+		{"org.slf4j:slf4j-api", "2.0.9"},
+		// Inline ${property} reference resolved from <properties>
+		{"com.fasterxml.jackson.core:jackson-databind", "2.16.1"},
+	}
+	for _, tt := range tests {
+		version, ok := got[tt.coord]
+		if !ok {
+			t.Errorf("dependency %q missing from result", tt.coord)
+			continue
+		}
+		if version != tt.wantVersion {
+			t.Errorf("dependency %q version = %q, want %q", tt.coord, version, tt.wantVersion)
+		}
+	}
+}
+
+func TestResolvePomProperty(t *testing.T) {
+	props := &pomProperties{All: map[string]string{"foo.version": "1.2.3"}}
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"1.0.0", "1.0.0"},          // plain version passes through
+		{"${foo.version}", "1.2.3"}, // known property resolved
+		{"${missing}", ""},          // unknown property -> empty
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := resolvePomProperty(tt.input, props); got != tt.want {
+				t.Errorf("resolvePomProperty(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 

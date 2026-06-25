@@ -2,7 +2,6 @@ package deps
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -294,6 +293,11 @@ func ResolveAndMerge(ctx context.Context, resolver Resolver, dependencies []Depe
 		workerCount = 1
 	}
 
+	// Derive a cancellable context so that an early return below unblocks
+	// the worker and feeder goroutines instead of leaking them.
+	workCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	jobs := make(chan int)
 	results := make(chan resolveResult, workerCount)
 
@@ -303,11 +307,11 @@ func ResolveAndMerge(ctx context.Context, resolver Resolver, dependencies []Depe
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
-				if ctx.Err() != nil {
+				if workCtx.Err() != nil {
 					return
 				}
 				dep := dependencies[index]
-				hooks.OnFetchStart(ctx, dep.Name, 0)
+				hooks.OnFetchStart(workCtx, dep.Name, 0)
 
 				resolveOpts := opts
 				if dep.Pinned != "" {
@@ -317,15 +321,19 @@ func ResolveAndMerge(ctx context.Context, resolver Resolver, dependencies []Depe
 					resolveOpts.Version = ""
 					resolveOpts.Constraint = dep.Constraint
 				}
-				g, err := resolver.Resolve(ctx, dep.Name, resolveOpts)
+				g, err := resolver.Resolve(workCtx, dep.Name, resolveOpts)
 
 				depCount := 0
 				if g != nil {
 					depCount = len(g.Nodes())
 				}
-				hooks.OnFetchComplete(ctx, dep.Name, 0, depCount, err)
+				hooks.OnFetchComplete(workCtx, dep.Name, 0, depCount, err)
 
-				results <- resolveResult{index: index, dep: dep, g: g, err: err}
+				select {
+				case results <- resolveResult{index: index, dep: dep, g: g, err: err}:
+				case <-workCtx.Done():
+					return
+				}
 			}
 		}()
 	}
@@ -334,7 +342,7 @@ func ResolveAndMerge(ctx context.Context, resolver Resolver, dependencies []Depe
 		defer close(jobs)
 		for index := range dependencies {
 			select {
-			case <-ctx.Done():
+			case <-workCtx.Done():
 				return
 			case jobs <- index:
 			}
@@ -348,15 +356,16 @@ func ResolveAndMerge(ctx context.Context, resolver Resolver, dependencies []Depe
 
 	// Collect all results, then merge in original dependency order for
 	// deterministic graph construction regardless of goroutine scheduling.
+	//
+	// Only abort the entire merge when the caller's context is cancelled.
+	// Individual resolve errors -- including HTTP client timeouts, which
+	// satisfy errors.Is(err, context.DeadlineExceeded) even when the parent
+	// context is healthy -- are treated as per-dependency failures and
+	// surface as leaf nodes below.
 	collected := make([]resolveResult, 0, len(dependencies))
 	for res := range results {
-		if res.err != nil {
-			if errors.Is(res.err, context.Canceled) || errors.Is(res.err, context.DeadlineExceeded) || ctx.Err() != nil {
-				if ctx.Err() != nil {
-					return nil, ctx.Err()
-				}
-				return nil, res.err
-			}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		collected = append(collected, res)
 	}
@@ -371,7 +380,17 @@ func ResolveAndMerge(ctx context.Context, resolver Resolver, dependencies []Depe
 		}
 
 		for _, n := range res.g.Nodes() {
-			_ = merged.AddNode(dag.Node{ID: n.ID, Meta: n.Meta})
+			if err := merged.AddNode(dag.Node{ID: n.ID, Meta: n.Meta}); err != nil {
+				// Node already exists from a previous subgraph — merge metadata
+				// so later subgraphs can contribute version/constraint info.
+				if existing, ok := merged.Node(n.ID); ok && n.Meta != nil {
+					for k, v := range n.Meta {
+						if _, set := existing.Meta[k]; !set {
+							existing.Meta[k] = v
+						}
+					}
+				}
+			}
 		}
 		for _, e := range res.g.Edges() {
 			addEdge(dag.Edge{From: e.From, To: e.To, Meta: e.Meta})

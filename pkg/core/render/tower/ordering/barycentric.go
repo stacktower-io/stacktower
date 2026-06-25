@@ -55,36 +55,65 @@ func (b Barycentric) OrderRows(g *dag.DAG) map[int][]string {
 func runPasses(g *dag.DAG, rows []int, rowNodes map[int][]*dag.Node, init map[int][]string, passes int) (map[int][]string, int) {
 	orders := copyOrders(init)
 	best := copyOrders(orders)
-	bestScore := dag.CountCrossings(g, orders)
+
+	// Incrementally tracked crossing counts: pairCross[i] holds the
+	// crossings between rows[i] and rows[i+1]. Only the (at most two)
+	// pairs adjacent to a reordered row are recounted, instead of a
+	// full-graph recount after every pass.
+	pairCross := make([]int, max(len(rows)-1, 0))
+	total := 0
+	for i := range pairCross {
+		pairCross[i] = dag.CountLayerCrossings(g, orders[rows[i]], orders[rows[i+1]])
+		total += pairCross[i]
+	}
+	bestScore := total
+
+	recount := func(i int) {
+		if i < 0 || i >= len(pairCross) {
+			return
+		}
+		old := pairCross[i]
+		pairCross[i] = dag.CountLayerCrossings(g, orders[rows[i]], orders[rows[i+1]])
+		total += pairCross[i] - old
+	}
+
+	// sweep reorders row rows[i] against the fixed adjacent row rows[adj]
+	// and refreshes the affected pair counts when the order changed.
+	sweep := func(i, adj int, useParents bool) {
+		r := rows[i]
+		before := orders[r]
+		orders[r] = wmedian(g, rowNodes[r], orders[r], orders[rows[adj]], useParents)
+		transpose(g, orders, r, rows[adj], useParents)
+		if slices.Equal(before, orders[r]) {
+			return
+		}
+		recount(i - 1)
+		recount(i)
+	}
 
 	staleCount := 0
 	for pass := 0; pass < passes && bestScore > 0; pass++ {
-		prevScore := bestScore
+		prevScore := total
 
 		if pass%2 == 0 {
 			for i := 1; i < len(rows); i++ {
-				r := rows[i]
-				orders[r] = wmedian(g, rowNodes[r], orders[r], orders[r-1], true)
-				transpose(g, orders, r, r-1, true)
+				sweep(i, i-1, true)
 			}
 		} else {
 			for i := len(rows) - 2; i >= 0; i-- {
-				r := rows[i]
-				orders[r] = wmedian(g, rowNodes[r], orders[r], orders[r+1], false)
-				transpose(g, orders, r, r+1, false)
+				sweep(i, i+1, false)
 			}
 		}
 
-		score := dag.CountCrossings(g, orders)
-		if score < bestScore {
+		if total < bestScore {
 			best = copyOrders(orders)
-			bestScore = score
+			bestScore = total
 			staleCount = 0
 		} else {
 			staleCount++
 		}
 
-		if staleCount >= 4 && score == prevScore {
+		if staleCount >= 4 && total == prevScore {
 			break
 		}
 	}
@@ -93,16 +122,16 @@ func runPasses(g *dag.DAG, rows []int, rowNodes map[int][]*dag.Node, init map[in
 
 type nodeEntry struct {
 	id         string
-	median     int
+	median     float64
 	hasMedian  bool
 	currentPos int
 }
 
-func (e nodeEntry) sortKey() int {
+func (e nodeEntry) sortKey() float64 {
 	if e.hasMedian {
 		return e.median
 	}
-	return e.currentPos
+	return float64(e.currentPos)
 }
 
 func wmedian(g *dag.DAG, nodes []*dag.Node, current, fixed []string, useParents bool) []string {
@@ -151,7 +180,7 @@ func wmedian(g *dag.DAG, nodes []*dag.Node, current, fixed []string, useParents 
 	return ids
 }
 
-func weightedMedian(neighbors []string, positions map[string]int) (int, bool) {
+func weightedMedian(neighbors []string, positions map[string]int) (float64, bool) {
 	var pos []int
 	for _, n := range neighbors {
 		if p, ok := positions[n]; ok {
@@ -161,6 +190,8 @@ func weightedMedian(neighbors []string, positions map[string]int) (int, bool) {
 	return medianPosition(pos)
 }
 
+const maxTransposeIter = 50
+
 func transpose(g *dag.DAG, orders map[int][]string, row, adjRow int, useParents bool) {
 	order := orders[row]
 	if len(order) < 2 {
@@ -168,7 +199,20 @@ func transpose(g *dag.DAG, orders map[int][]string, row, adjRow int, useParents 
 	}
 
 	adjPos := dag.PosMap(orders[adjRow])
-	for {
+
+	// Also consider the other adjacent row (bidirectional swap evaluation).
+	var otherPos map[string]int
+	if n, ok := g.Node(order[0]); ok {
+		otherRow := n.Row + 1
+		if useParents {
+			otherRow = n.Row - 1
+		}
+		if other, exists := orders[otherRow]; exists && otherRow != adjRow {
+			otherPos = dag.PosMap(other)
+		}
+	}
+
+	for iter := 0; iter < maxTransposeIter; iter++ {
 		swapped := false
 		for i := 0; i < len(order)-1; i++ {
 			left, right := order[i], order[i+1]
@@ -179,8 +223,15 @@ func transpose(g *dag.DAG, orders map[int][]string, row, adjRow int, useParents 
 				}
 			}
 
-			if dag.CountPairCrossingsWithPos(g, right, left, adjPos, useParents) <
-				dag.CountPairCrossingsWithPos(g, left, right, adjPos, useParents) {
+			currentCross := dag.CountPairCrossingsWithPos(g, left, right, adjPos, useParents)
+			swappedCross := dag.CountPairCrossingsWithPos(g, right, left, adjPos, useParents)
+
+			if otherPos != nil {
+				currentCross += dag.CountPairCrossingsWithPos(g, left, right, otherPos, !useParents)
+				swappedCross += dag.CountPairCrossingsWithPos(g, right, left, otherPos, !useParents)
+			}
+
+			if swappedCross < currentCross {
 				order[i], order[i+1] = right, left
 				swapped = true
 			}
@@ -207,13 +258,23 @@ func initOrders(g *dag.DAG, rows []int, rowNodes map[int][]*dag.Node) map[int][]
 	}
 
 	orders := make(map[int][]string, len(rows))
-	orders[rows[0]] = dag.NodeIDs(rowNodes[rows[0]])
-	slices.Sort(orders[rows[0]])
+
+	// Seed the top row by descending out-degree: hub nodes placed centrally
+	// early give the barycentric passes a better starting point than an
+	// arbitrary alphabetical order. Ties break alphabetically for determinism.
+	top := dag.NodeIDs(rowNodes[rows[0]])
+	slices.SortFunc(top, func(a, b string) int {
+		if c := cmp.Compare(len(g.Children(b)), len(g.Children(a))); c != 0 {
+			return c
+		}
+		return cmp.Compare(a, b)
+	})
+	orders[rows[0]] = top
 
 	for i := 1; i < len(rows); i++ {
 		r := rows[i]
 		if nodes := rowNodes[r]; len(nodes) > 0 {
-			orders[r] = orderByMinParent(g, nodes, orders[r-1])
+			orders[r] = orderByMinParent(g, nodes, orders[rows[i-1]])
 		}
 	}
 	return orders

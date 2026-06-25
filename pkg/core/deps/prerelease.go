@@ -2,6 +2,7 @@ package deps
 
 import (
 	"maps"
+	"regexp"
 	"strings"
 
 	"github.com/stacktower-io/stacktower/pkg/core/dag"
@@ -81,48 +82,89 @@ func isPrereleaseNode(n *dag.Node) bool {
 	return IsPrereleaseVersion(version)
 }
 
+// goPseudoVersionSuffixRE matches Go pseudo-version suffixes: a 14-digit UTC
+// timestamp followed by a 12-hex-digit commit prefix, regardless of the base
+// version (see https://go.dev/ref/mod#pseudo-versions). Examples:
+// "v0.0.0-20260218203240-3dfff04db8fa", "v1.2.4-0.20230101120000-abcdef123456".
+var goPseudoVersionSuffixRE = regexp.MustCompile(`(?:^|[.-])\d{14}-[0-9a-f]{12}$`)
+
+// pep440PrereleaseRE matches whole versions carrying PEP 440 style pre/dev
+// markers attached without a hyphen separator, e.g. "1.0.0a1", "2.13.0b12",
+// "1.0rc2", "1.0.0.dev3". Post releases ("1.0.0.post1") are stable and do
+// not match.
+var pep440PrereleaseRE = regexp.MustCompile(`^v?\d+(?:\.\d+)*[._-]?(?:a|b|c|rc|alpha|beta|pre|preview|dev)\d*$`)
+
+// prereleaseMarkers are identifiers that mark a version as prerelease when
+// they appear as a whole identifier (optionally followed by digits) in the
+// prerelease segment, e.g. "1.0.0-alpha.1", "2.0.0-RC2", "1.0-SNAPSHOT".
+var prereleaseMarkers = map[string]bool{
+	"alpha":       true,
+	"beta":        true,
+	"rc":          true,
+	"cr":          true, // JBoss-style candidate release
+	"dev":         true,
+	"development": true,
+	"snapshot":    true,
+	"preview":     true,
+	"pre":         true,
+	"prerelease":  true,
+	"canary":      true,
+	"nightly":     true,
+	"next":        true,
+	"milestone":   true, // Maven milestone releases
+}
+
 // IsPrereleaseVersion checks if a version string represents a prerelease.
 // It detects common prerelease markers like alpha, beta, rc, dev, canary,
-// nightly, next, etc., as well as PEP 440 style markers (e.g., 1.0.0a1).
+// nightly, next, etc., as well as PEP 440 style markers (e.g., 1.0.0a1) and
+// Maven milestones (e.g., 7.0.0-M6).
+//
+// Markers are only matched as whole identifiers within the prerelease segment
+// (after the first '-') so that commit hashes or arbitrary words containing
+// marker substrings (e.g. "1.0.0-MUSL", hex hashes containing "rc") are not
+// misclassified. Go pseudo-versions are never treated as prerelease channels.
 func IsPrereleaseVersion(version string) bool {
 	v := strings.ToLower(strings.TrimSpace(version))
 	if v == "" {
 		return false
 	}
-	// Go pseudo versions include two hyphens and a timestamp/hash and should not
-	// be treated as prerelease channels.
-	if strings.HasPrefix(v, "v0.0.0-") && strings.Count(v, "-") >= 2 {
+
+	// Strip semver build metadata; it has no effect on precedence.
+	if i := strings.IndexByte(v, '+'); i >= 0 {
+		v = v[:i]
+	}
+
+	// Go pseudo versions are synthesized from commits and should not be
+	// treated as prerelease channels, regardless of their base version.
+	if goPseudoVersionSuffixRE.MatchString(v) {
 		return false
 	}
 
-	// Full-word markers (e.g., "1.0.0-alpha.1", "2.0.0-beta.2")
-	markers := []string{
-		"alpha", "beta", "rc", "dev", "snapshot", "preview", "pre", "canary", "nightly", "next",
-		"milestone", // Maven milestone releases
-	}
-	for _, m := range markers {
-		if strings.Contains(v, m) {
-			return true
-		}
+	// PEP 440 abbreviated markers without a hyphen (e.g., "2.13.0b1", "1.0.0a1").
+	if pep440PrereleaseRE.MatchString(v) {
+		return true
 	}
 
-	// Maven milestone pattern: -M followed by digit (e.g., "7.0.0-M6", "3.0.0-M1")
-	for i := 0; i < len(v)-2; i++ {
-		if v[i] == '-' && v[i+1] == 'm' && v[i+2] >= '0' && v[i+2] <= '9' {
+	// Semver-style markers: inspect identifiers in the prerelease segment
+	// after the first '-' (e.g., "1.0.0-alpha.1", "2.0.0-beta-2", "7.0.0-M6").
+	dash := strings.IndexByte(v, '-')
+	if dash < 0 || dash == len(v)-1 {
+		return false
+	}
+	identifiers := strings.FieldsFunc(v[dash+1:], func(r rune) bool {
+		return r == '.' || r == '-' || r == '_'
+	})
+	for _, ident := range identifiers {
+		marker := strings.TrimRight(ident, "0123456789")
+		if marker == "" {
+			continue
+		}
+		if prereleaseMarkers[marker] {
 			return true
 		}
-	}
-
-	// PEP 440 abbreviated markers (e.g., "2.13.0b1", "1.0.0a1")
-	// Match patterns like: 1.0.0a1, 1.0.0b2, 1.0.0.post1 (post is stable)
-	// The pattern is: digit followed by 'a' or 'b' followed by digit
-	for i := 0; i < len(v)-1; i++ {
-		if v[i] >= '0' && v[i] <= '9' {
-			next := v[i+1]
-			// Check for 'a' or 'b' followed by a digit (PEP 440 alpha/beta)
-			if (next == 'a' || next == 'b') && i+2 < len(v) && v[i+2] >= '0' && v[i+2] <= '9' {
-				return true
-			}
+		// Maven milestone pattern: M followed by digits (e.g., "7.0.0-M6").
+		if marker == "m" && len(ident) > 1 {
+			return true
 		}
 	}
 	return false

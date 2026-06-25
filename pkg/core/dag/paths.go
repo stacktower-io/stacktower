@@ -26,9 +26,12 @@ func FindPaths(g *DAG, root, target string, maxPaths int) [][]string {
 	var results [][]string
 	queue := []partial{{path: []string{target}}}
 
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
+	// Head-index queue: avoids re-slicing the backing array on every pop,
+	// which kept all popped entries live and made BFS quadratic-ish on
+	// wide graphs.
+	for head := 0; head < len(queue); head++ {
+		cur := queue[head]
+		queue[head] = partial{} // release the popped path for GC
 
 		tip := cur.path[len(cur.path)-1]
 		for _, parent := range g.Parents(tip) {

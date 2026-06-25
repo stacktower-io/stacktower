@@ -103,21 +103,21 @@ func insertSeparatorAt(d *dag.DAG, row int, usedIDs map[string]struct{}) (bool, 
 		return false, nil
 	}
 
-	for _, child := range children {
-		if child.IsSubdivider() {
-			return false, nil
-		}
-	}
+	// Rows containing subdividers are still processed: eligibleForSeparation
+	// excludes parents whose children include subdividers, and
+	// canInsertBetween keeps separator ranges away from subdivider columns,
+	// so the non-subdivider portion of the row can be untangled safely.
 
 	sorted := slices.Clone(children)
 	slices.SortFunc(sorted, func(a, b *dag.Node) int { return cmp.Compare(a.ID, b.ID) })
 
 	if ranges := findOverlappingSpans(d, sorted); len(ranges) > 0 {
 		shiftRowsDown(d, row)
-		for _, r := range ranges {
-			if err := insertSeparator(d, row, sorted, r, usedIDs); err != nil {
-				return false, err
-			}
+		// Insert only the first range, then signal the caller to re-run the
+		// overlap analysis. The insertion rewires edges and shifts rows, so
+		// the remaining ranges were computed against a stale graph.
+		if err := insertSeparator(d, row, sorted, ranges[0], usedIDs); err != nil {
+			return false, err
 		}
 		return true, nil
 	}
@@ -176,15 +176,16 @@ func childPositions(childIDs []string, posMap map[string]int) []int {
 	return indices
 }
 
+// canInsertBetween reports whether a separator range may cover the gap
+// between children[i] and children[i+1]. Gaps adjacent to a subdivider are
+// excluded: ranges are built only from gaps that pass this check, which
+// guarantees no subdivider node ever falls inside an affected range and gets
+// rerouted through a separator (breaking its vertical column).
 func canInsertBetween(children []*dag.Node, i int) bool {
 	if i < 0 || i+1 >= len(children) {
 		return true
 	}
-	left, right := children[i], children[i+1]
-	if !left.IsSubdivider() || !right.IsSubdivider() {
-		return true
-	}
-	return left.MasterID == "" || left.MasterID != right.MasterID
+	return !children[i].IsSubdivider() && !children[i+1].IsSubdivider()
 }
 
 func collectRanges(overlapCounts []int) []span {
@@ -230,11 +231,17 @@ func insertSeparator(d *dag.DAG, row int, children []*dag.Node, r span, usedIDs 
 		affectedChildren[children[i].ID] = struct{}{}
 	}
 
+	// Collect metadata from edges being rerouted so it can be preserved
+	// on the separator→child edges.
+	childMeta := make(map[string]dag.Metadata)
 	parents := make(map[string]struct{})
 	for _, e := range d.Edges() {
 		if src, ok := d.Node(e.From); ok && src.Row == row-1 {
 			if _, affected := affectedChildren[e.To]; affected {
 				parents[e.From] = struct{}{}
+				if len(e.Meta) > 0 {
+					childMeta[e.To] = e.Meta
+				}
 				d.RemoveEdge(e.From, e.To)
 			}
 		}
@@ -247,7 +254,7 @@ func insertSeparator(d *dag.DAG, row int, children []*dag.Node, r span, usedIDs 
 	}
 
 	for child := range affectedChildren {
-		if err := d.AddEdge(dag.Edge{From: separatorID, To: child}); err != nil {
+		if err := d.AddEdge(dag.Edge{From: separatorID, To: child, Meta: childMeta[child]}); err != nil {
 			return fmt.Errorf("add separator edge %q -> %q: %w", separatorID, child, err)
 		}
 	}

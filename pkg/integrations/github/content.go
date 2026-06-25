@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/stacktower-io/stacktower/pkg/integrations"
 )
 
 const (
@@ -38,7 +41,9 @@ type ContentClient struct {
 // It extracts the "message" field from the JSON body when available,
 // and maps common status codes to friendly descriptions.
 func apiError(resp *http.Response) error {
-	body, _ := io.ReadAll(resp.Body)
+	// Cap the read: error bodies are normally tiny, but the response is not
+	// trusted and an unbounded ReadAll risks memory exhaustion.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, integrations.MaxResponseSize))
 
 	var parsed struct {
 		Message string `json:"message"`
@@ -195,9 +200,9 @@ func (c *ContentClient) FetchUserOrgs(ctx context.Context) ([]OrgMembership, err
 	return all, nil
 }
 
-// FetchUserRepos retrieves all of the authenticated user's repositories.
+// FetchUserRepos retrieves the authenticated user's repositories.
 // This includes private repos if the OAuth token has the 'repo' scope.
-// Results are paginated automatically to retrieve all repos.
+// Results are capped at maxPages * 100 items; users with more repos will be truncated.
 func (c *ContentClient) FetchUserRepos(ctx context.Context) ([]Repo, error) {
 	var allRepos []Repo
 	page := 1
@@ -247,9 +252,14 @@ func (c *ContentClient) FetchUserRepos(ctx context.Context) ([]Repo, error) {
 // ListContents lists files and directories in a repository path.
 // If ref is non-empty, it specifies a branch, tag, or commit SHA.
 func (c *ContentClient) ListContents(ctx context.Context, owner, repo, path, ref string) ([]ContentItem, error) {
-	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s", c.baseURL, owner, repo, path)
+	// Owner/repo may originate from untrusted metadata; validate before
+	// interpolating into the request URL.
+	if err := ValidateRepoRef(owner, repo); err != nil {
+		return nil, err
+	}
+	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s", c.baseURL, owner, repo, escapePathSegments(path))
 	if ref != "" {
-		url += "?ref=" + ref
+		url += "?ref=" + urlEncode(ref)
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -289,9 +299,12 @@ func (c *ContentClient) ListContents(ctx context.Context, owner, repo, path, ref
 // The content is returned as a string (decoded from base64).
 // If ref is non-empty, it specifies a branch, tag, or commit SHA.
 func (c *ContentClient) FetchFile(ctx context.Context, owner, repo, path, ref string) (*FileContent, error) {
-	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s", c.baseURL, owner, repo, path)
+	if err := ValidateRepoRef(owner, repo); err != nil {
+		return nil, err
+	}
+	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s", c.baseURL, owner, repo, escapePathSegments(path))
 	if ref != "" {
-		url += "?ref=" + ref
+		url += "?ref=" + urlEncode(ref)
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -331,6 +344,9 @@ func (c *ContentClient) FetchFile(ctx context.Context, owner, repo, path, ref st
 // This is more efficient for large files as it doesn't use base64 encoding.
 // If ref is non-empty, it specifies a branch, tag, or commit SHA.
 func (c *ContentClient) FetchFileRaw(ctx context.Context, owner, repo, path, ref string) (string, error) {
+	if err := ValidateRepoRef(owner, repo); err != nil {
+		return "", err
+	}
 	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s", c.baseURL, owner, repo, escapePathSegments(path))
 	if ref != "" {
 		url += "?ref=" + urlEncode(ref)
@@ -352,9 +368,14 @@ func (c *ContentClient) FetchFileRaw(ctx context.Context, owner, repo, path, ref
 		return "", apiError(resp)
 	}
 
-	content, err := io.ReadAll(resp.Body)
+	// Limit the read to prevent memory exhaustion on huge files.
+	limited := io.LimitReader(resp.Body, int64(integrations.MaxResponseSize)+1)
+	content, err := io.ReadAll(limited)
 	if err != nil {
 		return "", fmt.Errorf("read content: %w", err)
+	}
+	if len(content) > integrations.MaxResponseSize {
+		return "", fmt.Errorf("response exceeds maximum size of %d bytes", integrations.MaxResponseSize)
 	}
 
 	return string(content), nil
@@ -405,6 +426,9 @@ func (c *ContentClient) setHeaders(req *http.Request) {
 // SearchCode searches for code in a repository.
 // Query follows GitHub code search syntax: https://docs.github.com/en/search-github/searching-on-github/searching-code
 func (c *ContentClient) SearchCode(ctx context.Context, owner, repo, query string) ([]CodeSearchResult, error) {
+	if err := ValidateRepoRef(owner, repo); err != nil {
+		return nil, err
+	}
 	// Build search query with repo filter
 	fullQuery := fmt.Sprintf("%s repo:%s/%s", query, owner, repo)
 	url := fmt.Sprintf("%s/search/code?q=%s&per_page=20", c.baseURL, urlEncode(fullQuery))
@@ -445,12 +469,24 @@ func (c *ContentClient) SearchCode(ctx context.Context, owner, repo, query strin
 	return results, nil
 }
 
+// ErrTreeTruncated indicates the Git tree API returned a truncated listing
+// (GitHub truncates trees with more than ~100k entries). Entries returned
+// alongside this error are valid but incomplete.
+var ErrTreeTruncated = fmt.Errorf("github tree listing truncated")
+
 // GetTree retrieves the full file tree of a repository.
+//
+// If GitHub truncates the listing (very large repos), the entries fetched so
+// far are returned together with [ErrTreeTruncated]; callers can use the
+// partial result or fall back to per-directory listing.
 func (c *ContentClient) GetTree(ctx context.Context, owner, repo, branch string) ([]TreeEntry, error) {
+	if err := ValidateRepoRef(owner, repo); err != nil {
+		return nil, err
+	}
 	if branch == "" {
 		branch = "HEAD"
 	}
-	url := fmt.Sprintf("%s/repos/%s/%s/git/trees/%s?recursive=1", c.baseURL, owner, repo, branch)
+	url := fmt.Sprintf("%s/repos/%s/%s/git/trees/%s?recursive=1", c.baseURL, owner, repo, urlEncode(branch))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -482,11 +518,17 @@ func (c *ContentClient) GetTree(ctx context.Context, owner, repo, branch string)
 		})
 	}
 
+	if treeResp.Truncated {
+		return entries, ErrTreeTruncated
+	}
 	return entries, nil
 }
 
 // GetRepoInfo retrieves repository metadata.
 func (c *ContentClient) GetRepoInfo(ctx context.Context, owner, repo string) (*RepoInfo, error) {
+	if err := ValidateRepoRef(owner, repo); err != nil {
+		return nil, err
+	}
 	url := fmt.Sprintf("%s/repos/%s/%s", c.baseURL, owner, repo)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -529,6 +571,9 @@ func (c *ContentClient) GetRepoInfo(ctx context.Context, owner, repo string) (*R
 // ListBranches retrieves branches for a repository.
 // Results are capped at maxPages * 100 items; large repos may be truncated.
 func (c *ContentClient) ListBranches(ctx context.Context, owner, repo string) ([]Branch, error) {
+	if err := ValidateRepoRef(owner, repo); err != nil {
+		return nil, err
+	}
 	var allBranches []Branch
 	page := 1
 
@@ -582,6 +627,9 @@ func (c *ContentClient) ListBranches(ctx context.Context, owner, repo string) ([
 // ListTags retrieves tags for a repository.
 // Results are capped at maxPages * 100 items; large repos may be truncated.
 func (c *ContentClient) ListTags(ctx context.Context, owner, repo string) ([]Tag, error) {
+	if err := ValidateRepoRef(owner, repo); err != nil {
+		return nil, err
+	}
 	var allTags []Tag
 	page := 1
 
@@ -690,9 +738,12 @@ func (c *ContentClient) ResolveVersionToRef(ctx context.Context, owner, repo, ve
 // If ref is non-empty, it specifies a branch, tag, or commit SHA.
 // Returns nil, nil if no README is found.
 func (c *ContentClient) GetReadme(ctx context.Context, owner, repo, ref string) (*FileContent, error) {
+	if err := ValidateRepoRef(owner, repo); err != nil {
+		return nil, err
+	}
 	url := fmt.Sprintf("%s/repos/%s/%s/readme", c.baseURL, owner, repo)
 	if ref != "" {
-		url += "?ref=" + ref
+		url += "?ref=" + urlEncode(ref)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -744,7 +795,8 @@ func (c *ContentClient) DetectManifestsRecursive(ctx context.Context, owner, rep
 	}
 
 	entries, err := c.GetTree(ctx, owner, repo, ref)
-	if err != nil {
+	truncated := errors.Is(err, ErrTreeTruncated)
+	if err != nil && !truncated {
 		return nil, err
 	}
 
@@ -767,6 +819,12 @@ func (c *ContentClient) DetectManifestsRecursive(ctx context.Context, owner, rep
 				Name:     name,
 			})
 		}
+	}
+
+	// On a truncated tree the partial listing may have missed everything;
+	// fall back to a root-directory scan so huge monorepos still work.
+	if truncated && len(manifests) == 0 {
+		return c.DetectManifests(ctx, owner, repo, ref, patterns)
 	}
 
 	return manifests, nil

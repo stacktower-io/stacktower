@@ -23,7 +23,7 @@
         "repo_last_release": "2025-09-08",
         "repo_license": "MIT",
         "repo_owner": "chalk",
-        "repo_stars": 202,
+        "repo_stars": 201,
         "repo_url": "https://github.com/chalk/ansi-regex",
         "version": "6.2.2"
       }
@@ -44,7 +44,7 @@
         "repo_last_release": "2025-09-08",
         "repo_license": "MIT",
         "repo_owner": "chalk",
-        "repo_stars": 459,
+        "repo_stars": 460,
         "repo_topics": [
           "chalk"
         ],
@@ -68,7 +68,7 @@
         "repo_last_release": "2025-03-17",
         "repo_license": "ISC",
         "repo_owner": "yargs",
-        "repo_stars": 391,
+        "repo_stars": 394,
         "repo_url": "https://github.com/yargs/cliui",
         "version": "9.0.1"
       }
@@ -88,7 +88,7 @@
         "repo_last_commit": "2025-10-13",
         "repo_license": "MIT",
         "repo_owner": "mathiasbynens",
-        "repo_stars": 1905,
+        "repo_stars": 1909,
         "repo_topics": [
           "emoji",
           "regex",
@@ -117,7 +117,7 @@
         "repo_last_release": "2024-08-29",
         "repo_license": "MIT",
         "repo_owner": "lukeed",
-        "repo_stars": 155,
+        "repo_stars": 154,
         "repo_url": "https://github.com/lukeed/escalade",
         "version": "3.2.0"
       }
@@ -179,7 +179,7 @@
         "repo_last_release": "2026-04-27",
         "repo_license": "MIT",
         "repo_owner": "sindresorhus",
-        "repo_stars": 524,
+        "repo_stars": 526,
         "repo_url": "https://github.com/sindresorhus/string-width",
         "version": "7.2.0"
       }
@@ -221,7 +221,7 @@
         "repo_last_release": "2026-02-20",
         "repo_license": "MIT",
         "repo_owner": "chalk",
-        "repo_stars": 135,
+        "repo_stars": 138,
         "repo_url": "https://github.com/chalk/wrap-ansi",
         "version": "9.0.2"
       }
@@ -262,7 +262,7 @@
         "repo_last_release": "2025-05-27",
         "repo_license": "MIT",
         "repo_owner": "yargs",
-        "repo_stars": 11483,
+        "repo_stars": 11487,
         "repo_url": "https://github.com/yargs/yargs",
         "version": "18.0.0"
       }
@@ -279,7 +279,7 @@
         "repo_archived": false,
         "repo_description": ":muscle: the mighty option parser used by yargs",
         "repo_language": "JavaScript",
-        "repo_last_commit": "2026-05-12",
+        "repo_last_commit": "2026-05-15",
         "repo_last_release": "2025-05-26",
         "repo_license": "ISC",
         "repo_owner": "yargs",
@@ -290,6 +290,11 @@
     }
   ],
   "edges": [
+    {
+      "from": "strip-ansi",
+      "to": "ansi-regex",
+      "constraint": "^6.2.2"
+    },
     {
       "from": "yargs",
       "to": "cliui",
@@ -349,11 +354,6 @@
       "from": "cliui",
       "to": "wrap-ansi",
       "constraint": "^9.0.0"
-    },
-    {
-      "from": "strip-ansi",
-      "to": "ansi-regex",
-      "constraint": "^6.2.2"
     },
     {
       "from": "wrap-ansi",

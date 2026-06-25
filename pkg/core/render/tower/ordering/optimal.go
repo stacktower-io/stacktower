@@ -20,14 +20,40 @@ const maxCandidatesBase = 10000
 // spaces too large for optimal search, even with PQ-tree pruning.
 const maxRowWidth = 30
 
-// OptimalSearch implements a branch-and-bound search algorithm to find the
-// mathematically optimal horizontal ordering (minimum crossings). It uses
-// PQ-trees to prune the search space to only include orderings that satisfy
-// structural constraints (Consecutive Ones Property).
+// OptimalSearch implements a constrained anytime branch-and-bound search to
+// minimize edge crossings. Candidate permutations per row are capped, PQ-tree
+// constraints restrict the search space, and OSCM lower bounds prune branches
+// early. The result is the best ordering found within the time budget — not a
+// proven global optimum.
 type OptimalSearch struct {
 	Progress func(explored, pruned, best int)
 	Timeout  time.Duration
 	Debug    func(info DebugInfo)
+
+	// Outcome, if set, receives a summary of how the search ended so
+	// callers can label results honestly (proven optimal vs. best effort).
+	Outcome func(info OutcomeInfo)
+
+	// Ctx optionally provides a parent context so callers can cancel the
+	// search (e.g. on SIGINT) before the Timeout elapses. When cancelled,
+	// OrderRows returns the best ordering found so far. A nil Ctx behaves
+	// like context.Background().
+	Ctx context.Context
+}
+
+// OutcomeInfo describes how an optimal search concluded. Note that even a
+// search that runs to completion is not a proof of optimality (candidate
+// enumeration per row is capped), so callers should label results as
+// "optimized" rather than "optimal".
+type OutcomeInfo struct {
+	// Crossings is the crossing count of the returned ordering.
+	Crossings int
+	// TimedOut is true when the timeout or caller cancellation stopped the
+	// search before completion; the result is the best found so far.
+	TimedOut bool
+	// Fallback is true when a row exceeded the searchable width and the
+	// barycentric heuristic was used instead of branch-and-bound search.
+	Fallback bool
 }
 
 // DebugInfo contains diagnostic information about the optimal search process.
@@ -51,14 +77,6 @@ func (o OptimalSearch) OrderRows(g *dag.DAG) map[int][]string {
 		return nil
 	}
 
-	// Check for rows too wide for optimal search - fall back to barycentric
-	// to avoid factorial memory explosion
-	for _, r := range rows {
-		if len(g.NodesInRow(r)) > maxRowWidth {
-			return Barycentric{}.OrderRows(g)
-		}
-	}
-
 	timeout := o.Timeout
 	if timeout == 0 {
 		timeout = 60 * time.Second
@@ -68,10 +86,15 @@ func (o OptimalSearch) OrderRows(g *dag.DAG) map[int][]string {
 	initialScore := dag.CountCrossings(g, initial)
 	if initialScore == 0 {
 		o.report(1, 0, 0)
+		o.reportOutcome(OutcomeInfo{Crossings: 0})
 		return initial
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	parent := o.Ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	s := &solver{
@@ -83,12 +106,16 @@ func (o OptimalSearch) OrderRows(g *dag.DAG) map[int][]string {
 		ctx:       ctx,
 		cancel:    cancel,
 	}
-	s.bestScore.Store(int64(initialScore))
-	s.bestPath.Store(toIndexPath(g, rows, initial))
+	s.best.Store(&bestResult{
+		score: initialScore,
+		path:  toIndexPath(g, rows, initial),
+	})
 
 	for _, r := range rows {
 		s.rowNodes[r] = g.NodesInRow(r)
 	}
+	s.precomputeCandidates()
+	s.computeLowerBounds()
 
 	if o.Progress != nil {
 		go s.monitor(o.Progress)
@@ -96,21 +123,69 @@ func (o OptimalSearch) OrderRows(g *dag.DAG) map[int][]string {
 
 	s.search()
 
+	best := s.best.Load()
+
 	if o.Progress != nil {
-		o.report(int(s.explored.Load()), int(s.pruned.Load()), int(s.bestScore.Load()))
+		o.report(int(s.explored.Load()), int(s.pruned.Load()), best.score)
 	}
 
 	if o.Debug != nil {
 		o.Debug(s.collectDebugInfo(initial))
 	}
 
-	return toStringOrder(s.rowNodes, s.rows, s.bestPath.Load().([][]int))
+	// A zero-crossing result cancels the context itself, so check the score
+	// before attributing the early exit to the timeout.
+	timedOut := best.score != 0 && ctx.Err() != nil
+
+	result := toStringOrder(s.rowNodes, s.rows, best.path)
+	score := best.score
+
+	// Entity-aware refinement: the search enumerates candidates per row
+	// independently, so coordinated multi-row moves (sliding a whole
+	// pillar or pipe column sideways) and single-row moves lost to the
+	// candidate cap can be missed. Sifting entities recovers both.
+	if score > 0 {
+		if refined := RefinePlacement(parent, g, result); refined < score {
+			score = refined
+		}
+	}
+
+	// Entity branch-and-bound: for small graphs, exactly search the space
+	// of column-consistent layouts (a global order on rigid columns and
+	// single blocks). This covers every coordinated move at once; the
+	// sifted score above seeds the bound so pruning is tight.
+	if score > 0 {
+		if entOrders, entScore, _ := searchEntities(ctx, g, result, score); entOrders != nil && entScore < score {
+			result, score = entOrders, entScore
+		}
+	}
+
+	o.reportOutcome(OutcomeInfo{
+		Crossings: score,
+		TimedOut:  timedOut,
+	})
+
+	return result
 }
 
 func (o OptimalSearch) report(explored, pruned, best int) {
 	if o.Progress != nil {
 		o.Progress(explored, pruned, best)
 	}
+}
+
+func (o OptimalSearch) reportOutcome(info OutcomeInfo) {
+	if o.Outcome != nil {
+		o.Outcome(info)
+	}
+}
+
+// bestResult bundles the best score and path so they can be stored and
+// swapped atomically, avoiding the race where bestScore and bestPath
+// are updated in two separate atomic operations.
+type bestResult struct {
+	score int
+	path  [][]int
 }
 
 type solver struct {
@@ -120,11 +195,19 @@ type solver struct {
 	rowNodes  map[int][]*dag.Node
 	candLimit int
 
-	bestScore atomic.Int64
-	bestPath  atomic.Value
-	explored  atomic.Int64
-	pruned    atomic.Int64
-	maxDepth  atomic.Int64
+	// cachedCandidates[depth] holds the precomputed C1P-valid permutations
+	// for each row. The constraint set depends only on graph structure, not
+	// on the chosen previous-row permutation, so we build once and reuse.
+	cachedCandidates [][][]int
+
+	// lowerBound[depth] is the minimum unavoidable crossings from layer
+	// pair depth..len(rows)-1. Used to prune DFS branches early.
+	lowerBound []int
+
+	best     atomic.Pointer[bestResult]
+	explored atomic.Int64
+	pruned   atomic.Int64
+	maxDepth atomic.Int64
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -153,7 +236,7 @@ func (s *solver) search() {
 
 dispatch:
 	for _, startPerm := range starts {
-		if s.bestScore.Load() == 0 {
+		if s.best.Load().score == 0 {
 			break
 		}
 
@@ -183,7 +266,7 @@ dispatch:
 				score += dag.CountCrossingsIdx(s.fg.edges[parallelRow-1], prefix[parallelRow-1], start, ws)
 			}
 
-			if score >= int(s.bestScore.Load()) {
+			if score+s.lowerBound[parallelRow+1] >= s.best.Load().score {
 				s.pruned.Add(1)
 				return
 			}
@@ -220,30 +303,15 @@ func (s *solver) buildPrefix(parallelRow int) ([][]int, int) {
 }
 
 func (s *solver) generateStartPermutations(parallelRow int, prefix [][]int, workerLimit int) [][]int {
-	parallelNodes := s.rowNodes[s.rows[parallelRow]]
-	n := len(parallelNodes)
+	starts := slices.Clone(s.cachedCandidates[parallelRow])
 
-	var starts [][]int
-	if parallelRow == 0 {
-		if n <= 8 {
-			starts = perm.Generate(n, -1)
-		} else {
-			starts = perm.Generate(n, workerLimit)
-		}
-	} else {
-		prevNodes := s.rowNodes[s.rows[parallelRow-1]]
-		starts = s.generateC1PCandidates(parallelRow, parallelNodes, prefix[parallelRow-1], prevNodes)
-		if len(starts) > workerLimit {
-			starts = starts[:workerLimit]
-		}
-
-		prevPos := make(map[string]int, len(prefix[parallelRow-1]))
-		for i, idx := range prefix[parallelRow-1] {
-			prevPos[prevNodes[idx].ID] = i
-		}
-		sortByBarycenter(starts, s.g, parallelNodes, prevPos)
+	if parallelRow > 0 {
+		sortByBarycenterIdx(starts, s.fg.parents[parallelRow-1], prefix[parallelRow-1])
 	}
 
+	if len(starts) > workerLimit {
+		starts = starts[:workerLimit]
+	}
 	return starts
 }
 
@@ -260,7 +328,7 @@ func (s *solver) dfs(depth, score int, path [][]int, ws *dag.CrossingWorkspace) 
 		}
 	}
 
-	if score >= int(s.bestScore.Load()) {
+	if score+s.lowerBound[depth] >= s.best.Load().score {
 		s.pruned.Add(1)
 		return
 	}
@@ -279,18 +347,13 @@ func (s *solver) dfs(depth, score int, path [][]int, ws *dag.CrossingWorkspace) 
 	}
 
 	prevOrder := path[depth-1]
-	prevNodes := s.rowNodes[s.rows[depth-1]]
-	prevPos := make(map[string]int, len(prevOrder))
-	for i, idx := range prevOrder {
-		prevPos[prevNodes[idx].ID] = i
-	}
 
-	candidates := s.generateC1PCandidates(depth, nodes, prevOrder, prevNodes)
-	sortByBarycenter(candidates, s.g, nodes, prevPos)
+	candidates := slices.Clone(s.cachedCandidates[depth])
+	sortByBarycenterIdx(candidates, s.fg.parents[depth-1], prevOrder)
 
 	for _, candidate := range candidates {
 		newScore := score + dag.CountCrossingsIdx(s.fg.edges[depth-1], prevOrder, candidate, ws)
-		if newScore >= int(s.bestScore.Load()) {
+		if newScore >= s.best.Load().score {
 			s.pruned.Add(1)
 			continue
 		}
@@ -298,30 +361,88 @@ func (s *solver) dfs(depth, score int, path [][]int, ws *dag.CrossingWorkspace) 
 		path[depth] = candidate
 		s.dfs(depth+1, newScore, path, ws)
 
-		if s.bestScore.Load() == 0 || s.ctx.Err() != nil {
+		if s.best.Load().score == 0 || s.ctx.Err() != nil {
 			return
 		}
 	}
 }
 
-func (s *solver) generateC1PCandidates(depth int, nodes []*dag.Node, prevOrder []int, prevNodes []*dag.Node) [][]int {
+// computeLowerBounds fills s.lowerBound with suffix sums of the minimum
+// unavoidable crossings per layer pair. For each pair of nodes u, v in the
+// upper row sharing edges to the lower row, min(c_uv, c_vu) crossings are
+// unavoidable regardless of ordering. The suffix sum lets the DFS prune
+// branches where score + lowerBound[depth] >= best.
+func (s *solver) computeLowerBounds() {
+	nLayers := len(s.rows)
+	s.lowerBound = make([]int, nLayers+1)
+
+	for i := nLayers - 2; i >= 0; i-- {
+		layerEdges := s.fg.edges[i]
+		n := len(layerEdges)
+		lb := 0
+		for u := 0; u < n; u++ {
+			for v := u + 1; v < n; v++ {
+				cuv := countPairCrossingsIdx(layerEdges[u], layerEdges[v])
+				cvu := countPairCrossingsIdx(layerEdges[v], layerEdges[u])
+				lb += min(cuv, cvu)
+			}
+		}
+		// lowerBound[i] covers layer pairs i..nLayers-2
+		s.lowerBound[i] = lb + s.lowerBound[i+1]
+	}
+}
+
+// countPairCrossingsIdx counts crossings between edges from node at position
+// "left" and edges from node at position "right" (left < right in the upper
+// row). A crossing occurs when a target of left is greater than a target of
+// right. Both target slices must be sorted.
+func countPairCrossingsIdx(leftTargets, rightTargets []int) int {
+	crossings := 0
+	j := 0
+	for _, lt := range leftTargets {
+		for j < len(rightTargets) && rightTargets[j] < lt {
+			j++
+		}
+		crossings += j
+	}
+	return crossings
+}
+
+// precomputeCandidates builds the C1P-valid permutations for every depth once
+// so the hot DFS path never touches PQ-trees or string-based graph lookups.
+func (s *solver) precomputeCandidates() {
+	s.cachedCandidates = make([][][]int, len(s.rows))
+	for depth := range s.rows {
+		s.cachedCandidates[depth] = s.buildC1PCandidates(depth)
+	}
+}
+
+// buildC1PCandidates computes the set of structurally valid permutations for
+// a single row. Constraints come from graph structure only (which parents
+// share which children must be consecutive) and are order-independent.
+func (s *solver) buildC1PCandidates(depth int) [][]int {
+	nodes := s.rowNodes[s.rows[depth]]
 	n := len(nodes)
 	if n <= 1 {
 		return [][]int{perm.Seq(n)}
 	}
 
-	// For wide rows, limit candidates more aggressively to prevent memory issues
-	// Each candidate is n ints (8 bytes each), so 1000 candidates × 20 nodes = 160KB
+	// Rows wider than maxRowWidth have search spaces too large even with
+	// PQ-tree pruning. Freeze them at a single candidate (the identity
+	// permutation, which will be the barycentric-initialized order).
+	if n > maxRowWidth {
+		return [][]int{perm.Seq(n)}
+	}
+
 	limit := s.candLimit
 	if n > 15 {
-		// Scale down limit for wider rows: 20 nodes → 500, 25 nodes → 400, 30 nodes → 333
 		limit = min(limit, s.candLimit*15/n)
 	}
 
 	nodeIdx := buildNodeIndex(nodes)
 	tree := perm.NewPQTree(n)
 
-	if !s.applyParentConstraints(tree, nodeIdx, depth, prevOrder, prevNodes) {
+	if !s.applyParentConstraints(tree, nodeIdx, depth) {
 		return s.fallbackPermutations(n)
 	}
 	if !s.applyChildConstraints(tree, nodeIdx, depth) {
@@ -329,9 +450,6 @@ func (s *solver) generateC1PCandidates(depth int, nodes []*dag.Node, prevOrder [
 	}
 
 	if n <= 8 {
-		// For small rows, use actual count but cap at candidate limit
-		// to prevent combinatorial explosion (e.g., 6! = 720 candidates
-		// combined with other large rows creates 720M+ search paths)
 		actualCount := tree.ValidCount()
 		if actualCount <= limit {
 			limit = actualCount
@@ -345,13 +463,17 @@ func (s *solver) generateC1PCandidates(depth int, nodes []*dag.Node, prevOrder [
 	return perms
 }
 
-func (s *solver) applyParentConstraints(tree *perm.PQTree, nodeIdx map[string]int, depth int, prevOrder []int, prevNodes []*dag.Node) bool {
+func (s *solver) applyParentConstraints(tree *perm.PQTree, nodeIdx map[string]int, depth int) bool {
 	row := s.rows[depth]
-	for _, idx := range prevOrder {
-		children := s.g.ChildrenInRow(prevNodes[idx].ID, row)
+	if depth == 0 {
+		return true
+	}
+	for _, parent := range s.rowNodes[s.rows[depth-1]] {
+		children := s.g.ChildrenInRow(parent.ID, row)
 		if constraint := idsToIndices(children, nodeIdx); len(constraint) >= 2 {
+			snapshot := tree.Clone()
 			if !tree.Reduce(constraint) {
-				return false
+				*tree = *snapshot
 			}
 		}
 	}
@@ -366,8 +488,9 @@ func (s *solver) applyChildConstraints(tree *perm.PQTree, nodeIdx map[string]int
 	for _, child := range s.rowNodes[s.rows[depth+1]] {
 		parents := s.g.ParentsInRow(child.ID, row)
 		if constraint := idsToIndices(parents, nodeIdx); len(constraint) >= 2 {
+			snapshot := tree.Clone()
 			if !tree.Reduce(constraint) {
-				return false
+				*tree = *snapshot
 			}
 		}
 	}
@@ -384,17 +507,18 @@ func (s *solver) fallbackPermutations(n int) [][]int {
 func (s *solver) updateBest(path [][]int, score int) {
 	s.explored.Add(1)
 
+	cloned := make([][]int, len(path))
+	for i, p := range path {
+		cloned[i] = slices.Clone(p)
+	}
+	candidate := &bestResult{score: score, path: cloned}
+
 	for {
-		current := int(s.bestScore.Load())
-		if score >= current {
+		current := s.best.Load()
+		if score >= current.score {
 			return
 		}
-		if s.bestScore.CompareAndSwap(int64(current), int64(score)) {
-			cloned := make([][]int, len(path))
-			for i, p := range path {
-				cloned[i] = slices.Clone(p)
-			}
-			s.bestPath.Store(cloned)
+		if s.best.CompareAndSwap(current, candidate) {
 			if score == 0 {
 				s.cancel()
 			}
@@ -403,33 +527,19 @@ func (s *solver) updateBest(path [][]int, score int) {
 	}
 }
 
-func (s *solver) collectDebugInfo(initialOrder map[int][]string) DebugInfo {
+func (s *solver) collectDebugInfo(_ map[int][]string) DebugInfo {
 	info := DebugInfo{
 		TotalRows: len(s.rows),
 		MaxDepth:  int(s.maxDepth.Load()),
 		Rows:      make([]RowDebugInfo, len(s.rows)),
 	}
 
-	path := toIndexPath(s.g, s.rows, initialOrder)
-
 	for i, r := range s.rows {
-		nodes := s.rowNodes[r]
-		rowInfo := RowDebugInfo{
-			Row:       r,
-			NodeCount: len(nodes),
+		info.Rows[i] = RowDebugInfo{
+			Row:        r,
+			NodeCount:  len(s.rowNodes[r]),
+			Candidates: len(s.cachedCandidates[i]),
 		}
-
-		if len(nodes) <= 1 {
-			rowInfo.Candidates = 1
-		} else if i == 0 {
-			rowInfo.Candidates = min(perm.Factorial(len(nodes)), s.candLimit)
-		} else {
-			prevNodes := s.rowNodes[s.rows[i-1]]
-			candidates := s.generateC1PCandidates(i, nodes, path[i-1], prevNodes)
-			rowInfo.Candidates = len(candidates)
-		}
-
-		info.Rows[i] = rowInfo
 	}
 
 	return info
@@ -443,13 +553,14 @@ func (s *solver) monitor(fn func(int, int, int)) {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			fn(int(s.explored.Load()), int(s.pruned.Load()), int(s.bestScore.Load()))
+			fn(int(s.explored.Load()), int(s.pruned.Load()), s.best.Load().score)
 		}
 	}
 }
 
 type fastGraph struct {
 	edges       [][][]int
+	parents     [][][]int // parents[i][j] = indices in row i of parents of row i+1 node j
 	maxRowWidth int
 }
 
@@ -466,6 +577,7 @@ func newFastGraph(g *dag.DAG, rows []int) *fastGraph {
 
 	fg := &fastGraph{
 		edges:       make([][][]int, len(rows)-1),
+		parents:     make([][][]int, len(rows)-1),
 		maxRowWidth: maxWidth,
 	}
 
@@ -479,12 +591,15 @@ func newFastGraph(g *dag.DAG, rows []int) *fastGraph {
 		}
 
 		fg.edges[i] = make([][]int, len(upper))
+		fg.parents[i] = make([][]int, len(lower))
+
 		for j, node := range upper {
 			children := g.ChildrenInRow(node.ID, rows[i+1])
 			targets := make([]int, 0, len(children))
 			for _, child := range children {
 				if idx, ok := lowerIdx[child]; ok {
 					targets = append(targets, idx)
+					fg.parents[i][idx] = append(fg.parents[i][idx], j)
 				}
 			}
 			slices.Sort(targets)
@@ -494,14 +609,43 @@ func newFastGraph(g *dag.DAG, rows []int) *fastGraph {
 	return fg
 }
 
-func sortByBarycenter(perms [][]int, g *dag.DAG, nodes []*dag.Node, prevPos map[string]int) {
+// sortByBarycenterIdx ranks candidate permutations by how closely they match
+// the barycentric ideal: each node's position should equal the mean position
+// of its parents in the previous row. Works entirely on integer indices to
+// avoid string hashing and DAG lookups in the DFS hot path.
+func sortByBarycenterIdx(perms [][]int, parentLists [][]int, prevPerm []int) {
+	if len(perms) <= 1 {
+		return
+	}
+	// Build inverse: prevPos[origIdx] = position in current permutation
+	prevPos := make([]int, len(prevPerm))
+	for pos, origIdx := range prevPerm {
+		if origIdx < len(prevPos) {
+			prevPos[origIdx] = pos
+		}
+	}
+
 	type scored struct {
 		perm  []int
 		score float64
 	}
 	s := make([]scored, len(perms))
 	for i, p := range perms {
-		s[i] = scored{p, barycenterDeviationIndices(g, nodes, p, prevPos, true)}
+		dev := 0.0
+		for pos, origIdx := range p {
+			parents := parentLists[origIdx]
+			if len(parents) == 0 {
+				continue
+			}
+			sum := 0
+			for _, pidx := range parents {
+				sum += prevPos[pidx]
+			}
+			bc := float64(sum) / float64(len(parents))
+			delta := float64(pos) - bc
+			dev += delta * delta
+		}
+		s[i] = scored{p, dev}
 	}
 	slices.SortFunc(s, func(a, b scored) int {
 		return cmp.Compare(a.score, b.score)

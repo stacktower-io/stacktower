@@ -64,6 +64,9 @@ func Diff(before, after *DAG) *DiffResult {
 	beforeNodes := collectDiffNodes(before, excludeIDs)
 	afterNodes := collectDiffNodes(after, excludeIDs)
 
+	beforeDepths := bfsDepths(before, result.Before.RootID)
+	afterDepths := bfsDepths(after, result.After.RootID)
+
 	// Added: in after but not in before
 	for id, an := range afterNodes {
 		if _, ok := beforeNodes[id]; !ok {
@@ -93,10 +96,17 @@ func Diff(before, after *DAG) *DiffResult {
 		oldV := metaVersion(bn)
 		newV := metaVersion(an)
 		if oldV != newV {
+			depthChange := 0
+			if bd, ok := beforeDepths[id]; ok {
+				if ad, ok := afterDepths[id]; ok {
+					depthChange = ad - bd
+				}
+			}
 			result.Updated = append(result.Updated, DiffUpdate{
-				ID:         id,
-				OldVersion: oldV,
-				NewVersion: newV,
+				ID:          id,
+				OldVersion:  oldV,
+				NewVersion:  newV,
+				DepthChange: depthChange,
 			})
 		} else {
 			result.Unchanged++
@@ -112,6 +122,28 @@ func Diff(before, after *DAG) *DiffResult {
 	result.NewVulns = detectNewVulns(beforeNodes, afterNodes)
 
 	return result
+}
+
+// bfsDepths returns the minimum edge-distance from root for every reachable
+// node, computed with a single breadth-first traversal.
+func bfsDepths(g *DAG, root string) map[string]int {
+	depths := make(map[string]int)
+	if _, ok := g.Node(root); !ok {
+		return depths
+	}
+	depths[root] = 0
+	queue := []string{root}
+	for head := 0; head < len(queue); head++ {
+		id := queue[head]
+		for _, child := range g.Children(id) {
+			if _, seen := depths[child]; seen {
+				continue
+			}
+			depths[child] = depths[id] + 1
+			queue = append(queue, child)
+		}
+	}
+	return depths
 }
 
 func buildDiffSummary(g *DAG) DiffSummary {

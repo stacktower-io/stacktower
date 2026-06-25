@@ -170,6 +170,27 @@ func TestRenderSVG_MergedDeduplicatesEdgesToSameMaster(t *testing.T) {
 	}
 }
 
+func TestRenderSVG_SkipsTextForTinyBlocks(t *testing.T) {
+	g := dag.New(nil)
+	g.AddNode(dag.Node{ID: "big", Row: 0})
+	g.AddNode(dag.Node{ID: "tiny", Row: 1})
+
+	l := layout.Build(g, 400, 300)
+	// Shrink "tiny" to be below the label threshold.
+	if b, ok := l.Blocks["tiny"]; ok {
+		b.Left = b.Left + b.Width() - 10
+		l.Blocks["tiny"] = b
+	}
+
+	svg := string(RenderSVG(l, WithGraph(g)))
+	if !strings.Contains(svg, ">big</text>") {
+		t.Error("big block should have a label")
+	}
+	if strings.Contains(svg, ">tiny</text>") {
+		t.Error("tiny block should NOT have a label (too small)")
+	}
+}
+
 func TestExtractPopupData_FallsBackToNodeIDDescription(t *testing.T) {
 	n := &dag.Node{ID: "stacktower", Meta: dag.Metadata{"virtual": true}}
 	p := extractPopupData(n)

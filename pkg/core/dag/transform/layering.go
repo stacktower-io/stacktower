@@ -44,6 +44,11 @@ func AssignLayers(g *dag.DAG) {
 	queue := make([]string, 0, len(nodes))
 
 	for _, n := range nodes {
+		// Seed every node at row 0 so stale Row values (e.g. from a graph
+		// file with bad metadata) are always overwritten: sources and
+		// unreachable nodes would otherwise keep their old rows because
+		// SetRows preserves rows for nodes missing from the map.
+		rows[n.ID] = 0
 		degree := g.InDegree(n.ID)
 		inDegree[n.ID] = degree
 		if degree == 0 {
@@ -67,4 +72,34 @@ func AssignLayers(g *dag.DAG) {
 	}
 
 	g.SetRows(rows)
+}
+
+// IsLayered reports whether the graph's row assignments are consistent with
+// a valid layering:
+//   - at least one node sits on row 0 (rows start at the top), and
+//   - every edge points from a lower row to a strictly higher row.
+//
+// Edges may span more than one row (subdivision happens separately), but an
+// edge within a row or pointing upward means the rows were never assigned or
+// are stale, and AssignLayers should be (re-)run.
+//
+// An empty graph is considered layered.
+func IsLayered(g *dag.DAG) bool {
+	if g.NodeCount() == 0 {
+		return true
+	}
+	if len(g.NodesInRow(0)) == 0 {
+		return false
+	}
+	for _, e := range g.Edges() {
+		from, okF := g.Node(e.From)
+		to, okT := g.Node(e.To)
+		if !okF || !okT {
+			return false
+		}
+		if to.Row <= from.Row {
+			return false
+		}
+	}
+	return true
 }

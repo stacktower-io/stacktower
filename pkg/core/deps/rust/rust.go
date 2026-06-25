@@ -383,12 +383,44 @@ type cargoSource struct {
 	matcher CargoMatcher
 	opts    deps.Options
 
-	mu         sync.Mutex
-	cache      map[string]*deps.Package // "name@version" → package
-	seen       map[string]bool          // namespaced names admitted into solving
-	depth      map[string]int           // best-known depth by namespaced name
-	buckets    map[string]string        // bare crate name → bucket (for wildcard deps)
-	fetchGroup singleflight.Group
+	mu          sync.Mutex
+	cache       map[string]*deps.Package     // "name@version" → package
+	seen        map[string]bool              // namespaced names admitted into solving
+	depth       map[string]int               // best-known depth by namespaced name
+	buckets     map[string]string            // bare crate name → bucket (for wildcard deps)
+	runtimeCons map[string]map[string]string // bare crate name → version → runtime constraint
+	fetchGroup  singleflight.Group
+}
+
+// listRuntimeConstraints returns the version → runtime-constraint map for a
+// crate, memoized per source. GetVersions is called repeatedly for the same
+// crate during solving (each namespaced bucket triggers a lookup), so without
+// memoization the constraint listing would be re-fetched on every call.
+func (s *cargoSource) listRuntimeConstraints(realName string) map[string]string {
+	s.mu.Lock()
+	if s.runtimeCons != nil {
+		if cons, ok := s.runtimeCons[realName]; ok {
+			s.mu.Unlock()
+			return cons
+		}
+	}
+	s.mu.Unlock()
+
+	result, _, _ := s.fetchGroup.Do("runtime-constraints:"+realName, func() (any, error) {
+		// Cache failures as nil too: re-fetching on every GetVersions call
+		// would re-trigger the same error path.
+		cons, _ := s.fetcher.ListVersionsWithConstraints(s.ctx, realName, s.opts.Refresh)
+
+		s.mu.Lock()
+		if s.runtimeCons == nil {
+			s.runtimeCons = make(map[string]map[string]string)
+		}
+		s.runtimeCons[realName] = cons
+		s.mu.Unlock()
+		return cons, nil
+	})
+	cons, _ := result.(map[string]string)
+	return cons
 }
 
 func (s *cargoSource) GetVersions(name pubgrub.Name) ([]pubgrub.Version, error) {
@@ -408,7 +440,7 @@ func (s *cargoSource) GetVersions(name pubgrub.Name) ([]pubgrub.Version, error) 
 
 	var runtimeConstraints map[string]string
 	if s.opts.RuntimeVersion != "" {
-		runtimeConstraints, _ = s.fetcher.ListVersionsWithConstraints(s.ctx, realName, s.opts.Refresh)
+		runtimeConstraints = s.listRuntimeConstraints(realName)
 	}
 
 	result := make([]pubgrub.Version, 0, len(versions))
@@ -634,6 +666,7 @@ func (s *cargoSource) clearCache() {
 	s.seen = nil
 	s.depth = nil
 	s.buckets = nil
+	s.runtimeCons = nil
 }
 
 // ---------------------------------------------------------------------------

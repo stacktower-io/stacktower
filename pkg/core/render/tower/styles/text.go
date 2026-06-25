@@ -12,8 +12,8 @@ const (
 	fontHeightRatio  = 0.6
 	fontWidthRatio   = 0.85
 	fontCharWidth    = 0.55
-	fontSizeMin      = 8.0
-	fontSizeMax      = 24.0
+	fontSizeMin      = 10.0
+	fontSizeMax      = 56.0
 	rotateSizeDampen = 0.75
 )
 
@@ -57,7 +57,20 @@ func TruncateLabel(b Block, rotated bool) string {
 	if len(label) <= maxChars {
 		return label
 	}
-	return label[:maxChars-2] + ".."
+	return middleTruncate(label, maxChars)
+}
+
+// middleTruncate keeps the first and last parts of a label, replacing the
+// middle with ".." so users can still identify scoped package names like
+// "micromark-extension-gfm-literal" → "micromark-..literal".
+func middleTruncate(s string, maxChars int) string {
+	if maxChars < 5 {
+		return s[:maxChars-2] + ".."
+	}
+	keep := maxChars - 2 // space taken by ".."
+	head := keep / 2
+	tail := keep - head
+	return s[:head] + ".." + s[len(s)-tail:]
 }
 
 func EscapeXML(s string) string {

@@ -150,3 +150,112 @@ func TestNPMResolverDeduplicatesCompatibleVersions(t *testing.T) {
 		t.Error("expected bare 'lodash', not 'lodash@4.17.21'")
 	}
 }
+
+func TestNPMResolverEdgesTargetCorrectVersion(t *testing.T) {
+	// When two versions of a package coexist, each parent should have an edge
+	// only to the version that satisfies its constraint — not to both.
+	fake := fakeNPMFetcher{
+		versions: map[string][]string{
+			"app":    {"1.0.0"},
+			"a":      {"1.0.0"},
+			"b":      {"1.0.0"},
+			"shared": {"1.2.0", "2.0.0"},
+		},
+		packages: map[string]map[string]*deps.Package{
+			"app": {"1.0.0": {Name: "app", Version: "1.0.0", Dependencies: []deps.Dependency{
+				{Name: "a", Constraint: "^1.0.0"},
+				{Name: "b", Constraint: "^1.0.0"},
+			}}},
+			"a": {"1.0.0": {Name: "a", Version: "1.0.0", Dependencies: []deps.Dependency{
+				{Name: "shared", Constraint: "^1.0.0"},
+			}}},
+			"b": {"1.0.0": {Name: "b", Version: "1.0.0", Dependencies: []deps.Dependency{
+				{Name: "shared", Constraint: "^2.0.0"},
+			}}},
+			"shared": {
+				"1.2.0": {Name: "shared", Version: "1.2.0"},
+				"2.0.0": {Name: "shared", Version: "2.0.0"},
+			},
+		},
+	}
+
+	resolver := &npmResolver{fetcher: fake, matcher: SemverMatcher{}}
+	g, err := resolver.Resolve(context.Background(), "app", deps.Options{MaxDepth: 10, MaxNodes: 100})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	// Both versions should exist
+	if _, ok := g.Node("shared@1.2.0"); !ok {
+		t.Fatal("expected shared@1.2.0 node")
+	}
+	if _, ok := g.Node("shared@2.0.0"); !ok {
+		t.Fatal("expected shared@2.0.0 node")
+	}
+
+	// "a" depends on shared ^1.0.0 → should point only to shared@1.2.0
+	aChildren := g.Children("a")
+	for _, child := range aChildren {
+		if child == "shared@2.0.0" {
+			t.Error("'a' should not have edge to shared@2.0.0 (constraint is ^1.0.0)")
+		}
+	}
+	foundCorrect := false
+	for _, child := range aChildren {
+		if child == "shared@1.2.0" {
+			foundCorrect = true
+		}
+	}
+	if !foundCorrect {
+		t.Errorf("'a' should have edge to shared@1.2.0, children: %v", aChildren)
+	}
+
+	// "b" depends on shared ^2.0.0 → should point only to shared@2.0.0
+	bChildren := g.Children("b")
+	for _, child := range bChildren {
+		if child == "shared@1.2.0" {
+			t.Error("'b' should not have edge to shared@1.2.0 (constraint is ^2.0.0)")
+		}
+	}
+	foundCorrect = false
+	for _, child := range bChildren {
+		if child == "shared@2.0.0" {
+			foundCorrect = true
+		}
+	}
+	if !foundCorrect {
+		t.Errorf("'b' should have edge to shared@2.0.0, children: %v", bChildren)
+	}
+}
+
+func TestNPMResolverFailedFetchDoesNotConsumeNodeBudget(t *testing.T) {
+	// A failing fetch should release its reserved MaxNodes slot so other
+	// packages can still be resolved within the budget.
+	fake := fakeNPMFetcher{
+		versions: map[string][]string{
+			"app":     {"1.0.0"},
+			"broken":  {"1.0.0"},
+			"working": {"1.0.0"},
+		},
+		packages: map[string]map[string]*deps.Package{
+			"app": {"1.0.0": {Name: "app", Version: "1.0.0", Dependencies: []deps.Dependency{
+				{Name: "broken", Constraint: "^1.0.0"},
+				{Name: "working", Constraint: "^1.0.0"},
+			}}},
+			// "broken" has a version listed but no package data → FetchVersion returns nil
+			"working": {"1.0.0": {Name: "working", Version: "1.0.0"}},
+		},
+	}
+
+	resolver := &npmResolver{fetcher: fake, matcher: SemverMatcher{}}
+	// MaxNodes = 3: root + broken (fails) + working. If broken's slot isn't
+	// released, working would be rejected.
+	g, err := resolver.Resolve(context.Background(), "app", deps.Options{MaxDepth: 10, MaxNodes: 3})
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if _, ok := g.Node("working"); !ok {
+		t.Error("expected 'working' node — failed fetch should not consume budget")
+	}
+}

@@ -103,6 +103,36 @@ dependencies {
 	}
 }
 
+func TestGradleParser_Parse_SkipsCompileOnly(t *testing.T) {
+	// compileOnly is Gradle's equivalent of Maven's "provided" scope; it is
+	// excluded from production graphs for consistency with pom.go.
+	dir := t.TempDir()
+	gradleFile := filepath.Join(dir, "build.gradle")
+	content := `dependencies {
+    implementation 'org.springframework:spring-core:5.3.0'
+    compileOnly 'org.projectlombok:lombok:1.18.30'
+}
+`
+
+	if err := os.WriteFile(gradleFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	parser := &GradleParser{}
+	result, err := parser.Parse(gradleFile, deps.Options{})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	g := result.Graph
+	if _, ok := g.Node("org.springframework:spring-core"); !ok {
+		t.Error("expected implementation dependency to be included")
+	}
+	if _, ok := g.Node("org.projectlombok:lombok"); ok {
+		t.Error("compileOnly dependency should be excluded (provided scope)")
+	}
+}
+
 func TestGradleParser_Parse_KotlinDSL(t *testing.T) {
 	content := `plugins {
     kotlin("jvm") version "1.9.0"

@@ -64,6 +64,54 @@ func TestSubdivide_VeryLongEdge(t *testing.T) {
 	}
 }
 
+// TestSubdivide_SharedChainPerSource verifies that multiple long edges from
+// the same source share one subdivider column instead of one chain per edge
+// (the "duplicate pydantic blocks" rendering bug).
+func TestSubdivide_SharedChainPerSource(t *testing.T) {
+	g := dag.New(nil)
+	_ = g.AddNode(dag.Node{ID: "pyd", Row: 1})
+	_ = g.AddNode(dag.Node{ID: "x", Row: 3})
+	_ = g.AddNode(dag.Node{ID: "y", Row: 3})
+	_ = g.AddNode(dag.Node{ID: "z", Row: 4})
+	// Sinks at the bottom row so sink extension doesn't add chains for x/y.
+	_ = g.AddEdge(dag.Edge{From: "pyd", To: "x"}) // spans row 2
+	_ = g.AddEdge(dag.Edge{From: "pyd", To: "y"}) // spans row 2
+	_ = g.AddEdge(dag.Edge{From: "pyd", To: "z"}) // spans rows 2-3
+	_ = g.AddEdge(dag.Edge{From: "x", To: "z"})
+	_ = g.AddEdge(dag.Edge{From: "y", To: "z"})
+
+	Subdivide(g)
+
+	perRow := make(map[int][]string)
+	for _, n := range g.Nodes() {
+		if n.IsSubdivider() {
+			if n.MasterID != "pyd" {
+				t.Errorf("subdivider %s: MasterID = %q, want %q", n.ID, n.MasterID, "pyd")
+			}
+			perRow[n.Row] = append(perRow[n.Row], n.ID)
+		}
+	}
+
+	// All three long edges pass row 2; they must share ONE subdivider there.
+	if len(perRow[2]) != 1 {
+		t.Fatalf("row 2: want 1 shared subdivider, got %d (%v)", len(perRow[2]), perRow[2])
+	}
+	// Only pyd→z continues through row 3.
+	if len(perRow[3]) != 1 {
+		t.Fatalf("row 3: want 1 subdivider, got %d (%v)", len(perRow[3]), perRow[3])
+	}
+
+	sub2, sub3 := perRow[2][0], perRow[3][0]
+	// The shared segment diverges to x, y, and the row-3 segment.
+	gotChildren := g.Children(sub2)
+	if len(gotChildren) != 3 {
+		t.Errorf("shared subdivider children = %v, want x, y and %s", gotChildren, sub3)
+	}
+	if kids := g.Children(sub3); len(kids) != 1 || kids[0] != "z" {
+		t.Errorf("row-3 segment children = %v, want [z]", kids)
+	}
+}
+
 func TestSubdivide_MixedEdgeLengths(t *testing.T) {
 	g := dag.New(nil)
 	_ = g.AddNode(dag.Node{ID: "a", Row: 0})
@@ -188,6 +236,70 @@ func TestSubdivide_SubdividerNaming(t *testing.T) {
 	for _, sub := range subdividers {
 		if sub.MasterID != "parent" {
 			t.Errorf("subdivider %s should have MasterID 'parent', got '%s'", sub.ID, sub.MasterID)
+		}
+	}
+}
+
+func TestSubdivide_ResubdivisionKeepsOriginalMaster(t *testing.T) {
+	// Simulates the post-separator-insertion state: an existing subdivider
+	// whose outgoing edge spans multiple rows (separator insertion shifted
+	// the rows below it). Re-subdividing must link the new segment to the
+	// ORIGINAL master, not the intermediate subdivider, or MergeSubdividers
+	// can never reassemble the column.
+	g := dag.New(nil)
+	_ = g.AddNode(dag.Node{ID: "a", Row: 0})
+	_ = g.AddNode(dag.Node{ID: "a_sub_1", Row: 1, Kind: dag.NodeKindSubdivider, MasterID: "a"})
+	_ = g.AddNode(dag.Node{ID: "w", Row: 3})
+	_ = g.AddEdge(dag.Edge{From: "a", To: "a_sub_1"})
+	_ = g.AddEdge(dag.Edge{From: "a_sub_1", To: "w"}) // spans rows 1 -> 3
+
+	Subdivide(g)
+
+	for _, n := range g.Nodes() {
+		if !n.IsSubdivider() {
+			continue
+		}
+		if got := n.EffectiveID(); got != "a" {
+			t.Errorf("subdivider %s: EffectiveID = %q, want %q (column would split on merge)", n.ID, got, "a")
+		}
+	}
+}
+
+func TestNormalize_SeparatorMidChainKeepsMaster(t *testing.T) {
+	// End-to-end: a K2,2 tangle (p,q -> x,y) forces a separator beam in the
+	// middle of the long-edge chain a -> w. The re-subdivision after
+	// separator insertion must keep the whole chain under master "a".
+	g := dag.New(nil)
+	for _, id := range []string{"a", "b", "p", "q", "x", "y", "c", "d", "w"} {
+		_ = g.AddNode(dag.Node{ID: id, Row: 0})
+	}
+	_ = g.AddEdge(dag.Edge{From: "a", To: "p"})
+	_ = g.AddEdge(dag.Edge{From: "a", To: "q"})
+	_ = g.AddEdge(dag.Edge{From: "p", To: "x"})
+	_ = g.AddEdge(dag.Edge{From: "p", To: "y"})
+	_ = g.AddEdge(dag.Edge{From: "q", To: "x"})
+	_ = g.AddEdge(dag.Edge{From: "q", To: "y"})
+	_ = g.AddEdge(dag.Edge{From: "b", To: "c"})
+	_ = g.AddEdge(dag.Edge{From: "c", To: "d"})
+	_ = g.AddEdge(dag.Edge{From: "d", To: "w"})
+	_ = g.AddEdge(dag.Edge{From: "a", To: "w"}) // long edge through the tangle
+
+	res, err := Normalize(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.SeparatorsAdded == 0 {
+		t.Fatal("expected a separator to be inserted for the K2,2 tangle")
+	}
+
+	for _, n := range g.Nodes() {
+		if !n.IsSubdivider() {
+			continue
+		}
+		if master, ok := g.Node(n.MasterID); !ok {
+			t.Errorf("subdivider %s: MasterID %q does not exist", n.ID, n.MasterID)
+		} else if master.IsSubdivider() {
+			t.Errorf("subdivider %s: MasterID %q is itself a subdivider; chain segments would never merge", n.ID, n.MasterID)
 		}
 	}
 }

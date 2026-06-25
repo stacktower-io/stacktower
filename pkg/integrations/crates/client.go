@@ -170,7 +170,7 @@ func (c *Client) fetch(ctx context.Context, crate, version string, refresh bool,
 			}
 		}
 		if targetVersion == "" {
-			return fmt.Errorf("no non-yanked versions found for %s", crate)
+			return fmt.Errorf("%w: no non-yanked versions found for crate %s", integrations.ErrNotFound, crate)
 		}
 	}
 

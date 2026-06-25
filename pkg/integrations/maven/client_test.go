@@ -3,6 +3,8 @@ package maven
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -134,6 +136,78 @@ func TestExtractDeps(t *testing.T) {
 	}
 	if deps[0].Constraint != "3.12.0" {
 		t.Errorf("expected constraint 3.12.0, got %s", deps[0].Constraint)
+	}
+}
+
+func TestPomToInfo_CopiesDescription(t *testing.T) {
+	var pom pomProject
+	if err := xml.Unmarshal([]byte(`<?xml version="1.0"?>
+<project>
+  <groupId>org.example</groupId>
+  <artifactId>mylib</artifactId>
+  <version>1.0.0</version>
+  <description>
+    A helpful library.
+  </description>
+  <url>https://example.com</url>
+  <licenses>
+    <license><name>Apache-2.0</name><url>https://www.apache.org/licenses/LICENSE-2.0</url></license>
+  </licenses>
+</project>`), &pom); err != nil {
+		t.Fatalf("unmarshal POM: %v", err)
+	}
+
+	info := pomToInfo(&pom)
+	if info.Description != "A helpful library." {
+		t.Errorf("description = %q, want %q", info.Description, "A helpful library.")
+	}
+	if info.License != "Apache-2.0" {
+		t.Errorf("license = %q, want Apache-2.0", info.License)
+	}
+	if info.HomePage != "https://example.com" {
+		t.Errorf("homepage = %q, want https://example.com", info.HomePage)
+	}
+}
+
+func TestListVersionsFromSearch_PartialOnLaterPageFailure(t *testing.T) {
+	// Page 0 returns a full page (forcing pagination); page 1 fails.
+	// The versions collected so far should be returned rather than an error.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("start") != "0" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		resp := searchResponse{}
+		resp.Response.NumFound = 150
+		for i := 0; i < 100; i++ {
+			resp.Response.Docs = append(resp.Response.Docs, searchDoc{Version: fmt.Sprintf("1.0.%d", i)})
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	c := testClient(t, server.URL)
+
+	var versions []string
+	if err := c.listVersionsFromSearch(context.Background(), "org.example", "mylib", &versions); err != nil {
+		t.Fatalf("expected partial result, got error: %v", err)
+	}
+	if len(versions) != 100 {
+		t.Errorf("expected 100 versions from the successful page, got %d", len(versions))
+	}
+}
+
+func TestListVersionsFromSearch_FirstPageFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	c := testClient(t, server.URL)
+
+	var versions []string
+	if err := c.listVersionsFromSearch(context.Background(), "org.example", "mylib", &versions); err == nil {
+		t.Fatal("expected error when the first page fails (nothing fetched)")
 	}
 }
 

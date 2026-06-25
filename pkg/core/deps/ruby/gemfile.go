@@ -75,11 +75,17 @@ func extractRubyVersion(constraint string) string {
 var gemPattern = regexp.MustCompile(`^\s*gem\s+['"]([^'"]+)['"]`)
 var groupStartPattern = regexp.MustCompile(`^\s*group\s+(.+?)\s+do\s*$`)
 
-// gemWithVersionPattern captures gem name and version constraints
-// Examples: gem 'rails', '~> 5.0.0'
-//
-//	gem 'rack', '>= 1.0', '< 2.0'
-var gemWithVersionPattern = regexp.MustCompile(`^\s*gem\s+['"]([^'"]+)['"](?:\s*,\s*['"]([^'"]+)['"])?(?:\s*,\s*['"]([^'"]+)['"])?`)
+// gemArgPattern matches one comma-separated argument following the gem name:
+// either a quoted string ('~> 5.0') or anything else (hash options like
+// github:, git:, path:, require:). Used to collect ALL version constraints,
+// not just the first two.
+var gemArgPattern = regexp.MustCompile(`^\s*,\s*(?:['"]([^'"]*)['"]|([^,]+))`)
+
+// gemVersionConstraintPattern recognizes quoted args that look like version
+// constraints: an optional operator (~>, >=, <=, >, <, =, !=) followed by a
+// version number.
+var gemVersionConstraintPattern = regexp.MustCompile(`^\s*(?:~>|>=|<=|!=|=|>|<)?\s*\d[\w.]*\s*$`)
+
 var gemspecNamePattern = regexp.MustCompile(`\.name\s*=\s*['"]([^'"]+)['"]`)
 
 // rubyVersionPattern captures ruby version from Gemfile
@@ -146,7 +152,7 @@ func parseGemfileWithVersions(f *os.File, scope string) ([]deps.Dependency, stri
 			continue
 		}
 
-		if match := gemWithVersionPattern.FindStringSubmatch(line); len(match) > 1 {
+		if match := gemPattern.FindStringSubmatch(line); len(match) > 1 {
 			if scope == deps.DependencyScopeProdOnly && excludedGroupDepth > 0 {
 				continue
 			}
@@ -154,14 +160,13 @@ func parseGemfileWithVersions(f *os.File, scope string) ([]deps.Dependency, stri
 			if !seen[name] {
 				seen[name] = true
 				dep := deps.Dependency{Name: name}
-				// Combine version constraints if multiple are present
-				var constraints []string
-				if len(match) > 2 && match[2] != "" {
-					constraints = append(constraints, match[2])
-				}
-				if len(match) > 3 && match[3] != "" {
-					constraints = append(constraints, match[3])
-				}
+				// Collect ALL quoted version constraint args after the gem
+				// name (e.g. '>= 1.0', '< 2.0', '< 3.0'), stopping at the
+				// first non-constraint argument such as hash options
+				// (github:, git:, path:, require:). Gems declared only with
+				// git:/github:/path: sources still produce a dependency node
+				// with no constraint.
+				constraints := extractGemConstraints(line[len(match[0]):])
 				if len(constraints) > 0 {
 					dep.Constraint = strings.Join(constraints, ", ")
 				}
@@ -171,6 +176,27 @@ func parseGemfileWithVersions(f *os.File, scope string) ([]deps.Dependency, stri
 	}
 
 	return result, rubyVersion
+}
+
+// extractGemConstraints parses the argument list that follows a gem name and
+// returns the leading run of quoted version constraints. Parsing stops at the
+// first argument that is not a quoted version constraint (hash options like
+// github:/git:/path:/require:, or quoted values of such options).
+func extractGemConstraints(rest string) []string {
+	var constraints []string
+	for {
+		m := gemArgPattern.FindStringSubmatch(rest)
+		if m == nil {
+			break
+		}
+		quoted := m[1]
+		if quoted == "" || !gemVersionConstraintPattern.MatchString(quoted) {
+			break
+		}
+		constraints = append(constraints, strings.TrimSpace(quoted))
+		rest = rest[len(m[0]):]
+	}
+	return constraints
 }
 
 func groupContainsDevOrTest(raw string) bool {

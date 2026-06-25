@@ -251,10 +251,8 @@ func TestPEP440Matcher_ParseConstraint_LessThanExcludesPrereleaseOfBound(t *test
 
 func TestPEP440Matcher_ParseConstraint_LessThanWithPrereleaseBound(t *testing.T) {
 	m := PEP440Matcher{}
-	// <1.0.0rc1 with a prerelease bound.
-	// Note: Current implementation treats all prereleases of the same version as
-	// equivalent (doesn't distinguish dev < alpha < beta < rc). This is a known
-	// limitation. Stable versions below work correctly.
+	// <1.0.0rc1 with a prerelease bound. Pre-release types order per
+	// PEP 440: a < b < rc < final.
 	cond := m.ParseConstraint("<1.0.0rc1")
 	if cond == nil {
 		t.Fatal("ParseConstraint returned nil")
@@ -264,8 +262,8 @@ func TestPEP440Matcher_ParseConstraint_LessThanWithPrereleaseBound(t *testing.T)
 		want    bool
 	}{
 		{"0.99.0", true},    // stable below - included
-		{"1.0.0a1", false},  // same-version prerelease treated as equal (limitation)
-		{"1.0.0b1", false},  // same-version prerelease treated as equal (limitation)
+		{"1.0.0a1", true},   // alpha sorts below rc - included
+		{"1.0.0b1", true},   // beta sorts below rc - included
 		{"1.0.0rc1", false}, // the bound itself - excluded
 		{"1.0.0", false},    // stable 1.0.0 - excluded (above rc1)
 	}
@@ -274,6 +272,131 @@ func TestPEP440Matcher_ParseConstraint_LessThanWithPrereleaseBound(t *testing.T)
 		if got := cond.Satisfies(v); got != tc.want {
 			t.Errorf("<1.0.0rc1 Satisfies(%q) = %v, want %v", tc.version, got, tc.want)
 		}
+	}
+}
+
+func TestParseVersion_PEP440Segments(t *testing.T) {
+	tests := []struct {
+		input     string
+		wantEpoch int
+		wantPre   bool
+		wantPost  bool
+		wantDev   bool
+		wantLocal string
+		wantValid bool
+	}{
+		{"1.0.0", 0, false, false, false, "", true},
+		{"1!2.0", 1, false, false, false, "", true},
+		{"2!1.0.0", 2, false, false, false, "", true},
+		{"1.0.0a1", 0, true, false, false, "", true},
+		{"1.0.0.post1", 0, false, true, false, "", true},
+		{"1.0.0.dev3", 0, false, false, true, "", true},
+		{"1.0.0+local", 0, false, false, false, "local", true},
+		{"1.0.0+ubuntu.1", 0, false, false, false, "ubuntu.1", true},
+		{"1!1.0.0rc1.post2.dev3+local", 1, true, true, true, "local", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			pv := parseVersion(tt.input)
+			if pv.valid != tt.wantValid {
+				t.Fatalf("valid = %v, want %v", pv.valid, tt.wantValid)
+			}
+			if pv.epoch != tt.wantEpoch {
+				t.Errorf("epoch = %d, want %d", pv.epoch, tt.wantEpoch)
+			}
+			if pv.hasPre != tt.wantPre {
+				t.Errorf("hasPre = %v, want %v", pv.hasPre, tt.wantPre)
+			}
+			if pv.hasPost != tt.wantPost {
+				t.Errorf("hasPost = %v, want %v", pv.hasPost, tt.wantPost)
+			}
+			if pv.hasDev != tt.wantDev {
+				t.Errorf("hasDev = %v, want %v", pv.hasDev, tt.wantDev)
+			}
+			if pv.local != tt.wantLocal {
+				t.Errorf("local = %q, want %q", pv.local, tt.wantLocal)
+			}
+		})
+	}
+}
+
+func TestCompareVersions_PEP440Ordering(t *testing.T) {
+	// Each pair asserts a < b under PEP 440 ordering:
+	// epoch first, then release tuple, then dev < pre (a < b < rc) < final < post.
+	tests := []struct {
+		a, b string
+	}{
+		// Epoch dominates everything
+		{"2.0", "1!1.0"},
+		{"1!9.0", "2!0.1"},
+		// Release tuple
+		{"1.0.0", "1.0.1"},
+		{"1.9.0", "1.10.0"},
+		// dev < pre
+		{"1.0.0.dev1", "1.0.0a1"},
+		// pre ordering: a < b < rc
+		{"1.0.0a1", "1.0.0b1"},
+		{"1.0.0b1", "1.0.0rc1"},
+		{"1.0.0a1", "1.0.0a2"},
+		// pre < final
+		{"1.0.0a1", "1.0.0"},
+		{"1.0.0rc1", "1.0.0"},
+		// final < post
+		{"1.0.0", "1.0.0.post1"},
+		{"1.0.0.post1", "1.0.0.post2"},
+		// post of a release < next release
+		{"1.0.0.post1", "1.0.1"},
+		// dev numbering
+		{"1.0.0.dev1", "1.0.0.dev2"},
+		{"1.0.0.dev1", "1.0.0"},
+		// alternate spellings normalize (alpha == a, beta == b)
+		{"1.0.0alpha1", "1.0.0beta1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.a+"<"+tt.b, func(t *testing.T) {
+			av, bv := parseVersion(tt.a), parseVersion(tt.b)
+			if !av.valid || !bv.valid {
+				t.Fatalf("parse failed: %q valid=%v, %q valid=%v", tt.a, av.valid, tt.b, bv.valid)
+			}
+			if got := compareVersions(av, bv); got >= 0 {
+				t.Errorf("compareVersions(%q, %q) = %d, want < 0", tt.a, tt.b, got)
+			}
+			if got := compareVersions(bv, av); got <= 0 {
+				t.Errorf("compareVersions(%q, %q) = %d, want > 0", tt.b, tt.a, got)
+			}
+		})
+	}
+
+	// Equal cases (local labels are ignored for ordering)
+	equalPairs := []struct{ a, b string }{
+		{"1.0.0", "1.0.0"},
+		{"1.0.0+local", "1.0.0"},
+		{"1.0.0+ubuntu.1", "1.0.0+debian.2"},
+	}
+	for _, tt := range equalPairs {
+		t.Run(tt.a+"=="+tt.b, func(t *testing.T) {
+			av, bv := parseVersion(tt.a), parseVersion(tt.b)
+			if got := compareVersions(av, bv); got != 0 {
+				t.Errorf("compareVersions(%q, %q) = %d, want 0", tt.a, tt.b, got)
+			}
+		})
+	}
+}
+
+func TestPEP440Matcher_PrereleaseNotEqualToFinal(t *testing.T) {
+	// 1.0.0 and 1.0.0a1 must not compare equal: ==1.0.0 should reject the alpha.
+	m := PEP440Matcher{}
+	cond := m.ParseConstraint("==1.0.0")
+	if cond == nil {
+		t.Fatal("ParseConstraint returned nil")
+	}
+	if cond.Satisfies(m.ParseVersion("1.0.0a1")) {
+		t.Error("==1.0.0 should not be satisfied by 1.0.0a1")
+	}
+	if !cond.Satisfies(m.ParseVersion("1.0.0")) {
+		t.Error("==1.0.0 should be satisfied by 1.0.0")
 	}
 }
 

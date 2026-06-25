@@ -1,10 +1,12 @@
 package php
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/stacktower-io/stacktower/pkg/core/dag"
 	"github.com/stacktower-io/stacktower/pkg/core/deps"
 )
 
@@ -156,5 +158,65 @@ func TestComposerJSON_RuntimeVersion(t *testing.T) {
 	}
 	if result.RuntimeConstraint != ">=8.1" {
 		t.Errorf("RuntimeConstraint = %q, want %q", result.RuntimeConstraint, ">=8.1")
+	}
+}
+
+// cancelledResolver simulates a resolver that encounters a cancelled context.
+type cancelledResolver struct{}
+
+func (f *cancelledResolver) Resolve(ctx context.Context, _ string, _ deps.Options) (*dag.DAG, error) {
+	return nil, context.Canceled
+}
+
+func (f *cancelledResolver) Name() string { return "test" }
+
+func TestComposerJSON_FallbackOnResolutionFailure(t *testing.T) {
+	dir := t.TempDir()
+	composerFile := filepath.Join(dir, "composer.json")
+	content := `{
+  "name": "composer/composer",
+  "require": {
+    "php": "^7.2.5 || ^8.0",
+    "composer/ca-bundle": "^1.5",
+    "composer/semver": "^3.3",
+    "symfony/console": "^5.4.47 || ^6.4.25 || ^7.1.10 || ^8.0",
+    "psr/log": "^1.0 || ^2.0 || ^3.0"
+  }
+}`
+	if err := os.WriteFile(composerFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Use a cancelled context to trigger the fallback path
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	parser := &ComposerJSON{resolver: &cancelledResolver{}}
+	result, err := parser.Parse(composerFile, deps.Options{Ctx: ctx})
+	if err != nil {
+		t.Fatalf("Parse should not error on resolution failure, got: %v", err)
+	}
+
+	if result.IncludesTransitive {
+		t.Error("IncludesTransitive should be false when resolution failed")
+	}
+
+	g := result.Graph
+	nodes := g.Nodes()
+	// 4 non-php deps + __project__ root = 5 nodes
+	if len(nodes) < 5 {
+		t.Errorf("Expected at least 5 nodes (direct deps + root), got %d", len(nodes))
+	}
+
+	// Verify direct deps are present as nodes
+	for _, name := range []string{"composer/ca-bundle", "composer/semver", "symfony/console", "psr/log"} {
+		if _, ok := g.Node(name); !ok {
+			t.Errorf("Expected direct dep %q as node in fallback graph", name)
+		}
+	}
+
+	// PHP should not appear as a node
+	if _, ok := g.Node("php"); ok {
+		t.Error("php should not be a node in the graph")
 	}
 }

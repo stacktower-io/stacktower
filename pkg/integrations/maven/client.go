@@ -177,6 +177,7 @@ func (c *Client) fetch(ctx context.Context, groupID, artifactID, version string,
 		ArtifactID:   artifactID,
 		Version:      targetVersion,
 		Dependencies: pomData.Dependencies,
+		Description:  pomData.Description,
 		Repository:   pomData.Repository,
 		HomePage:     pomData.HomePage,
 		License:      pomData.License,
@@ -228,27 +229,68 @@ func (c *Client) ListVersions(ctx context.Context, coordinate string, refresh bo
 	return versions, nil
 }
 
+// maxSearchPages caps Solr search pagination (100 rows per page).
+const maxSearchPages = 10
+
+// listVersionsFromSearch pages through the Solr search API collecting versions.
+//
+// Pagination failure handling: if the very first page fails, the error is
+// returned (nothing useful was fetched). If a later page fails, the versions
+// gathered so far are returned as a partial list — for version resolution a
+// partial list is more useful than a hard failure, and the search API is the
+// fallback path already (maven-metadata.xml is preferred). The truncation is
+// logged so it isn't silent.
 func (c *Client) listVersionsFromSearch(ctx context.Context, groupID, artifactID string, versions *[]string) error {
 	query := fmt.Sprintf("g:%q AND a:%q", groupID, artifactID)
-	url := fmt.Sprintf("%s?q=%s&rows=100&core=gav&wt=json", c.baseURL, integrations.URLEncode(query))
 
-	var searchResp searchResponse
-	if err := c.Get(ctx, url, &searchResp); err != nil {
-		return err
-	}
+	seen := make(map[string]struct{})
+	*versions = (*versions)[:0]
 
-	*versions = make([]string, 0, len(searchResp.Response.Docs))
-	for _, doc := range searchResp.Response.Docs {
-		if doc.Version != "" {
+	const rows = 100
+	for page := 0; page < maxSearchPages; page++ {
+		url := fmt.Sprintf("%s?q=%s&rows=%d&start=%d&core=gav&wt=json",
+			c.baseURL, integrations.URLEncode(query), rows, page*rows)
+
+		var searchResp searchResponse
+		if err := c.Get(ctx, url, &searchResp); err != nil {
+			if len(*versions) == 0 {
+				// Nothing fetched yet; surface the error.
+				return err
+			}
+			// Keep what was already fetched, but record the truncation.
+			slog.Warn("maven: version search pagination failed; returning partial version list",
+				"group", groupID, "artifact", artifactID,
+				"versions_fetched", len(*versions), "failed_page", page, "error", err)
+			break
+		}
+
+		for _, doc := range searchResp.Response.Docs {
+			if doc.Version == "" {
+				continue
+			}
+			if _, dup := seen[doc.Version]; dup {
+				continue
+			}
+			seen[doc.Version] = struct{}{}
 			*versions = append(*versions, doc.Version)
 		}
+
+		// Stop when the last page was reached.
+		if len(searchResp.Response.Docs) < rows {
+			break
+		}
 	}
+
+	// Sort versions semantically (oldest to newest) to match the
+	// maven-metadata.xml code path.
+	integrations.SortVersions(*versions)
 	return nil
 }
 
 // pomInfo holds extracted information from a POM file.
 type pomInfo struct {
 	Dependencies []Dependency
+	Description  string // Artifact description from the POM
 	Repository   string // SCM repository URL (GitHub, GitLab, etc.)
 	HomePage     string // Project homepage URL
 	License      string
@@ -266,9 +308,15 @@ func (c *Client) fetchPOMDeps(ctx context.Context, groupID, artifactID, version 
 		return &pomInfo{}
 	}
 
+	return pomToInfo(pom)
+}
+
+// pomToInfo extracts dependencies, URLs, description, and license from a parsed POM.
+func pomToInfo(pom *pomProject) *pomInfo {
 	repo, home := extractURLs(pom)
 	info := &pomInfo{
 		Dependencies: extractDeps(pom),
+		Description:  strings.TrimSpace(pom.Description),
 		Repository:   repo,
 		HomePage:     home,
 	}

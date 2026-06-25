@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -23,6 +25,9 @@ var (
 	skipRE       = regexp.MustCompile(`extra|dev|test`)
 	// pythonVersionRE matches python_version markers like: python_version < "3.11"
 	pythonVersionRE = regexp.MustCompile(`python_version\s*([<>=!]+)\s*["'](\d+(?:\.\d+)?)["']`)
+	// envMarkerRE matches string-valued environment markers like:
+	// sys_platform == "linux", os_name != 'nt', platform_machine == "x86_64"
+	envMarkerRE = regexp.MustCompile(`(sys_platform|os_name|platform_machine)\s*(==|!=)\s*["']([^"']*)["']`)
 )
 
 // DefaultPythonVersion is the default assumed Python version for marker evaluation.
@@ -189,11 +194,13 @@ func apiResponseToInfo(data apiResponse, c *Client) PackageInfo {
 
 func (c *Client) fetch(ctx context.Context, pkg, version string, refresh bool, info *PackageInfo) error {
 	if version != "" {
-		// Per-version endpoint has version-specific metadata (deps, requires_python)
-		url := fmt.Sprintf("%s/%s/%s/json", c.baseURL, pkg, version)
+		// Per-version endpoint has version-specific metadata (deps, requires_python).
+		// Escape the version: PEP 440 local versions contain '+' (e.g. "1.0+cu118")
+		// which must not be interpolated into the path unescaped.
+		endpoint := fmt.Sprintf("%s/%s/%s/json", c.baseURL, pkg, url.PathEscape(version))
 
 		var data apiResponse
-		if err := c.Get(ctx, url, &data); err != nil {
+		if err := c.Get(ctx, endpoint, &data); err != nil {
 			if errors.Is(err, integrations.ErrNotFound) {
 				return fmt.Errorf("%w: pypi package %s version %s", err, pkg, version)
 			}
@@ -255,18 +262,55 @@ func (c *Client) extractDeps(requires []string) []Dependency {
 	return deps
 }
 
-// evaluatePythonVersionMarker checks if a marker's python_version condition
-// is satisfied by the target Python version. Returns true if the dependency
-// should be included (marker is satisfied or has no python_version condition).
+// defaultEnvMarkers returns the environment marker values used to evaluate
+// sys_platform / os_name / platform_machine conditions, derived from the
+// current OS and architecture (PEP 508 marker names).
+func defaultEnvMarkers() map[string]string {
+	sysPlatform := runtime.GOOS // "linux", "darwin"
+	osName := "posix"
+	if runtime.GOOS == "windows" {
+		sysPlatform = "win32"
+		osName = "nt"
+	}
+
+	machine := runtime.GOARCH
+	switch runtime.GOARCH {
+	case "amd64":
+		machine = "x86_64"
+	case "arm64":
+		if runtime.GOOS == "linux" {
+			machine = "aarch64"
+		}
+	case "386":
+		machine = "i386"
+	}
+
+	return map[string]string{
+		"sys_platform":     sysPlatform,
+		"os_name":          osName,
+		"platform_machine": machine,
+	}
+}
+
+// evaluatePythonVersionMarker checks if a marker's python_version and
+// platform conditions are satisfied. Returns true if the dependency should
+// be included (all recognized conditions are satisfied or the marker has no
+// recognized conditions).
 //
-// Supports "and" / "or" boolean connectives between python_version conditions.
-// Non-python_version markers (e.g. os_name, sys_platform) are ignored (treated
-// as satisfied) since we only care about version filtering.
+// Supports "and" / "or" boolean connectives. python_version conditions are
+// compared against the target Python version; sys_platform / os_name /
+// platform_machine conditions are compared against the current OS defaults.
+// Unrecognized markers are ignored (treated as satisfied).
 func evaluatePythonVersionMarker(marker string, pythonVersion string) bool {
+	return evaluateMarker(marker, pythonVersion, defaultEnvMarkers())
+}
+
+// evaluateMarker is the env-injectable core of [evaluatePythonVersionMarker].
+func evaluateMarker(marker string, pythonVersion string, env map[string]string) bool {
 	// Split on " or " first: any OR-group matching means include.
 	orGroups := splitMarkerOr(marker)
 	for _, group := range orGroups {
-		if evaluateMarkerAndGroup(group, pythonVersion) {
+		if evaluateMarkerAndGroup(group, pythonVersion, env) {
 			return true
 		}
 	}
@@ -302,8 +346,20 @@ func splitMarkerOr(marker string) []string {
 }
 
 // evaluateMarkerAndGroup evaluates a single AND-connected group of marker
-// conditions. All python_version conditions must be satisfied.
-func evaluateMarkerAndGroup(group string, pythonVersion string) bool {
+// conditions. All recognized conditions (python_version plus string-valued
+// environment markers) must be satisfied.
+func evaluateMarkerAndGroup(group string, pythonVersion string, env map[string]string) bool {
+	for _, m := range envMarkerRE.FindAllStringSubmatch(group, -1) {
+		name, op, want := m[1], m[2], m[3]
+		got, known := env[name]
+		if !known {
+			continue
+		}
+		if (op == "==") != (got == want) {
+			return false
+		}
+	}
+
 	matches := pythonVersionRE.FindAllStringSubmatch(group, -1)
 	if len(matches) == 0 {
 		return true

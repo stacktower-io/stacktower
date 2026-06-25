@@ -79,6 +79,11 @@ func NewClient(backend cache.Cache, token string, cacheTTL time.Duration) *Clien
 // The returned RepoMetrics pointer is never nil if err is nil.
 // This method is safe for concurrent use.
 func (c *Client) Fetch(ctx context.Context, owner, repo string, refresh bool) (*integrations.RepoMetrics, error) {
+	// Owner/repo are often extracted from untrusted package metadata; validate
+	// before they are interpolated into request URLs.
+	if err := ValidateRepoRef(owner, repo); err != nil {
+		return nil, fmt.Errorf("%w: %v", integrations.ErrNotFound, err)
+	}
 	key := owner + "/" + repo
 
 	var m integrations.RepoMetrics

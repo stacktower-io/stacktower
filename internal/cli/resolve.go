@@ -26,6 +26,7 @@ type resolveFlags struct {
 	name    string
 	noCache bool
 	enrich  bool
+	scan    bool
 }
 
 // resolveCommand creates the resolve command for quick dependency resolution testing.
@@ -67,6 +68,7 @@ Examples:
 	cmd.Flags().StringVarP(&flags.name, "name", "n", "", "project name (for manifest parsing)")
 	cmd.Flags().BoolVar(&flags.noCache, "no-cache", false, "disable caching")
 	cmd.Flags().BoolVar(&flags.enrich, "enrich", false, "enrich with GitHub metadata (off by default)")
+	cmd.Flags().BoolVar(&flags.scan, "security-scan", false, "best-effort scan for known vulnerabilities (OSV.dev)")
 	cmd.Flags().StringVar(&flags.DependencyScope, "dependency-scope", flags.DependencyScope, "dependency scope: prod_only or all")
 	cmd.Flags().BoolVar(&flags.IncludePrerelease, "include-prerelease", false, "include prerelease versions (alpha/beta/rc/dev/etc.)")
 	cmd.Flags().StringVar(&flags.RuntimeVersion, "runtime-version", "", "target runtime version for marker evaluation (e.g., '3.11' for Python)")
@@ -135,7 +137,7 @@ func (c *CLI) resolveWith(ctx context.Context, flags *resolveFlags, langName, ar
 		opLabel = fmt.Sprintf("Resolving %s/%s...", lang.Name, displayName)
 	}
 
-	result, err := c.runParseWithProgress(ctx, opts, flags.noCache, false, opLabel, flags.MaxNodes)
+	result, err := c.runParseWithProgress(ctx, opts, flags.noCache, flags.scan, opLabel, flags.MaxNodes)
 	if err != nil {
 		return wrapParseFailure(fmt.Sprintf("resolve %s", source), err)
 	}

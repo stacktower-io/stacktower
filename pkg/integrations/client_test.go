@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/stacktower-io/stacktower/pkg/cache"
 )
 
@@ -330,6 +332,27 @@ func TestCheckResponse(t *testing.T) {
 		{
 			name:     "403 Forbidden",
 			code:     403,
+			wantErr:  true,
+			wantType: ErrUnauthorized,
+		},
+		{
+			name:       "403 with X-RateLimit-Remaining 0 is a retryable rate limit",
+			code:       403,
+			headers:    map[string]string{"X-RateLimit-Remaining": "0"},
+			wantErr:    true,
+			isRetryErr: true,
+		},
+		{
+			name:       "403 with Retry-After is a retryable rate limit",
+			code:       403,
+			headers:    map[string]string{"Retry-After": "30"},
+			wantErr:    true,
+			isRetryErr: true,
+		},
+		{
+			name:     "403 with remaining quota stays unauthorized",
+			code:     403,
+			headers:  map[string]string{"X-RateLimit-Remaining": "42"},
 			wantErr:  true,
 			wantType: ErrUnauthorized,
 		},
@@ -673,5 +696,69 @@ func TestDefaultRateLimitsExist(t *testing.T) {
 		if rl.Burst <= 0 {
 			t.Errorf("DefaultRateLimits[%q].Burst = %d, want > 0", name, rl.Burst)
 		}
+	}
+}
+
+func TestNormalizeRegistry(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"pypi", "pypi"},
+		{"npm", "npm"},
+		{"github", "github"},
+		{"github_unauth", "github_unauth"},
+		// Composite GitHub namespaces should normalize to known keys.
+		{"github:auth:abc123", "github"},
+		{"github:unauth", "github_unauth"},
+		// Unknown registries stay unchanged.
+		{"unknown:foo", "unknown:foo"},
+		{"test", "test"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalizeRegistry(tt.input)
+			if got != tt.want {
+				t.Errorf("normalizeRegistry(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSharedLimiterForGitHubClients(t *testing.T) {
+	// Multiple GitHub clients with different token hashes should share the
+	// same limiter bucket (same rps/burst -> same key after normalization).
+	sharedInfraMu.Lock()
+	sharedLimiters = map[string]*rate.Limiter{}
+	sharedInfraMu.Unlock()
+
+	l1 := limiterForRegistry("github:auth:token1", 10, 50)
+	l2 := limiterForRegistry("github:auth:token2", 10, 50)
+	if l1 != l2 {
+		t.Error("expected same limiter for github:auth:token1 and github:auth:token2 with same budget")
+	}
+
+	// Different budgets should get different limiters.
+	l3 := limiterForRegistry("github:unauth", 0.015, 5)
+	if l1 == l3 {
+		t.Error("expected different limiter for different rate budgets")
+	}
+}
+
+func TestSharedCircuitBreakerForGitHubClients(t *testing.T) {
+	sharedInfraMu.Lock()
+	sharedBreakers = map[string]*CircuitBreaker{}
+	sharedInfraMu.Unlock()
+
+	cb1 := circuitBreakerForRegistry("github:auth:token1")
+	cb2 := circuitBreakerForRegistry("github:auth:token2")
+	if cb1 != cb2 {
+		t.Error("expected same circuit breaker for all authenticated GitHub clients")
+	}
+
+	// Unauth has its own budget and normalizes to "github_unauth".
+	cbUnauth := circuitBreakerForRegistry("github:unauth")
+	if cbUnauth == cb1 {
+		t.Error("expected different circuit breaker for unauth vs auth GitHub clients")
 	}
 }

@@ -1,7 +1,9 @@
 package layout
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 
 	"github.com/stacktower-io/stacktower/pkg/core/dag"
 	"github.com/stacktower-io/stacktower/pkg/core/deps/metadata"
@@ -115,6 +117,9 @@ func buildBlocks(l Layout, g *dag.DAG) []graph.Block {
 		}
 		blocks = append(blocks, bd)
 	}
+	slices.SortFunc(blocks, func(a, b graph.Block) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 	return blocks
 }
 

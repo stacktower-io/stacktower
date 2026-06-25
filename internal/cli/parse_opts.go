@@ -49,6 +49,9 @@ func buildRegistryParseOpts(base pipeline.Options, lang *deps.Language, pkgArg s
 	if err := validateFlags(base.MaxDepth, base.MaxNodes); err != nil {
 		return pipeline.Options{}, "", err
 	}
+	if err := validateDependencyScope(base.DependencyScope); err != nil {
+		return pipeline.Options{}, "", err
+	}
 
 	pkg, version := parsePackageVersion(pkgArg)
 	if lang.NormalizeName != nil {
@@ -82,9 +85,17 @@ func buildManifestParseOpts(base pipeline.Options, lang *deps.Language, filePath
 	if err := validateFlags(base.MaxDepth, base.MaxNodes); err != nil {
 		return pipeline.Options{}, err
 	}
+	if err := validateDependencyScope(base.DependencyScope); err != nil {
+		return pipeline.Options{}, err
+	}
 
 	manifestContent, err := os.ReadFile(filePath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return pipeline.Options{}, WrapUserError(err,
+				fmt.Sprintf("manifest file not found: %s", filePath),
+				fmt.Sprintf("Check the path, or use `stacktower parse %s <package>` for a registry lookup.", lang.Name))
+		}
 		return pipeline.Options{}, WrapUserError(err, "failed to read manifest file", "Check that the file path exists and is readable.")
 	}
 
@@ -98,6 +109,11 @@ func buildManifestParseOpts(base pipeline.Options, lang *deps.Language, filePath
 }
 
 // looksLikeFile returns true if arg appears to be a file path.
+//
+// Recognized manifest filenames (e.g. "package.json") are routed to the
+// manifest path even when the file doesn't exist, so the user gets a clear
+// "manifest file not found" error instead of a nonsensical registry lookup
+// for a filename.
 func looksLikeFile(arg string) bool {
 	if _, err := os.Stat(arg); err == nil {
 		return true
@@ -157,14 +173,7 @@ func (c *CLI) getGitHubToken(ctx context.Context) string {
 	}
 
 	sess, err := store.GetSession(ctx)
-	if err != nil {
-		c.Logger.Debug("github session read failed", "err", err)
-		return ""
-	}
-	if sess == nil {
-		return ""
-	}
-	if sess.IsExpired() {
+	if errors.Is(err, session.ErrExpired) {
 		c.Logger.Debug("github session expired; falling back to unauthenticated access")
 		// Surface a single-line user-visible hint (not just a debug log) so
 		// it's obvious why a request that was authenticated yesterday is
@@ -174,6 +183,13 @@ func (c *CLI) getGitHubToken(ctx context.Context) string {
 		expiredSessionHintOnce.Do(func() {
 			ui.PrintWarning("GitHub session expired — run `stacktower github login` to re-authenticate.")
 		})
+		return ""
+	}
+	if err != nil {
+		c.Logger.Debug("github session read failed", "err", err)
+		return ""
+	}
+	if sess == nil {
 		return ""
 	}
 
@@ -220,6 +236,19 @@ func validateFlags(maxDepth, maxNodes int) error {
 		)
 	}
 	return nil
+}
+
+// validateDependencyScope validates the user-supplied --dependency-scope
+// value, returning a user error (usage exit code) for unknown scopes instead
+// of letting the pipeline reject it as a system error.
+func validateDependencyScope(scope string) error {
+	if scope == "" || scope == deps.DependencyScopeProdOnly || scope == deps.DependencyScopeAll {
+		return nil
+	}
+	return NewUserError(
+		fmt.Sprintf("invalid dependency-scope: %q", scope),
+		fmt.Sprintf("Supported scopes: %s (default), %s.", deps.DependencyScopeProdOnly, deps.DependencyScopeAll),
+	)
 }
 
 // validatePackageName performs a minimal sanity check on an argument that

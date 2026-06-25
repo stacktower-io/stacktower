@@ -107,10 +107,49 @@ func normalizeJavaVersion(version string) string {
 	return version
 }
 
-// extractDependenciesWithVersions extracts dependencies with version information
+// resolvePomProperty resolves simple ${property} references against the POM's
+// own <properties> section. Returns the input unchanged when it is not a
+// property reference; returns "" when the property is unknown.
+func resolvePomProperty(value string, props *pomProperties) string {
+	if !strings.HasPrefix(value, "${") || !strings.HasSuffix(value, "}") {
+		return value
+	}
+	key := value[2 : len(value)-1]
+	if props != nil {
+		if v, ok := props.All[key]; ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// buildManagedVersions builds a coordinate -> version map from the POM's own
+// <dependencyManagement> section, resolving ${property} references.
+// TODO: fetch and merge parent/imported BOMs (scope=import) for versions
+// managed outside this POM. Out of scope for now.
+func buildManagedVersions(pom *pomProject) map[string]string {
+	managed := make(map[string]string, len(pom.DependencyManagement))
+	for _, dep := range pom.DependencyManagement {
+		if strings.HasPrefix(dep.GroupID, "${") || strings.HasPrefix(dep.ArtifactID, "${") {
+			continue
+		}
+		version := resolvePomProperty(dep.Version, &pom.Properties)
+		if version == "" {
+			continue
+		}
+		managed[dep.GroupID+":"+dep.ArtifactID] = version
+	}
+	return managed
+}
+
+// extractDependenciesWithVersions extracts dependencies with version information.
+// Dependencies without an inline <version> fall back to the version declared in
+// the POM's own <dependencyManagement> section, and simple ${property}
+// references are resolved from <properties> in the same POM.
 func extractDependenciesWithVersions(pom *pomProject) []deps.Dependency {
 	var result []deps.Dependency
 	seen := make(map[string]bool)
+	managed := buildManagedVersions(pom)
 
 	for _, dep := range pom.Dependencies {
 		// Skip test and provided scope dependencies
@@ -125,11 +164,16 @@ func extractDependenciesWithVersions(pom *pomProject) []deps.Dependency {
 		if !seen[coord] {
 			seen[coord] = true
 			d := deps.Dependency{Name: coord}
+			version := resolvePomProperty(dep.Version, &pom.Properties)
+			if version == "" {
+				// Version managed by <dependencyManagement> in the same POM.
+				version = managed[coord]
+			}
 			// In Maven, versions are typically pinned (exact)
 			// unless they use version ranges like [1.0,2.0)
-			if dep.Version != "" && !strings.HasPrefix(dep.Version, "${") {
-				d.Pinned = dep.Version
-				d.Constraint = dep.Version
+			if version != "" {
+				d.Pinned = version
+				d.Constraint = version
 			}
 			result = append(result, d)
 		}
@@ -161,21 +205,53 @@ func extractDependencies(pom *pomProject) []string {
 }
 
 type pomProject struct {
-	GroupID      string          `xml:"groupId"`
-	ArtifactID   string          `xml:"artifactId"`
-	Version      string          `xml:"version"`
-	Name         string          `xml:"name"`
-	Description  string          `xml:"description"`
-	URL          string          `xml:"url"`
-	Dependencies []pomDependency `xml:"dependencies>dependency"`
-	Parent       *pomParent      `xml:"parent"`
-	Properties   pomProperties   `xml:"properties"`
+	GroupID              string          `xml:"groupId"`
+	ArtifactID           string          `xml:"artifactId"`
+	Version              string          `xml:"version"`
+	Name                 string          `xml:"name"`
+	Description          string          `xml:"description"`
+	URL                  string          `xml:"url"`
+	Dependencies         []pomDependency `xml:"dependencies>dependency"`
+	DependencyManagement []pomDependency `xml:"dependencyManagement>dependencies>dependency"`
+	Parent               *pomParent      `xml:"parent"`
+	Properties           pomProperties   `xml:"properties"`
 }
 
+// pomProperties holds the POM <properties> section. Well-known Java version
+// properties are exposed as fields; all properties (including custom ones like
+// <guava.version>) are collected in All for ${property} resolution.
 type pomProperties struct {
-	MavenCompilerSource string `xml:"maven.compiler.source"`
-	MavenCompilerTarget string `xml:"maven.compiler.target"`
-	JavaVersion         string `xml:"java.version"`
+	MavenCompilerSource string
+	MavenCompilerTarget string
+	JavaVersion         string
+	All                 map[string]string
+}
+
+// UnmarshalXML collects every child element of <properties> into a generic
+// map so that arbitrary ${property} references in versions can be resolved.
+func (p *pomProperties) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	p.All = make(map[string]string)
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			return err
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			var value string
+			if err := d.DecodeElement(&value, &t); err != nil {
+				return err
+			}
+			p.All[t.Name.Local] = strings.TrimSpace(value)
+		case xml.EndElement:
+			if t.Name == start.Name {
+				p.MavenCompilerSource = p.All["maven.compiler.source"]
+				p.MavenCompilerTarget = p.All["maven.compiler.target"]
+				p.JavaVersion = p.All["java.version"]
+				return nil
+			}
+		}
+	}
 }
 
 type pomParent struct {

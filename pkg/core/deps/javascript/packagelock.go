@@ -144,6 +144,10 @@ func buildFromPackages(lock packageLockFile, opts deps.Options) *dag.DAG {
 		if name == "" {
 			continue
 		}
+		// Note: entries with `optional: true` are intentionally kept in
+		// prod-only scope. npm installs optional dependencies by default
+		// (they are only excluded with --omit=optional), so they are part
+		// of a production install. Only dev entries are excluded.
 		if opts.DependencyScope == deps.DependencyScopeProdOnly && entry.Dev {
 			continue
 		}
@@ -205,6 +209,9 @@ func buildFromPackages(lock packageLockFile, opts deps.Options) *dag.DAG {
 	}
 
 	// Add edges. For dependencies, find the matching node ID.
+	// When multiple versions exist, use semver constraint matching to pick
+	// the correct target instead of comparing the constraint string literally.
+	matcher := SemverMatcher{}
 	incoming := make(map[string]bool)
 	for _, ni := range nodes {
 		for depName, constraint := range ni.entry.Dependencies {
@@ -212,12 +219,19 @@ func buildFromPackages(lock packageLockFile, opts deps.Options) *dag.DAG {
 			if len(targetIDs) == 0 {
 				continue
 			}
-			// Prefer the node matching the constraint version, fall back to first.
 			targetID := targetIDs[0]
-			for _, tid := range targetIDs {
-				if tn := nodes[tid]; tn != nil && tn.version == constraint {
-					targetID = tid
-					break
+			if len(targetIDs) > 1 && constraint != "" {
+				cond := matcher.ParseConstraint(constraint)
+				if cond != nil {
+					for _, tid := range targetIDs {
+						if tn := nodes[tid]; tn != nil {
+							pv := matcher.ParseVersion(tn.version)
+							if pv != nil && cond.Satisfies(pv) {
+								targetID = tid
+								break
+							}
+						}
+					}
 				}
 			}
 			edgeMeta := dag.Metadata{}
@@ -334,6 +348,7 @@ func buildFromDependenciesV1(lock packageLockFile, opts deps.Options) *dag.DAG {
 // e.g., "node_modules/lodash" -> "lodash"
 // e.g., "node_modules/@types/node" -> "@types/node"
 // e.g., "node_modules/foo/node_modules/bar" -> "bar"
+// e.g., "node_modules/@scope/pkg/extra" -> "@scope/pkg"
 func extractPackageName(path string) string {
 	// Find the last "node_modules/" segment
 	const nm = "node_modules/"
@@ -343,18 +358,20 @@ func extractPackageName(path string) string {
 	}
 	name := path[idx+len(nm):]
 
-	// Handle scoped packages (@org/pkg)
+	// Handle scoped packages (@org/pkg): keep exactly two path segments,
+	// truncating any nested remainder after the package name.
 	if strings.HasPrefix(name, "@") {
-		// The full scoped name is @org/pkg
+		if slashIdx := strings.Index(name, "/"); slashIdx != -1 {
+			if nextIdx := strings.Index(name[slashIdx+1:], "/"); nextIdx != -1 {
+				return name[:slashIdx+1+nextIdx]
+			}
+		}
 		return name
 	}
 
 	// For non-scoped, take just the first path segment
 	if slashIdx := strings.Index(name, "/"); slashIdx != -1 {
-		// Check if this is a scoped package that somehow got through
-		if !strings.HasPrefix(name, "@") {
-			return name[:slashIdx]
-		}
+		return name[:slashIdx]
 	}
 
 	return name

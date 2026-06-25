@@ -369,6 +369,45 @@ func (o *Options) SetLayoutDefaults() {
 	}
 }
 
+// AdaptForGraph scales layout dimensions for dense graphs when the user has
+// not explicitly set width/height, preserving the default 4:3 aspect ratio.
+// Call this after SetLayoutDefaults and before layout computation.
+func (o *Options) AdaptForGraph(g *dag.DAG) {
+	if g == nil || g.NodeCount() == 0 {
+		return
+	}
+	userSetWidth := o.Width != DefaultWidth
+	userSetHeight := o.Height != DefaultHeight
+
+	maxRowWidth := 0
+	for _, r := range g.RowIDs() {
+		if n := len(g.NodesInRow(r)); n > maxRowWidth {
+			maxRowWidth = n
+		}
+	}
+	numRows := g.RowCount()
+
+	// Compute the ideal dimension each axis would want independently.
+	wantW := max(DefaultWidth, float64(maxRowWidth)*80)
+	wantH := max(DefaultHeight, float64(numRows)*100)
+
+	// Pick the dominant axis: uniform scaling from the default 800×600
+	// preserves the 4:3 aspect ratio automatically.
+	scaleW := wantW / DefaultWidth
+	scaleH := wantH / DefaultHeight
+
+	scale := max(scaleW, scaleH)
+	newW := min(4800, DefaultWidth*scale)
+	newH := min(3600, DefaultHeight*scale)
+
+	if !userSetWidth {
+		o.Width = newW
+	}
+	if !userSetHeight {
+		o.Height = newH
+	}
+}
+
 // ValidateForLayout validates and sets defaults for layout computation.
 func (o *Options) ValidateForLayout() error {
 	o.SetLayoutDefaults()
@@ -484,7 +523,7 @@ func (o *Options) ShouldEnrich() bool {
 
 // LayoutKeyOpts returns cache key options for layout computation.
 func (o *Options) LayoutKeyOpts() cache.LayoutKeyOpts {
-	return cache.LayoutKeyOpts{
+	opts := cache.LayoutKeyOpts{
 		VizType:   o.VizType,
 		Width:     o.Width,
 		Height:    o.Height,
@@ -494,6 +533,16 @@ func (o *Options) LayoutKeyOpts() cache.LayoutKeyOpts {
 		Randomize: o.Randomize,
 		Seed:      o.Seed,
 	}
+	// A custom orderer implementation (and its configuration, e.g. search
+	// timeout) changes the resulting layout, so it must be part of the key.
+	if o.Orderer != nil {
+		if f, ok := o.Orderer.(interface{ Fingerprint() string }); ok {
+			opts.Orderer = f.Fingerprint()
+		} else {
+			opts.Orderer = fmt.Sprintf("%T", o.Orderer)
+		}
+	}
+	return opts
 }
 
 // ArtifactKeyOpts returns cache key options for artifact rendering.

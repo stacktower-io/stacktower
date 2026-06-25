@@ -214,14 +214,17 @@ func TestLicenseRisk_IconColor(t *testing.T) {
 
 func TestAnalyzeLicenses(t *testing.T) {
 	g := dag.New(nil)
-	// Root node at Row 0 (user's project - should be skipped)
+	// Root node (user's project - should be skipped)
 	_ = g.AddNode(dag.Node{ID: "my-app", Row: 0, Meta: dag.Metadata{}})
-	// Dependencies at Row 1+ (should be analyzed)
+	// Dependencies (should be analyzed)
 	_ = g.AddNode(dag.Node{ID: "express", Row: 1, Meta: dag.Metadata{"license": "MIT"}})
 	_ = g.AddNode(dag.Node{ID: "lodash", Row: 1, Meta: dag.Metadata{"license": "MIT"}})
 	_ = g.AddNode(dag.Node{ID: "readline", Row: 1, Meta: dag.Metadata{"license": "GPL-3.0"}})
 	_ = g.AddNode(dag.Node{ID: "mystery", Row: 1, Meta: dag.Metadata{}}) // no license
 	_ = g.AddNode(dag.Node{ID: "weak", Row: 1, Meta: dag.Metadata{"license": "LGPL-2.1"}})
+	for _, dep := range []string{"express", "lodash", "readline", "mystery", "weak"} {
+		_ = g.AddEdge(dag.Edge{From: "my-app", To: dep})
+	}
 
 	report := AnalyzeLicenses(g)
 
@@ -271,6 +274,9 @@ func TestAnalyzeLicenses_Compliant(t *testing.T) {
 	_ = g.AddNode(dag.Node{ID: "a", Row: 1, Meta: dag.Metadata{"license": "MIT"}})
 	_ = g.AddNode(dag.Node{ID: "b", Row: 1, Meta: dag.Metadata{"license": "Apache-2.0"}})
 	_ = g.AddNode(dag.Node{ID: "c", Row: 1, Meta: dag.Metadata{"license": "BSD-3-Clause"}})
+	for _, dep := range []string{"a", "b", "c"} {
+		_ = g.AddEdge(dag.Edge{From: "root", To: dep})
+	}
 
 	report := AnalyzeLicenses(g)
 	if !report.Compliant {
@@ -291,6 +297,7 @@ of all subscription fees due hereunder, Bytewax hereby grants you a limited, non
 nontransferable license. You may not copy, distribute, rent, lease, lend, sublicense or
 transfer the Software. All rights reserved.`,
 	}})
+	_ = g.AddEdge(dag.Edge{From: "root", To: "bytewax-influxdb"})
 
 	report := AnalyzeLicenses(g)
 
@@ -325,6 +332,7 @@ func TestAnalyzeLicenses_SkipsSyntheticNodes(t *testing.T) {
 	_ = g.AddNode(dag.Node{ID: "root", Row: 0, Meta: dag.Metadata{}})        // Root node - skipped
 	_ = g.AddNode(dag.Node{ID: "__project__", Row: 1, Meta: dag.Metadata{}}) // __project__ marker - skipped
 	_ = g.AddNode(dag.Node{ID: "a", Row: 1, Meta: dag.Metadata{"license": "MIT"}})
+	_ = g.AddEdge(dag.Edge{From: "root", To: "a"})
 
 	report := AnalyzeLicenses(g)
 	if report.TotalDeps != 1 {
@@ -334,18 +342,21 @@ func TestAnalyzeLicenses_SkipsSyntheticNodes(t *testing.T) {
 
 func TestAnalyzeLicenses_SkipsRootNodes(t *testing.T) {
 	g := dag.New(nil)
-	// Multiple roots at Row 0 (e.g., monorepo with multiple packages)
+	// Multiple roots (e.g., monorepo with multiple packages)
 	_ = g.AddNode(dag.Node{ID: "app-a", Row: 0, Meta: dag.Metadata{"license": "AGPL-3.0"}})
 	_ = g.AddNode(dag.Node{ID: "app-b", Row: 0, Meta: dag.Metadata{}}) // No license
-	// Dependencies at Row 1
+	// Dependencies
 	_ = g.AddNode(dag.Node{ID: "dep-1", Row: 1, Meta: dag.Metadata{"license": "MIT"}})
 	_ = g.AddNode(dag.Node{ID: "dep-2", Row: 2, Meta: dag.Metadata{"license": "Apache-2.0"}})
+	_ = g.AddEdge(dag.Edge{From: "app-a", To: "dep-1"})
+	_ = g.AddEdge(dag.Edge{From: "app-b", To: "dep-1"})
+	_ = g.AddEdge(dag.Edge{From: "dep-1", To: "dep-2"})
 
 	report := AnalyzeLicenses(g)
 
 	// Should only count dependencies, not root nodes
 	if report.TotalDeps != 2 {
-		t.Errorf("TotalDeps = %d, want 2 (should skip Row 0 root nodes)", report.TotalDeps)
+		t.Errorf("TotalDeps = %d, want 2 (should skip root nodes)", report.TotalDeps)
 	}
 
 	// Root node with AGPL should not be in copyleft list
@@ -361,6 +372,32 @@ func TestAnalyzeLicenses_SkipsRootNodes(t *testing.T) {
 	// Should be compliant since only dependencies are MIT/Apache
 	if !report.Compliant {
 		t.Error("should be compliant when only dependencies have permissive licenses")
+	}
+}
+
+func TestAnalyzeLicenses_UnlayeredParsedGraph(t *testing.T) {
+	// Regression test: graphs straight from `stacktower parse` are not layered,
+	// so every node has Row == 0. License analysis must still see dependencies.
+	g := dag.New(nil)
+	_ = g.AddNode(dag.Node{ID: "my-app", Meta: dag.Metadata{}})
+	_ = g.AddNode(dag.Node{ID: "express", Meta: dag.Metadata{"license": "MIT"}})
+	_ = g.AddNode(dag.Node{ID: "readline", Meta: dag.Metadata{"license": "GPL-3.0"}})
+	_ = g.AddEdge(dag.Edge{From: "my-app", To: "express"})
+	_ = g.AddEdge(dag.Edge{From: "express", To: "readline"})
+
+	report := AnalyzeLicenses(g)
+
+	if report.TotalDeps != 2 {
+		t.Errorf("TotalDeps = %d, want 2 (unlayered graphs must still be analyzed)", report.TotalDeps)
+	}
+	if len(report.Licenses["MIT"]) != 1 {
+		t.Errorf("MIT packages = %v, want [express]", report.Licenses["MIT"])
+	}
+	if len(report.Copyleft) != 1 || report.Copyleft[0] != "readline" {
+		t.Errorf("Copyleft = %v, want [readline]", report.Copyleft)
+	}
+	if report.Compliant {
+		t.Error("should not be compliant with a copyleft dependency")
 	}
 }
 

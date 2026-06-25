@@ -19,16 +19,18 @@ func ComputeWidths(g *dag.DAG, orders map[int][]string, frameWidth float64) map[
 
 	widths := make(map[string]float64, g.NodeCount())
 
-	if topRow := orders[0]; len(topRow) > 0 {
+	// Iterate actual row IDs rather than assuming consecutive rows starting
+	// at 0; gapped or shifted rows would otherwise silently get zero widths.
+	if topRow := orders[rows[0]]; len(topRow) > 0 {
 		unit := frameWidth / float64(len(topRow))
 		for _, id := range topRow {
 			widths[id] = unit
 		}
 	}
 
-	maxRow := rows[len(rows)-1]
-	for r := 0; r < maxRow; r++ {
-		currRow := orders[r+1]
+	for i := 0; i+1 < len(rows); i++ {
+		r, next := rows[i], rows[i+1]
+		currRow := orders[next]
 		if len(currRow) == 0 {
 			continue
 		}
@@ -38,7 +40,7 @@ func ComputeWidths(g *dag.DAG, orders map[int][]string, frameWidth float64) map[
 		}
 
 		for _, parent := range orders[r] {
-			kids := g.ChildrenInRow(parent, r+1)
+			kids := g.ChildrenInRow(parent, next)
 			if n := len(kids); n > 0 {
 				share := widths[parent] / float64(n)
 				for _, kid := range kids {
@@ -73,16 +75,18 @@ func ComputeWidthsBottomUp(g *dag.DAG, orders map[int][]string, frameWidth float
 	}
 
 	widths := make(map[string]float64, g.NodeCount())
-	maxRow := rows[len(rows)-1]
 
-	if bottomRow := orders[maxRow]; len(bottomRow) > 0 {
+	// Iterate actual row IDs rather than assuming consecutive rows starting
+	// at 0 (see ComputeWidths).
+	if bottomRow := orders[rows[len(rows)-1]]; len(bottomRow) > 0 {
 		unit := frameWidth / float64(len(bottomRow))
 		for _, id := range bottomRow {
 			widths[id] = unit
 		}
 	}
 
-	for r := maxRow - 1; r >= 0; r-- {
+	for i := len(rows) - 2; i >= 0; i-- {
+		r, next := rows[i], rows[i+1]
 		currRow := orders[r]
 		if len(currRow) == 0 {
 			continue
@@ -93,7 +97,7 @@ func ComputeWidthsBottomUp(g *dag.DAG, orders map[int][]string, frameWidth float
 		}
 
 		for _, parent := range currRow {
-			kids := g.ChildrenInRow(parent, r+1)
+			kids := g.ChildrenInRow(parent, next)
 			if len(kids) == 0 {
 				continue
 			}

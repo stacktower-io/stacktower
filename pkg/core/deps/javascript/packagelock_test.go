@@ -265,6 +265,11 @@ func TestExtractPackageName(t *testing.T) {
 		{"node_modules/@types/node", "@types/node"},
 		{"node_modules/foo/node_modules/bar", "bar"},
 		{"node_modules/@scope/pkg/node_modules/@other/lib", "@other/lib"},
+		// Scoped packages keep exactly two segments; nested remainders are truncated
+		{"node_modules/@scope/pkg/extra", "@scope/pkg"},
+		{"node_modules/@scope/pkg/deeply/nested/path", "@scope/pkg"},
+		// Non-scoped packages keep exactly one segment
+		{"node_modules/foo/extra", "foo"},
 		{"not-node-modules/foo", ""},
 		{"", ""},
 	}
@@ -346,6 +351,90 @@ func TestPackageLock_RuntimeVersion(t *testing.T) {
 	}
 	if result.RuntimeConstraint != ">=18.0.0" {
 		t.Errorf("RuntimeConstraint = %q, want %q", result.RuntimeConstraint, ">=18.0.0")
+	}
+}
+
+func TestPackageLock_MultiVersionEdgeResolution(t *testing.T) {
+	// When two versions of the same package are locked, edges should target
+	// the version that satisfies the constraint, not always the first entry.
+	content := `{
+  "name": "my-app",
+  "lockfileVersion": 3,
+  "packages": {
+    "": {
+      "name": "my-app",
+      "dependencies": { "a": "^1.0.0", "b": "^1.0.0" }
+    },
+    "node_modules/a": {
+      "version": "1.0.0",
+      "dependencies": { "shared": "^1.0.0" }
+    },
+    "node_modules/b": {
+      "version": "1.0.0",
+      "dependencies": { "shared": "^2.0.0" }
+    },
+    "node_modules/shared": {
+      "version": "2.0.0"
+    },
+    "node_modules/a/node_modules/shared": {
+      "version": "1.5.0"
+    }
+  }
+}`
+	tmpDir := t.TempDir()
+	lockPath := filepath.Join(tmpDir, "package-lock.json")
+	if err := os.WriteFile(lockPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &PackageLock{}
+	result, err := p.Parse(lockPath, deps.Options{})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	g := result.Graph
+
+	// Both versions should exist as separate nodes
+	if _, ok := g.Node("shared@1.5.0"); !ok {
+		t.Fatal("expected shared@1.5.0 node")
+	}
+	if _, ok := g.Node("shared@2.0.0"); !ok {
+		t.Fatal("expected shared@2.0.0 node")
+	}
+
+	// "a" has constraint ^1.0.0 → should edge to shared@1.5.0
+	aChildren := g.Children("a")
+	for _, child := range aChildren {
+		if child == "shared@2.0.0" {
+			t.Errorf("'a' should not edge to shared@2.0.0 (constraint is ^1.0.0), children: %v", aChildren)
+		}
+	}
+	found := false
+	for _, child := range aChildren {
+		if child == "shared@1.5.0" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("'a' should edge to shared@1.5.0, children: %v", aChildren)
+	}
+
+	// "b" has constraint ^2.0.0 → should edge to shared@2.0.0
+	bChildren := g.Children("b")
+	for _, child := range bChildren {
+		if child == "shared@1.5.0" {
+			t.Errorf("'b' should not edge to shared@1.5.0 (constraint is ^2.0.0), children: %v", bChildren)
+		}
+	}
+	found = false
+	for _, child := range bChildren {
+		if child == "shared@2.0.0" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("'b' should edge to shared@2.0.0, children: %v", bChildren)
 	}
 }
 

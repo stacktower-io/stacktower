@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/charmbracelet/log"
@@ -184,6 +186,14 @@ func (r *Runner) parseWithCache(ctx context.Context, opts Options) (*ParseResult
 		pkgOrManifest = cache.Hash([]byte(opts.Manifest))
 	}
 	enriched := opts.ShouldEnrich()
+	manifestDir := ""
+	if opts.ManifestPath != "" {
+		// Parsers read sibling files (pyproject.toml, package.json, ...) from the
+		// manifest's directory, so identical manifest bytes in different
+		// directories can produce different graphs.
+		manifestDir = cache.Hash([]byte(filepath.Dir(opts.ManifestPath)))
+	}
+	authenticated := opts.GitHubToken != "" || os.Getenv("GITHUB_TOKEN") != ""
 	cacheKey := r.Keyer.GraphKey(opts.Language, pkgOrManifest, cache.GraphKeyOpts{
 		MaxDepth:          opts.MaxDepth,
 		MaxNodes:          opts.MaxNodes,
@@ -192,6 +202,11 @@ func (r *Runner) parseWithCache(ctx context.Context, opts Options) (*ParseResult
 		IncludePrerelease: opts.IncludePrerelease,
 		DependencyScope:   opts.DependencyScope,
 		RuntimeVersion:    opts.RuntimeVersion,
+		FetchContributors: opts.FetchContributors,
+		RootName:          opts.RootName,
+		ManifestFilename:  opts.ManifestFilename,
+		ManifestDir:       manifestDir,
+		Authenticated:     enriched && authenticated,
 	})
 
 	if !opts.Refresh {
@@ -226,13 +241,25 @@ func (r *Runner) parseWithCache(ctx context.Context, opts Options) (*ParseResult
 		return nil, err
 	}
 
-	if opts.SecurityScan && r.Scanner != nil {
-		if scanErr := r.runSecurityScan(ctx, parseResult.Graph, opts.Language); scanErr != nil {
-			r.Logger.Warn("security scan failed", "err", scanErr)
+	// When a security scan was requested, the cache key includes SecurityScan=true.
+	// Only cache the graph if the scan actually ran and succeeded; otherwise a
+	// transient scan failure would be cached as "scanned, no vulnerabilities"
+	// for the full graph TTL.
+	scanOK := true
+	if opts.SecurityScan {
+		switch r.Scanner {
+		case nil:
+			scanOK = false
+			r.Logger.Warn("security scan requested but no scanner is configured; results will not be cached")
+		default:
+			if scanErr := r.runSecurityScan(ctx, parseResult.Graph, opts.Language); scanErr != nil {
+				scanOK = false
+				r.Logger.Warn("security scan failed; graph will not be cached so the scan is retried on the next run", "err", scanErr)
+			}
 		}
 	}
 
-	if !opts.Refresh {
+	if !opts.Refresh && scanOK {
 		if data, err := graph.MarshalGraph(parseResult.Graph); err == nil {
 			r.setCacheWithWarning(ctx, cacheKey, data, cache.TTLGraph, "parse")
 		}
@@ -261,6 +288,7 @@ func (r *Runner) runSecurityScan(ctx context.Context, g *dag.DAG, language strin
 	}
 
 	security.AnnotateGraph(g, report)
+	security.StoreReport(g, report)
 
 	if len(report.Findings) > 0 {
 		r.Logger.Warn("vulnerabilities found",
@@ -293,7 +321,12 @@ func (r *Runner) GenerateLayoutWithCacheInfo(ctx context.Context, g *dag.DAG, op
 	r.pipelineHooksCtx(ctx).OnLayoutStart(ctx, opts.VizType, g.NodeCount())
 	start := time.Now()
 
-	graphData, _ := graph.MarshalGraph(g)
+	graphData, err := graph.MarshalGraph(g)
+	if err != nil {
+		layoutErr := fmt.Errorf("serialize graph for cache key: %w", err)
+		r.pipelineHooksCtx(ctx).OnLayoutComplete(ctx, opts.VizType, time.Since(start), layoutErr)
+		return graph.Layout{}, false, layoutErr
+	}
 	graphHash := cache.Hash(graphData)
 	cacheKey := r.Keyer.LayoutKey(graphHash, opts.LayoutKeyOpts())
 
@@ -342,36 +375,41 @@ func (r *Runner) RenderWithCacheInfo(ctx context.Context, layout graph.Layout, g
 	}
 	cacheKeyHash := cache.Hash(layoutData)
 
-	allCached := true
-	artifacts := make(map[string][]byte)
+	artifacts := make(map[string][]byte, len(opts.Formats))
+	var missing []string
 
 	for _, format := range opts.Formats {
 		cacheKey := r.Keyer.ArtifactKey(cacheKeyHash, opts.ArtifactKeyOpts(format))
 		if data, hit, err := r.Cache.Get(ctx, cacheKey); err == nil && hit {
 			artifacts[format] = data
 		} else {
-			allCached = false
-			break
+			missing = append(missing, format)
 		}
 	}
 
-	if allCached && len(artifacts) == len(opts.Formats) {
+	if len(missing) == 0 {
 		r.pipelineHooksCtx(ctx).OnRenderComplete(ctx, opts.Formats, time.Since(start), nil)
 		return artifacts, true, nil
 	}
 
-	rendered, err := RenderFromLayout(layout, g, opts)
+	// Only render the formats that missed the cache (e.g. SVG cached but PNG
+	// not); cached artifacts are reused as-is.
+	renderOpts := opts
+	renderOpts.Formats = missing
+
+	rendered, err := RenderFromLayout(layout, g, renderOpts)
 	r.pipelineHooksCtx(ctx).OnRenderComplete(ctx, opts.Formats, time.Since(start), err)
 	if err != nil {
 		return nil, false, err
 	}
 
 	for format, data := range rendered {
+		artifacts[format] = data
 		cacheKey := r.Keyer.ArtifactKey(cacheKeyHash, opts.ArtifactKeyOpts(format))
 		r.setCacheWithWarning(ctx, cacheKey, data, cache.TTLArtifact, "render")
 	}
 
-	return rendered, false, nil
+	return artifacts, false, nil
 }
 
 // Render is a convenience wrapper that calls RenderWithCacheInfo and discards the cache hit info.
@@ -490,10 +528,20 @@ func (r *Runner) NewOptimalOrderer(timeout time.Duration) *OrdererWithHooks {
 
 // OrdererWithHooks wraps ordering.OptimalSearch with hooks-based progress reporting.
 type OrdererWithHooks struct {
-	Timeout   time.Duration
+	Timeout time.Duration
+
+	// Ctx optionally allows callers to cancel the search before Timeout
+	// elapses; the best ordering found so far is returned.
+	Ctx context.Context
+
 	hooks     observability.PipelineHooks
 	startTime time.Time
 	rowCount  int
+}
+
+// Fingerprint identifies this orderer configuration for layout cache keys.
+func (o *OrdererWithHooks) Fingerprint() string {
+	return fmt.Sprintf("optimal-hooks:%s", o.Timeout)
 }
 
 // OrderRows implements ordering.Orderer.
@@ -506,6 +554,7 @@ func (o *OrdererWithHooks) OrderRows(g *dag.DAG) map[int][]string {
 	search := ordering.OptimalSearch{
 		Timeout:  o.Timeout,
 		Progress: o.onProgress,
+		Ctx:      o.Ctx,
 	}
 
 	result := search.OrderRows(g)

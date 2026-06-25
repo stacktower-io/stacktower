@@ -114,7 +114,7 @@ func (r *npmResolver) Resolve(ctx context.Context, pkg string, opts deps.Options
 				return nil, err
 			}
 			// Sort newest-first for greedy "pick latest matching" strategy
-			sort.Sort(sort.Reverse(sort.StringSlice(versions)))
+			sortVersionsDescending(versions)
 			return versions, nil
 		})
 		if err != nil {
@@ -216,9 +216,22 @@ func (r *npmResolver) Resolve(ctx context.Context, pkg string, opts deps.Options
 		mu.Unlock()
 
 		fetchedPkg, err := r.fetcher.FetchVersion(ctx, item.name, version, opts.Refresh)
-		if err != nil {
-			opts.Logger("fetch %s@%s: %v", item.name, version, err)
+		if err != nil || fetchedPkg == nil {
+			if err != nil {
+				opts.Logger("fetch %s@%s: %v", item.name, version, err)
+			}
 			observability.ResolverFromContext(ctx).OnFetchComplete(ctx, item.name, depth, 0, err)
+			// Release the reserved slot so failed fetches don't consume MaxNodes budget.
+			mu.Lock()
+			nodeCount--
+			delete(nodePackages, key)
+			if nameVersions[item.name] != nil {
+				delete(nameVersions[item.name], version)
+				if len(nameVersions[item.name]) == 0 {
+					delete(nameVersions, item.name)
+				}
+			}
+			mu.Unlock()
 			return
 		}
 
@@ -306,23 +319,45 @@ func (r *npmResolver) Resolve(ctx context.Context, pkg string, opts deps.Options
 		_ = g.AddNode(dag.Node{ID: nodeID, Meta: meta})
 	}
 
-	// Add edges
+	// Add edges. Build a name -> node IDs index once so each dependency is a
+	// map lookup instead of a scan over every resolved package (O(n²)).
+	nameToNodeIDs := make(map[string][]string, len(keyToNodeID))
+	for resolvedKey, nodeID := range keyToNodeID {
+		name, _ := splitLastAt(resolvedKey)
+		nameToNodeIDs[name] = append(nameToNodeIDs[name], nodeID)
+	}
 	for key, pkg := range nodePackages {
 		if pkg == nil {
 			continue
 		}
 		fromID := keyToNodeID[key]
 		for _, dep := range pkg.Dependencies {
-			for resolvedKey, toID := range keyToNodeID {
-				depName, _ := splitLastAt(resolvedKey)
-				if depName == dep.Name {
-					edgeMeta := dag.Metadata{}
-					if dep.Constraint != "" {
-						edgeMeta["constraint"] = dep.Constraint
+			targetIDs := nameToNodeIDs[dep.Name]
+			if len(targetIDs) == 0 {
+				continue
+			}
+			// When multiple versions of the same package coexist, pick the
+			// one whose version satisfies the dependency constraint instead
+			// of wiring edges to every resolved version.
+			toID := targetIDs[0]
+			if len(targetIDs) > 1 && dep.Constraint != "" {
+				cond := r.matcher.ParseConstraint(dep.Constraint)
+				if cond != nil {
+					for _, candidate := range targetIDs {
+						_, ver := splitLastAt(candidate)
+						pv := r.matcher.ParseVersion(ver)
+						if pv != nil && cond.Satisfies(pv) {
+							toID = candidate
+							break
+						}
 					}
-					_ = g.AddEdge(dag.Edge{From: fromID, To: toID, Meta: edgeMeta})
 				}
 			}
+			edgeMeta := dag.Metadata{}
+			if dep.Constraint != "" {
+				edgeMeta["constraint"] = dep.Constraint
+			}
+			_ = g.AddEdge(dag.Edge{From: fromID, To: toID, Meta: edgeMeta})
 		}
 	}
 
@@ -373,4 +408,50 @@ func splitLastAt(s string) (name, version string) {
 		return s, ""
 	}
 	return s[:idx], s[idx+1:]
+}
+
+// sortVersionsDescending sorts version strings newest-first using semver
+// comparison rather than lexicographic ordering (which would put "9.0.0"
+// above "10.0.0"). Stable versions sort above prereleases of the same
+// release; unparseable versions sort last (by string, descending).
+func sortVersionsDescending(versions []string) {
+	parsed := make(map[string]semverVersion, len(versions))
+	for _, v := range versions {
+		parsed[v] = parseSemver(v)
+	}
+	sort.SliceStable(versions, func(i, j int) bool {
+		return compareSemver(parsed[versions[i]], parsed[versions[j]]) > 0
+	})
+}
+
+// compareSemver compares two parsed semver versions.
+// Returns >0 if a > b, <0 if a < b, 0 if equal.
+func compareSemver(a, b semverVersion) int {
+	switch {
+	case !a.valid && !b.valid:
+		return strings.Compare(a.original, b.original)
+	case !a.valid:
+		return -1
+	case !b.valid:
+		return 1
+	}
+	if a.major != b.major {
+		return a.major - b.major
+	}
+	if a.minor != b.minor {
+		return a.minor - b.minor
+	}
+	if a.patch != b.patch {
+		return a.patch - b.patch
+	}
+	// Per semver, a version with a prerelease tag sorts below the release.
+	switch {
+	case a.prerelease == b.prerelease:
+		return strings.Compare(a.prerelease, b.prerelease)
+	case a.prerelease == "":
+		return 1
+	case b.prerelease == "":
+		return -1
+	}
+	return strings.Compare(a.prerelease, b.prerelease)
 }

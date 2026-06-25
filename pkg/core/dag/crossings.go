@@ -57,8 +57,10 @@ func CountCrossings(g *DAG, orders map[int][]string) int {
 	rows := slices.Sorted(maps.Keys(orders))
 	crossings := 0
 	for i := 0; i < len(rows)-1; i++ {
-		r := rows[i]
-		crossings += CountLayerCrossings(g, orders[r], orders[r+1])
+		// Pair each row with the next row that actually exists in the map,
+		// not r+1: gapped row IDs would otherwise silently count zero
+		// crossings for the affected pairs.
+		crossings += CountLayerCrossings(g, orders[rows[i]], orders[rows[i+1]])
 	}
 	return crossings
 }
@@ -143,6 +145,13 @@ func CountLayerCrossings(g *DAG, upper, lower []string) int {
 func CountCrossingsIdx(edges [][]int, upperPerm, lowerPerm []int, ws *CrossingWorkspace) int {
 	if len(upperPerm) == 0 || len(lowerPerm) == 0 {
 		return 0
+	}
+
+	// Grow the workspace if it is undersized: indexing past the buffers
+	// would silently produce wrong crossing counts (or panic).
+	if need := len(lowerPerm) + 2; len(ws.ft) < need {
+		ws.ft = make([]int, need)
+		ws.pos = make([]int, need)
 	}
 
 	// Build position lookup: where is each original index in the permutation?

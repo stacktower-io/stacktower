@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,9 +29,12 @@ type graphqlRequest struct {
 }
 
 // graphqlResponse is the top-level GraphQL response.
+// Repo values are pointers: GitHub returns "rN": null for repositories that
+// don't exist or aren't accessible, and a nil entry must be distinguishable
+// from a present repo with zero values (0 stars, empty fields).
 type graphqlResponse struct {
-	Data   map[string]graphqlRepo `json:"data"`
-	Errors []graphqlError         `json:"errors"`
+	Data   map[string]*graphqlRepo `json:"data"`
+	Errors []graphqlError          `json:"errors"`
 }
 
 type graphqlError struct {
@@ -84,12 +88,25 @@ func buildGraphQLQuery(repos []RepoID) string {
 }
 
 // FetchBatch retrieves repository metrics for multiple repos in a single GraphQL call.
-// Repos that don't exist or fail are silently omitted from the result.
+// Repos that don't exist or fail are silently omitted from the result, as are
+// repos with invalid owner/name (they are never sent to the API).
 // Returns a map keyed by "owner/repo" to RepoMetrics.
 //
 // If refresh is true, the cache is bypassed for this batch. GraphQL-level
 // errors (partial failures, rate limits) are checked and returned.
 func (c *Client) FetchBatch(ctx context.Context, repos []RepoID, refresh bool) (map[string]*integrations.RepoMetrics, error) {
+	// Owner/name often come from untrusted package metadata; validate before
+	// they are interpolated into the GraphQL query (mirrors Fetch). Invalid
+	// repos are skipped rather than failing the whole batch.
+	valid := make([]RepoID, 0, len(repos))
+	for _, r := range repos {
+		if err := ValidateRepoRef(r.Owner, r.Name); err != nil {
+			continue
+		}
+		valid = append(valid, r)
+	}
+	repos = valid
+
 	result := make(map[string]*integrations.RepoMetrics, len(repos))
 
 	// Process in batches of maxReposPerQuery
@@ -113,6 +130,15 @@ func (c *Client) FetchBatch(ctx context.Context, repos []RepoID, refresh bool) (
 }
 
 func (c *Client) fetchGraphQLBatch(ctx context.Context, repos []RepoID, refresh bool) (map[string]*integrations.RepoMetrics, error) {
+	// Sort the batch so that identical repo sets produce the same query,
+	// cache key, and alias ("rN") positions regardless of input order.
+	// Without this, the same set in a different order creates duplicate
+	// cache entries (and cached aliases would map to the wrong repos).
+	sorted := make([]RepoID, len(repos))
+	copy(sorted, repos)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Key() < sorted[j].Key() })
+	repos = sorted
+
 	query := buildGraphQLQuery(repos)
 	url := strings.TrimSuffix(c.baseURL, "/")
 	graphqlURL := strings.Replace(url, "https://api.github.com", "https://api.github.com/graphql", 1)
@@ -120,9 +146,7 @@ func (c *Client) fetchGraphQLBatch(ctx context.Context, repos []RepoID, refresh 
 		graphqlURL = url + "/graphql"
 	}
 
-	// Build a stable cache key from the sorted repo list so identical
-	// batch requests are deduplicated and cached.
-	var keyParts []string
+	keyParts := make([]string, 0, len(repos))
 	for _, r := range repos {
 		keyParts = append(keyParts, r.Key())
 	}
@@ -142,17 +166,27 @@ func (c *Client) fetchGraphQLBatch(ctx context.Context, repos []RepoID, refresh 
 		for _, e := range resp.Errors {
 			msgs = append(msgs, e.Message)
 		}
-		return nil, fmt.Errorf("graphql errors: %s", strings.Join(msgs, "; "))
+		joined := strings.Join(msgs, "; ")
+		// Detect rate limit errors so the circuit breaker and retry logic can react.
+		for _, e := range resp.Errors {
+			lower := strings.ToLower(e.Message)
+			if strings.Contains(lower, "rate limit") || strings.Contains(lower, "api rate") {
+				return nil, &integrations.RateLimitedError{RetryAfter: 60}
+			}
+		}
+		return nil, fmt.Errorf("graphql errors: %s", joined)
 	}
 
 	result := make(map[string]*integrations.RepoMetrics, len(repos))
 	for i, repo := range repos {
 		alias := fmt.Sprintf("r%d", i)
 		data, ok := resp.Data[alias]
-		if !ok {
+		if !ok || data == nil {
+			// Missing alias or "rN": null — the repo doesn't exist or isn't
+			// accessible; omit it instead of reporting zero-valued metrics.
 			continue
 		}
-		result[repo.Key()] = graphqlRepoToMetrics(repo, data)
+		result[repo.Key()] = graphqlRepoToMetrics(repo, *data)
 	}
 
 	return result, nil

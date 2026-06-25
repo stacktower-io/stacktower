@@ -90,6 +90,11 @@ func checkConstraintGroup(version, constraint string) bool {
 
 	matches := versionConstraintRE.FindAllStringSubmatch(constraint, -1)
 	if len(matches) == 0 {
+		// Intentionally permissive: constraints we cannot parse (e.g. "*",
+		// "latest", malformed engines strings) are treated as satisfied.
+		// Failing closed here would filter out every version of a package
+		// whose registry metadata carries a garbage constraint, which is a
+		// worse failure mode than skipping the runtime filter.
 		return true
 	}
 
@@ -132,13 +137,19 @@ func checkConstraintGroup(version, constraint string) bool {
 				satisfied = len(targetParts) > 2 && len(verParts) > 2 &&
 					targetParts[0] == verParts[0] && targetParts[1] == verParts[1] && targetParts[2] == verParts[2]
 			}
-		case "~", "~=", "~>":
-			// Tilde: ~3.10 means >=3.10, <3.11 (allow patch updates only).
-			// Ruby uses ~> for this.
-			satisfied = cmp >= 0
-			if satisfied && len(targetParts) >= 2 && len(verParts) >= 2 {
-				satisfied = targetParts[0] == verParts[0] && targetParts[1] == verParts[1]
-			}
+		case "~":
+			// npm/Cargo tilde: locks the minor when one is specified.
+			//   ~3.10   → >=3.10, <3.11
+			//   ~3.10.2 → >=3.10.2, <3.11
+			//   ~3      → >=3, <4
+			satisfied = cmp >= 0 && compareVersionParts(targetParts, tildeUpperBound(verParts)) < 0
+		case "~=", "~>":
+			// Pessimistic operator (PEP 440 ~= and Ruby ~>): locks all but the
+			// last specified component.
+			//   ~=3.8   → >=3.8, <4.0   (so 3.11 satisfies ~=3.8)
+			//   ~>2.7.1 → >=2.7.1, <2.8
+			//   ~>2     → >=2, <3
+			satisfied = cmp >= 0 && compareVersionParts(targetParts, pessimisticUpperBound(verParts)) < 0
 		default:
 			// Unknown operator: fail closed to avoid silently accepting
 			// incompatible runtimes.
@@ -151,6 +162,29 @@ func checkConstraintGroup(version, constraint string) bool {
 	}
 
 	return true
+}
+
+// tildeUpperBound returns the exclusive upper bound for an npm/Cargo-style
+// tilde constraint: increment the minor when one is specified, otherwise the
+// major. ~1.2(.x) → [1, 3]; ~1 → [2].
+func tildeUpperBound(verParts []int) []int {
+	if len(verParts) >= 2 {
+		return []int{verParts[0], verParts[1] + 1}
+	}
+	return []int{verParts[0] + 1}
+}
+
+// pessimisticUpperBound returns the exclusive upper bound for a pessimistic
+// constraint (PEP 440 ~=, Ruby ~>): drop the last specified component and
+// increment the one before it. ~>2.7.1 → [2, 8]; ~=3.8 → [4]; ~>2 → [3].
+func pessimisticUpperBound(verParts []int) []int {
+	if len(verParts) >= 2 {
+		upper := make([]int, len(verParts)-1)
+		copy(upper, verParts[:len(verParts)-1])
+		upper[len(upper)-1]++
+		return upper
+	}
+	return []int{verParts[0] + 1}
 }
 
 // parseVersionParts splits a version string like "3.11" into [3, 11].

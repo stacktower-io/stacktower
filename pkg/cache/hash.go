@@ -10,7 +10,13 @@ import (
 // hashKey generates a cache key by hashing the components.
 // The key format is: prefix:hash(parts...)
 func hashKey(prefix string, parts ...interface{}) string {
-	data, _ := json.Marshal(parts)
+	data, err := json.Marshal(parts)
+	if err != nil {
+		// Marshal failures are practically impossible for the plain structs
+		// and strings used as key parts, but if one happens, make sure
+		// different failures can't collide on the hash of empty input.
+		data = []byte("marshal-error:" + err.Error())
+	}
 	hash := sha256.Sum256(data)
 	// Use full SHA-256 hash (64 hex chars / 256 bits) to prevent collisions
 	return fmt.Sprintf("%s:%s", prefix, hex.EncodeToString(hash[:]))

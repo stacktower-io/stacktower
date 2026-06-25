@@ -1,8 +1,10 @@
 package pipeline
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/stacktower-io/stacktower/pkg/core/dag"
 	"github.com/stacktower-io/stacktower/pkg/core/deps"
 )
 
@@ -258,5 +260,145 @@ func TestSetRenderDefaults(t *testing.T) {
 	}
 	if opts.Style != DefaultStyle {
 		t.Errorf("Style should be %s, got %s", DefaultStyle, opts.Style)
+	}
+}
+
+func TestAdaptForGraph_SmallGraph(t *testing.T) {
+	g := dag.New(nil)
+	for i := range 5 {
+		g.AddNode(dag.Node{ID: fmt.Sprintf("n%d", i), Row: i})
+	}
+
+	opts := Options{}
+	opts.SetLayoutDefaults()
+	opts.AdaptForGraph(g)
+
+	if opts.Width != DefaultWidth {
+		t.Errorf("Small graph should keep default width, got %f", opts.Width)
+	}
+	if opts.Height != DefaultHeight {
+		t.Errorf("Small graph should keep default height, got %f", opts.Height)
+	}
+}
+
+func TestAdaptForGraph_WideGraph(t *testing.T) {
+	g := dag.New(nil)
+	for i := range 30 {
+		g.AddNode(dag.Node{ID: fmt.Sprintf("n%d", i), Row: 0})
+	}
+	g.AddNode(dag.Node{ID: "root", Row: 1})
+
+	opts := Options{}
+	opts.SetLayoutDefaults()
+	opts.AdaptForGraph(g)
+
+	if opts.Width <= DefaultWidth {
+		t.Errorf("Wide graph should scale width above default, got %f", opts.Width)
+	}
+}
+
+func TestAdaptForGraph_TallGraph(t *testing.T) {
+	g := dag.New(nil)
+	for i := range 15 {
+		g.AddNode(dag.Node{ID: fmt.Sprintf("n%d", i), Row: i})
+	}
+
+	opts := Options{}
+	opts.SetLayoutDefaults()
+	opts.AdaptForGraph(g)
+
+	if opts.Height <= DefaultHeight {
+		t.Errorf("Tall graph should scale height above default, got %f", opts.Height)
+	}
+}
+
+func TestAdaptForGraph_PreservesUserDimensions(t *testing.T) {
+	g := dag.New(nil)
+	for i := range 30 {
+		g.AddNode(dag.Node{ID: fmt.Sprintf("n%d", i), Row: 0})
+	}
+
+	opts := Options{Width: 500, Height: 400}
+	opts.SetLayoutDefaults()
+	opts.AdaptForGraph(g)
+
+	if opts.Width != 500 {
+		t.Errorf("User-set width should be preserved, got %f", opts.Width)
+	}
+	if opts.Height != 400 {
+		t.Errorf("User-set height should be preserved, got %f", opts.Height)
+	}
+}
+
+func TestAdaptForGraph_CapsDimensions(t *testing.T) {
+	g := dag.New(nil)
+	// Extremely wide row: 200 nodes
+	for i := range 200 {
+		g.AddNode(dag.Node{ID: fmt.Sprintf("n%d", i), Row: 0})
+	}
+	// Many layers
+	for i := range 50 {
+		g.AddNode(dag.Node{ID: fmt.Sprintf("r%d", i), Row: i + 1})
+	}
+
+	opts := Options{}
+	opts.SetLayoutDefaults()
+	opts.AdaptForGraph(g)
+
+	if opts.Width > 4800 {
+		t.Errorf("Width should be capped at 4800, got %f", opts.Width)
+	}
+	if opts.Height > 3600 {
+		t.Errorf("Height should be capped at 3600, got %f", opts.Height)
+	}
+}
+
+func TestAdaptForGraph_PreservesAspectRatio(t *testing.T) {
+	g := dag.New(nil)
+	for i := range 20 {
+		g.AddNode(dag.Node{ID: fmt.Sprintf("n%d", i), Row: 0})
+	}
+	g.AddNode(dag.Node{ID: "root", Row: 1})
+
+	opts := Options{}
+	opts.SetLayoutDefaults()
+	opts.AdaptForGraph(g)
+
+	ratio := opts.Width / opts.Height
+	expected := DefaultWidth / DefaultHeight
+	if ratio < expected*0.95 || ratio > expected*1.05 {
+		t.Errorf("Aspect ratio should be ~%.2f, got %.2f (%.0fx%.0f)", expected, ratio, opts.Width, opts.Height)
+	}
+}
+
+func TestGenerateTowerLayout_DenseGraphUsesReducedRandomize(t *testing.T) {
+	g := dag.New(nil)
+	// 100 nodes across 4 rows → dense graph
+	for i := range 25 {
+		g.AddNode(dag.Node{ID: fmt.Sprintf("a%d", i), Row: 0})
+		g.AddNode(dag.Node{ID: fmt.Sprintf("b%d", i), Row: 1})
+		g.AddNode(dag.Node{ID: fmt.Sprintf("c%d", i), Row: 2})
+		g.AddNode(dag.Node{ID: fmt.Sprintf("d%d", i), Row: 3})
+	}
+	for i := range 25 {
+		g.AddEdge(dag.Edge{From: fmt.Sprintf("a%d", i), To: fmt.Sprintf("b%d", i)})
+		g.AddEdge(dag.Edge{From: fmt.Sprintf("b%d", i), To: fmt.Sprintf("c%d", i)})
+		g.AddEdge(dag.Edge{From: fmt.Sprintf("c%d", i), To: fmt.Sprintf("d%d", i)})
+	}
+
+	opts := Options{
+		Randomize: true,
+		Merge:     true,
+		Ordering:  "barycentric",
+	}
+	opts.SetLayoutDefaults()
+
+	layout, err := generateTowerLayout(g, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(layout.Blocks) == 0 {
+		t.Error("Expected blocks in layout")
 	}
 }

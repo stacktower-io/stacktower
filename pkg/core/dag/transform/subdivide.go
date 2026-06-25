@@ -20,6 +20,11 @@ import (
 // source node, allowing renderers to visually merge subdividers into
 // continuous vertical blocks.
 //
+// Long edges that leave the same source node share a single subdivider chain
+// (one column per source, per row), diverging only at each destination's row.
+// This avoids one parallel chain per edge, which would render as several
+// side-by-side blocks all labelled with the master's name.
+//
 // # Sink Extension
 //
 // Subdivide also extends all sink nodes (nodes with out-degree 0) to the
@@ -64,6 +69,14 @@ func subdivide(g *dag.DAG) error {
 }
 
 func subdivideLongEdges(g *dag.DAG, gen *idGen) error {
+	// shared[srcID][row] caches the subdivider created for a source node at a
+	// given row, so all long edges leaving the same node funnel through ONE
+	// shared column that diverges only at each destination's row. Without
+	// sharing, a node with several deep dependencies sprouts one parallel
+	// chain per edge, which renders as multiple side-by-side blocks all
+	// carrying the master's label (looking like duplicated packages).
+	shared := make(map[string]map[int]string)
+
 	var toRemove []dag.Edge
 	for _, e := range g.Edges() {
 		src, srcOK := g.Node(e.From)
@@ -73,12 +86,27 @@ func subdivideLongEdges(g *dag.DAG, gen *idGen) error {
 		}
 
 		toRemove = append(toRemove, e)
+		rowSubs := shared[src.ID]
+		if rowSubs == nil {
+			rowSubs = make(map[int]string)
+			shared[src.ID] = rowSubs
+		}
+
 		prevID := src.ID
 		for row := src.Row + 1; row < dst.Row; row++ {
-			nextID, err := addSubdivider(g, gen, prevID, src.ID, row)
+			if id, ok := rowSubs[row]; ok {
+				prevID = id
+				continue
+			}
+			// Use EffectiveID so re-subdividing a subdivider's edge (e.g.
+			// after separator insertion shifts rows) links the new segment
+			// to the original master, not the intermediate subdivider.
+			// Otherwise MergeSubdividers can never merge the column.
+			nextID, err := addSubdivider(g, gen, prevID, src.EffectiveID(), row)
 			if err != nil {
 				return err
 			}
+			rowSubs[row] = nextID
 			prevID = nextID
 		}
 		if err := g.AddEdge(dag.Edge{From: prevID, To: dst.ID, Meta: e.Meta}); err != nil {

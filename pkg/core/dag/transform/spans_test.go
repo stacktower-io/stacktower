@@ -53,6 +53,55 @@ func TestResolveSpanOverlaps_SimpleOverlap(t *testing.T) {
 	}
 }
 
+func TestResolveSpanOverlaps_MixedRowWithSubdividers(t *testing.T) {
+	// Regression test: a row containing subdivider pass-throughs used to be
+	// skipped entirely, leaving K(2,2) tangles among the regular nodes
+	// unresolved. The subdivider column itself must stay intact.
+	g := dag.New(nil)
+	_ = g.AddNode(dag.Node{ID: "p1", Row: 0})
+	_ = g.AddNode(dag.Node{ID: "p2", Row: 0})
+	_ = g.AddNode(dag.Node{ID: "other", Row: 0})
+	_ = g.AddNode(dag.Node{ID: "c1", Row: 1})
+	_ = g.AddNode(dag.Node{ID: "c2", Row: 1})
+	_ = g.AddNode(dag.Node{ID: "sub", Row: 1, Kind: dag.NodeKindSubdivider, MasterID: "other"})
+	_ = g.AddNode(dag.Node{ID: "target", Row: 2})
+
+	// K(2,2) tangle between {p1,p2} and {c1,c2}.
+	_ = g.AddEdge(dag.Edge{From: "p1", To: "c1"})
+	_ = g.AddEdge(dag.Edge{From: "p1", To: "c2"})
+	_ = g.AddEdge(dag.Edge{From: "p2", To: "c1"})
+	_ = g.AddEdge(dag.Edge{From: "p2", To: "c2"})
+	// Subdivider column passing through row 1.
+	_ = g.AddEdge(dag.Edge{From: "other", To: "sub"})
+	_ = g.AddEdge(dag.Edge{From: "sub", To: "target"})
+
+	ResolveSpanOverlaps(g)
+
+	separatorCount := 0
+	for _, n := range g.Nodes() {
+		if n.IsAuxiliary() {
+			separatorCount++
+		}
+	}
+	if separatorCount == 0 {
+		t.Error("expected a separator despite subdividers elsewhere in the row")
+	}
+
+	// The subdivider column must not be rerouted through a separator.
+	sub, _ := g.Node("sub")
+	if sub == nil {
+		t.Fatal("subdivider missing")
+	}
+	for _, parent := range g.Parents("sub") {
+		if n, ok := g.Node(parent); ok && n.IsAuxiliary() {
+			t.Errorf("subdivider parent %q is a separator; column was broken", parent)
+		}
+	}
+	if kids := g.Children("sub"); len(kids) != 1 || kids[0] != "target" {
+		t.Errorf("subdivider children = %v, want [target]", kids)
+	}
+}
+
 func TestResolveSpanOverlaps_ThreeParentsOverlap(t *testing.T) {
 	g := dag.New(nil)
 	_ = g.AddNode(dag.Node{ID: "p1", Row: 0})

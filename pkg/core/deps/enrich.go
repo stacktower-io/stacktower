@@ -13,18 +13,6 @@ import (
 
 var enrichAuthHintOnce sync.Once
 
-// graphEnrichJob represents a single package to enrich in EnrichGraph.
-type graphEnrichJob struct {
-	ref *PackageRef
-}
-
-// graphEnrichResult holds the enrichment result for a package in EnrichGraph.
-type graphEnrichResult struct {
-	name    string
-	meta    map[string]any
-	success bool
-}
-
 // EnrichStats contains statistics about the enrichment process.
 // This is useful for observability and debugging.
 type EnrichStats struct {
@@ -68,15 +56,32 @@ func EnrichGraph(ctx context.Context, g *dag.DAG, manifestFile string, opts Opti
 
 	nodes := g.Nodes()
 
-	// Collect package names (excluding project root)
-	names := make([]string, 0, len(nodes))
+	// Build a node-ID to registry package name mapping. When node IDs are
+	// versioned (e.g. "lodash@4.17.21"), registries expect the bare name.
+	// Use meta["name"] when present, otherwise use the node ID directly.
+	nodeToName := make(map[string]string, len(nodes))
 	for _, n := range nodes {
-		if n.ID != ProjectRootNodeID {
-			names = append(names, n.ID)
+		if n.ID == ProjectRootNodeID {
+			continue
+		}
+		if name, ok := n.Meta["name"].(string); ok && name != "" {
+			nodeToName[n.ID] = name
+		} else {
+			nodeToName[n.ID] = n.ID
 		}
 	}
-	if len(names) == 0 {
+	if len(nodeToName) == 0 {
 		return stats
+	}
+
+	// Collect registry package names for URL fetching (deduplicated).
+	nameSet := make(map[string]bool, len(nodeToName))
+	for _, name := range nodeToName {
+		nameSet[name] = true
+	}
+	names := make([]string, 0, len(nameSet))
+	for name := range nameSet {
+		names = append(names, name)
 	}
 
 	// Fetch URLs from registry if URLProvider is available.
@@ -90,32 +95,45 @@ func EnrichGraph(ctx context.Context, g *dag.DAG, manifestFile string, opts Opti
 		}
 	}
 
-	// Build PackageRef list with URLs populated from URLProvider
-	refs := make([]*PackageRef, 0, len(names))
+	// Build PackageRef list with URLs populated from URLProvider.
+	// Use the registry package name for lookups, but keep the node ID for
+	// mapping results back to graph nodes.
+	type refEntry struct {
+		ref    *PackageRef
+		nodeID string
+	}
+	entries := make([]refEntry, 0, len(nodeToName))
 	for _, n := range nodes {
 		if n.ID == ProjectRootNodeID {
 			continue
 		}
+		pkgName := nodeToName[n.ID]
 		version, _ := n.Meta["version"].(string)
 		ref := &PackageRef{
-			Name:         n.ID,
+			Name:         pkgName,
 			Version:      version,
 			ManifestFile: manifestFile,
 		}
-		// Populate URLs if available from registry lookup
 		if urlMap != nil {
-			if urls, ok := urlMap[n.ID]; ok {
+			if urls, ok := urlMap[pkgName]; ok {
 				ref.ProjectURLs = urls.ProjectURLs
 				ref.HomePage = urls.HomePage
 			}
 		}
-		refs = append(refs, ref)
+		entries = append(entries, refEntry{ref: ref, nodeID: n.ID})
+	}
+	refs := make([]*PackageRef, len(entries))
+	for i, e := range entries {
+		refs[i] = e.ref
 	}
 	stats.Total = len(refs)
 
 	// Try batch enrichment first (e.g. GitHub GraphQL — one call for all).
 	// This emits OnEnrichStart/OnEnrichComplete hooks for progress UI.
+	// All batch providers run and their results are merged; the per-package
+	// fallback below is used only when no batch provider succeeded.
 	hooks := observability.ResolverFromContext(ctx)
+	enrichedNodes := make(map[string]bool)
 	for _, p := range opts.MetadataProviders {
 		bp, ok := p.(BatchMetadataProvider)
 		if !ok {
@@ -132,27 +150,45 @@ func EnrichGraph(ctx context.Context, g *dag.DAG, manifestFile string, opts Opti
 			continue
 		}
 		stats.UsedBatch = true
-		for _, n := range nodes {
-			if extra, ok := batch[n.ID]; ok {
-				maps.Copy(n.Meta, extra)
-				stats.Succeeded++
+		providerHits := 0
+		for _, e := range entries {
+			// Batch results are keyed by PackageRef.Name (registry name).
+			if extra, ok := batch[e.ref.Name]; ok {
+				if n, found := g.Node(e.nodeID); found {
+					maps.Copy(n.Meta, extra)
+					enrichedNodes[e.nodeID] = true
+					providerHits++
+				}
 			}
 		}
+		hooks.OnEnrichComplete(ctx, p.Name(), providerHits, nil)
+	}
+	if stats.UsedBatch {
+		stats.Succeeded = len(enrichedNodes)
 		stats.Failed = stats.Total - stats.Succeeded
-		hooks.OnEnrichComplete(ctx, p.Name(), stats.Succeeded, nil)
-		return stats // batch provider handled everything
+		return stats
 	}
 
 	// Fallback: parallel per-package enrichment using ParallelMapOrdered.
-	jobs := make([]graphEnrichJob, 0, len(refs))
-	for _, ref := range refs {
-		jobs = append(jobs, graphEnrichJob{ref: ref})
+	type enrichJob struct {
+		ref    *PackageRef
+		nodeID string
+	}
+	jobs := make([]enrichJob, 0, len(entries))
+	for _, e := range entries {
+		jobs = append(jobs, enrichJob(e))
+	}
+
+	type enrichResult struct {
+		nodeID  string
+		meta    map[string]any
+		success bool
 	}
 
 	var authErrorSeen bool
 	var authMu sync.Mutex
 
-	results, _ := ParallelMapOrdered(ctx, o.Workers, jobs, func(ctx context.Context, j graphEnrichJob) graphEnrichResult {
+	results, _ := ParallelMapOrdered(ctx, o.Workers, jobs, func(ctx context.Context, j enrichJob) enrichResult {
 		hooks.OnFetchStart(ctx, j.ref.Name, 0)
 		m := make(map[string]any)
 		success := false
@@ -174,11 +210,11 @@ func EnrichGraph(ctx context.Context, g *dag.DAG, manifestFile string, opts Opti
 			success = true
 		}
 		hooks.OnFetchComplete(ctx, j.ref.Name, 0, 0, nil)
-		return graphEnrichResult{name: j.ref.Name, meta: m, success: success}
+		return enrichResult{nodeID: j.nodeID, meta: m, success: success}
 	})
 
 	for _, res := range results {
-		if n, ok := g.Node(res.name); ok {
+		if n, ok := g.Node(res.nodeID); ok {
 			maps.Copy(n.Meta, res.meta)
 		}
 		if res.success {

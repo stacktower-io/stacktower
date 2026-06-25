@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -46,6 +47,91 @@ type Client struct {
 	circuitBreaker *CircuitBreaker    // circuit breaker for rate limit protection
 }
 
+// Shared per-registry infrastructure.
+//
+// Multiple Client instances are routinely created for the same registry within
+// one process (the resolver's fetcher, URL providers, runtime probes, ...).
+// If each instance carried its own rate limiter and circuit breaker, the
+// effective request budget would be N times the configured limit and a 429
+// storm observed by one client would not protect the others. Known registries
+// (those listed in [DefaultRateLimits]) therefore share a single limiter and
+// circuit breaker per registry. Unknown namespaces (e.g. tests) get private
+// instances to preserve isolation.
+var (
+	sharedInfraMu  sync.Mutex
+	sharedBreakers = map[string]*CircuitBreaker{}
+	sharedLimiters = map[string]*rate.Limiter{}
+)
+
+// normalizeRegistry maps composite namespace identifiers (e.g. "github:auth:<hash>",
+// "github:unauth") back to the canonical registry key used in [DefaultRateLimits].
+// This ensures that all GitHub client instances share the correct limiter and
+// circuit breaker regardless of token-scoped cache namespaces.
+func normalizeRegistry(registry string) string {
+	if _, ok := DefaultRateLimits[registry]; ok {
+		return registry
+	}
+	// Handle composite keys like "github:auth:<hash>" or "github:unauth".
+	if prefix, rest, found := strings.Cut(registry, ":"); found {
+		// Try prefix_suffix first ("github:unauth" → "github_unauth") to
+		// match budget-specific entries before falling back to the prefix alone.
+		suffix, _, _ := strings.Cut(rest, ":")
+		if suffix != "" {
+			candidate := prefix + "_" + suffix
+			if _, ok := DefaultRateLimits[candidate]; ok {
+				return candidate
+			}
+		}
+		// Fall back to prefix alone ("github:auth:<hash>" → "github").
+		if _, ok := DefaultRateLimits[prefix]; ok {
+			return prefix
+		}
+	}
+	return registry
+}
+
+// isKnownRegistry reports whether the registry has production rate limit
+// configuration and should share limiter/breaker state across clients.
+func isKnownRegistry(registry string) bool {
+	_, ok := DefaultRateLimits[normalizeRegistry(registry)]
+	return ok
+}
+
+func circuitBreakerForRegistry(registry string) *CircuitBreaker {
+	normalized := normalizeRegistry(registry)
+	if !isKnownRegistry(normalized) {
+		return NewCircuitBreaker(registry, DefaultCircuitBreakerConfig())
+	}
+	sharedInfraMu.Lock()
+	defer sharedInfraMu.Unlock()
+	if cb, ok := sharedBreakers[normalized]; ok {
+		return cb
+	}
+	cb := NewCircuitBreaker(normalized, DefaultCircuitBreakerConfig())
+	sharedBreakers[normalized] = cb
+	return cb
+}
+
+// limiterForRegistry returns the shared limiter for a known registry,
+// creating it on first use. The key includes rps/burst so that distinct
+// budgets for the same registry (e.g. authenticated vs unauthenticated
+// GitHub) get separate limiters.
+func limiterForRegistry(registry string, rps float64, burst int) *rate.Limiter {
+	normalized := normalizeRegistry(registry)
+	if !isKnownRegistry(normalized) {
+		return rate.NewLimiter(rate.Limit(rps), burst)
+	}
+	key := fmt.Sprintf("%s|%g|%d", normalized, rps, burst)
+	sharedInfraMu.Lock()
+	defer sharedInfraMu.Unlock()
+	if l, ok := sharedLimiters[key]; ok {
+		return l
+	}
+	l := rate.NewLimiter(rate.Limit(rps), burst)
+	sharedLimiters[key] = l
+	return l
+}
+
 // NewClient creates a Client with the given cache and default headers.
 // Headers are applied to all requests made through this client.
 //
@@ -59,26 +145,35 @@ type Client struct {
 //   - headers: Default HTTP headers for all requests. Pass nil if no default headers
 //     are needed. Common examples: "Authorization", "User-Agent", "Accept".
 //
+// Clients for known registries (see [DefaultRateLimits]) share one circuit
+// breaker per registry, so rate-limit protection applies across all client
+// instances in the process.
+//
 // The returned Client is safe for concurrent use by multiple goroutines.
 func NewClient(c cache.Cache, namespace string, ttl time.Duration, headers map[string]string) *Client {
 	if c == nil {
 		c = cache.NewNullCache()
 	}
 	registry := strings.TrimSuffix(namespace, ":")
+	normalized := normalizeRegistry(registry)
 	return &Client{
-		http:           NewHTTPClientWithTimeout(TimeoutForRegistry(registry)),
+		http:           NewHTTPClientWithTimeout(TimeoutForRegistry(normalized)),
 		cache:          c,
 		keyer:          cache.NewDefaultKeyer(),
 		namespace:      namespace,
 		ttl:            ttl,
 		headers:        headers,
-		circuitBreaker: NewCircuitBreaker(registry, DefaultCircuitBreakerConfig()),
+		circuitBreaker: circuitBreakerForRegistry(registry),
 	}
 }
 
 // NewClientWithRateLimit creates a Client with proactive rate limiting.
 // The limiter throttles outbound requests to stay within the registry's rate limits,
 // preventing 429 errors proactively rather than only reacting to them.
+//
+// Clients for known registries (see [DefaultRateLimits]) share one limiter per
+// registry+budget, so the configured rate applies across all client instances
+// in the process rather than multiplying per instance.
 //
 // Parameters are the same as [NewClient], plus:
 //   - rps: Maximum sustained requests per second. If <= 0, no rate limiting is applied.
@@ -89,7 +184,7 @@ func NewClientWithRateLimit(c cache.Cache, namespace string, ttl time.Duration, 
 		if burst <= 0 {
 			burst = 1
 		}
-		client.limiter = rate.NewLimiter(rate.Limit(rps), burst)
+		client.limiter = limiterForRegistry(client.registryName(), rps, burst)
 	}
 	return client
 }
@@ -149,6 +244,8 @@ func (c *Client) Cached(ctx context.Context, key string, refresh bool, v any, fe
 
 	// Singleflight: deduplicate concurrent fetches for the same cache key.
 	// Only one goroutine executes fetch; others wait and receive the shared result.
+	// The cache write happens once inside the winning call rather than in every
+	// waiter, avoiding N duplicate cache writes for N concurrent callers.
 	result, err, _ := c.group.Do(cacheKey, func() (any, error) {
 		if err := cache.RetryWithBackoffRegistry(ctx, registry, fetch); err != nil {
 			return nil, err
@@ -157,19 +254,19 @@ func (c *Client) Cached(ctx context.Context, key string, refresh bool, v any, fe
 		if err != nil {
 			return nil, fmt.Errorf("marshal cached value: %w", err)
 		}
+		if err := c.cache.Set(ctx, cacheKey, data, c.ttl); err == nil {
+			observability.Cache().OnCacheSet(ctx, registry, len(data))
+		}
 		return data, nil
 	})
 	if err != nil {
 		return err
 	}
 
-	// Populate v from the shared result and store in cache
+	// Populate v from the shared result
 	if data, ok := result.([]byte); ok && data != nil {
 		if err := json.Unmarshal(data, v); err != nil {
 			return fmt.Errorf("unmarshal cached result for %s/%s: %w", registry, key, err)
-		}
-		if err := c.cache.Set(ctx, cacheKey, data, c.ttl); err == nil {
-			observability.Cache().OnCacheSet(ctx, registry, len(data))
 		}
 	}
 	return nil
@@ -323,11 +420,16 @@ func (c *Client) doRequestWithBody(ctx context.Context, method, reqURL string, b
 		delay := r.Delay()
 		if delay > time.Millisecond {
 			observability.RateLimit().OnRateLimitWait(ctx, c.registryName(), delay)
+			// time.NewTimer + Stop instead of time.After: After leaks its
+			// timer until expiry when ctx wins the select, which adds up
+			// under heavy rate limiting.
+			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				r.Cancel()
 				return nil, ctx.Err()
-			case <-time.After(delay):
+			case <-timer.C:
 			}
 		}
 	}
@@ -389,7 +491,19 @@ func checkResponse(resp *http.Response) error {
 		return nil
 	case resp.StatusCode == http.StatusNotFound:
 		return ErrNotFound
-	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
+	case resp.StatusCode == http.StatusForbidden:
+		// GitHub (and some other APIs) signal rate limiting with 403 rather
+		// than 429. Distinguish via headers so callers retry with backoff
+		// instead of failing hard with a non-retryable auth error.
+		if isRateLimited403(resp) {
+			retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
+			if retryAfter == 0 {
+				retryAfter = retryAfterFromRateLimitReset(resp.Header.Get("X-RateLimit-Reset"))
+			}
+			return cache.Retryable(&RateLimitedError{RetryAfter: retryAfter})
+		}
+		return ErrUnauthorized
+	case resp.StatusCode == http.StatusUnauthorized:
 		return ErrUnauthorized
 	case resp.StatusCode == http.StatusTooManyRequests:
 		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
@@ -399,6 +513,32 @@ func checkResponse(resp *http.Response) error {
 	default:
 		return fmt.Errorf("%w: status %d", ErrNetwork, resp.StatusCode)
 	}
+}
+
+// isRateLimited403 reports whether a 403 response is actually a rate-limit
+// signal. GitHub sets X-RateLimit-Remaining: 0 when the primary quota is
+// exhausted and Retry-After for secondary (abuse) limits.
+func isRateLimited403(resp *http.Response) bool {
+	if resp.Header.Get("Retry-After") != "" {
+		return true
+	}
+	return resp.Header.Get("X-RateLimit-Remaining") == "0"
+}
+
+// retryAfterFromRateLimitReset converts GitHub's X-RateLimit-Reset header
+// (Unix epoch seconds) to a relative wait in seconds.
+func retryAfterFromRateLimitReset(value string) int {
+	if value == "" {
+		return 0
+	}
+	epoch, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0
+	}
+	if delay := int(time.Until(time.Unix(epoch, 0)).Seconds()); delay > 0 {
+		return delay
+	}
+	return 0
 }
 
 // parseRetryAfter parses the Retry-After header value, which may be either

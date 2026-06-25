@@ -1,13 +1,17 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/stacktower-io/stacktower/pkg/integrations"
 )
 
 // OAuthClient handles GitHub OAuth operations using the device flow.
@@ -36,7 +40,8 @@ func (c *OAuthClient) AuthorizationURL(state string) string {
 }
 
 // ExchangeCode exchanges an authorization code for an access token.
-func (c *OAuthClient) ExchangeCode(code string) (*OAuthToken, error) {
+// The context controls cancellation and timeout of the token request.
+func (c *OAuthClient) ExchangeCode(ctx context.Context, code string) (*OAuthToken, error) {
 	data := url.Values{
 		"client_id":     {c.config.ClientID},
 		"client_secret": {c.config.ClientSecret},
@@ -44,7 +49,7 @@ func (c *OAuthClient) ExchangeCode(code string) (*OAuthToken, error) {
 		"redirect_uri":  {c.config.RedirectURI},
 	}
 
-	req, err := http.NewRequest("POST", "https://github.com/login/oauth/access_token", strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://github.com/login/oauth/access_token", strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -57,6 +62,16 @@ func (c *OAuthClient) ExchangeCode(code string) (*OAuthToken, error) {
 	}
 	defer resp.Body.Close()
 
+	return decodeTokenResponse(resp)
+}
+
+// decodeTokenResponse parses a GitHub OAuth token endpoint response,
+// validating HTTP status, OAuth error fields, and token presence.
+func decodeTokenResponse(resp *http.Response) (*OAuthToken, error) {
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github oauth: unexpected status %d", resp.StatusCode)
+	}
+
 	var result struct {
 		AccessToken string `json:"access_token"`
 		TokenType   string `json:"token_type"`
@@ -65,12 +80,16 @@ func (c *OAuthClient) ExchangeCode(code string) (*OAuthToken, error) {
 		ErrorDesc   string `json:"error_description"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	// Limit the read to prevent memory exhaustion from oversized responses.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, integrations.MaxResponseSize)).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
 	if result.Error != "" {
 		return nil, fmt.Errorf("%s: %s", result.Error, result.ErrorDesc)
+	}
+	if result.AccessToken == "" {
+		return nil, fmt.Errorf("github oauth: response contained no access token")
 	}
 
 	return &OAuthToken{
@@ -110,9 +129,16 @@ func (c *OAuthClient) RequestDeviceCode(ctx context.Context) (*DeviceCodeRespons
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github device code: unexpected status %d", resp.StatusCode)
+	}
+
 	var result DeviceCodeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, integrations.MaxResponseSize)).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	if result.DeviceCode == "" || result.UserCode == "" {
+		return nil, fmt.Errorf("github device code: incomplete response")
 	}
 
 	return &result, nil
@@ -169,10 +195,13 @@ func (c *OAuthClient) RevokeGrant(ctx context.Context, accessToken string) error
 		return fmt.Errorf("OAuth client ID and secret required to revoke grants")
 	}
 
-	body := fmt.Sprintf(`{"access_token":"%s"}`, accessToken)
+	body, err := json.Marshal(map[string]string{"access_token": accessToken})
+	if err != nil {
+		return fmt.Errorf("marshal revoke request: %w", err)
+	}
 	endpoint := fmt.Sprintf("https://api.github.com/applications/%s/grant", c.config.ClientID)
 
-	req, err := http.NewRequestWithContext(ctx, "DELETE", endpoint, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "DELETE", endpoint, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create revoke request: %w", err)
 	}
@@ -215,25 +244,5 @@ func (c *OAuthClient) checkDeviceToken(ctx context.Context, deviceCode string) (
 	}
 	defer resp.Body.Close()
 
-	var result struct {
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
-		Scope       string `json:"scope"`
-		Error       string `json:"error"`
-		ErrorDesc   string `json:"error_description"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-
-	if result.Error != "" {
-		return nil, fmt.Errorf("%s: %s", result.Error, result.ErrorDesc)
-	}
-
-	return &OAuthToken{
-		AccessToken: result.AccessToken,
-		TokenType:   result.TokenType,
-		Scope:       result.Scope,
-	}, nil
+	return decodeTokenResponse(resp)
 }

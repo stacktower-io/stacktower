@@ -22,7 +22,7 @@
         "repo_last_release": "2024-11-08",
         "repo_license": "MIT",
         "repo_owner": "pallets-eco",
-        "repo_stars": 2054,
+        "repo_stars": 2063,
         "repo_topics": [
           "blinker",
           "python",
@@ -42,11 +42,11 @@
         "repo_archived": false,
         "repo_description": "Python composable command line interface toolkit",
         "repo_language": "Python",
-        "repo_last_commit": "2026-05-08",
-        "repo_last_release": "2026-04-22",
+        "repo_last_commit": "2026-06-07",
+        "repo_last_release": "2026-05-22",
         "repo_license": "BSD-3-Clause",
         "repo_owner": "pallets",
-        "repo_stars": 17482,
+        "repo_stars": 17530,
         "repo_topics": [
           "python",
           "cli",
@@ -54,7 +54,7 @@
           "pallets"
         ],
         "repo_url": "https://github.com/pallets/click",
-        "version": "8.3.3"
+        "version": "8.4.1"
       }
     },
     {
@@ -67,10 +67,10 @@
         "repo_archived": false,
         "repo_description": "Simple cross-platform colored terminal text in Python",
         "repo_language": "Python",
-        "repo_last_commit": "2025-07-09",
+        "repo_last_commit": "2026-05-13",
         "repo_license": "BSD-3-Clause",
         "repo_owner": "tartley",
-        "repo_stars": 3782,
+        "repo_stars": 3790,
         "repo_url": "https://github.com/tartley/colorama",
         "version": "0.4.6"
       }
@@ -86,11 +86,11 @@
         "repo_archived": false,
         "repo_description": "The Python micro framework for building web applications.",
         "repo_language": "Python",
-        "repo_last_commit": "2026-05-02",
+        "repo_last_commit": "2026-06-10",
         "repo_last_release": "2026-02-19",
         "repo_license": "BSD-3-Clause",
         "repo_owner": "pallets",
-        "repo_stars": 71524,
+        "repo_stars": 71641,
         "repo_topics": [
           "python",
           "flask",
@@ -119,7 +119,7 @@
         "repo_last_release": "2024-04-16",
         "repo_license": "BSD-3-Clause",
         "repo_owner": "pallets",
-        "repo_stars": 3116,
+        "repo_stars": 3120,
         "repo_topics": [
           "python",
           "security",
@@ -147,7 +147,7 @@
         "repo_last_release": "2025-03-05",
         "repo_license": "BSD-3-Clause",
         "repo_owner": "pallets",
-        "repo_stars": 11630,
+        "repo_stars": 11655,
         "repo_topics": [
           "python",
           "template-engine",
@@ -176,7 +176,7 @@
         "repo_last_release": "2025-09-27",
         "repo_license": "BSD-3-Clause",
         "repo_owner": "pallets",
-        "repo_stars": 689,
+        "repo_stars": 690,
         "repo_topics": [
           "python",
           "html",
@@ -206,7 +206,7 @@
         "repo_last_release": "2026-04-02",
         "repo_license": "BSD-3-Clause",
         "repo_owner": "pallets",
-        "repo_stars": 6860,
+        "repo_stars": 6864,
         "repo_topics": [
           "python",
           "wsgi",
@@ -221,10 +221,6 @@
     }
   ],
   "edges": [
-    {
-      "from": "click",
-      "to": "colorama"
-    },
     {
       "from": "jinja2",
       "to": "markupsafe",
@@ -264,6 +260,10 @@
       "from": "flask",
       "to": "werkzeug",
       "constraint": "\u003e=3.1.0"
+    },
+    {
+      "from": "click",
+      "to": "colorama"
     }
   ]
 }

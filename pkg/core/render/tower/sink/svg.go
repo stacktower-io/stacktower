@@ -147,22 +147,25 @@ func renderContent(buf *bytes.Buffer, r *svgRenderer, blocks []styles.Block, edg
 	for _, b := range blocks {
 		r.style.RenderBlock(buf, b)
 		if !r.flagsOnTop {
-			// Render flags inline with each block
-			r.style.RenderFlags(buf, b)
+			if !blockTooSmallForFlags(b) {
+				r.style.RenderFlags(buf, b)
+			}
 		}
 	}
 	for _, e := range edges {
 		r.style.RenderEdge(buf, e)
 	}
 	for _, b := range blocks {
-		if shouldSkipText(r.graph, b.ID) {
+		if shouldSkipText(r.graph, b.ID) || blockTooSmallForText(b) {
 			continue
 		}
 		r.style.RenderText(buf, b)
 	}
 	if r.flagsOnTop {
-		// Render flags last so they always appear on top of all blocks
 		for _, b := range blocks {
+			if blockTooSmallForFlags(b) {
+				continue
+			}
 			r.style.RenderFlags(buf, b)
 		}
 	}
@@ -176,6 +179,30 @@ func shouldSkipText(g *dag.DAG, id string) bool {
 	}
 	n, ok := g.Node(id)
 	return ok && n.IsAuxiliary()
+}
+
+// minTextBlockW and minTextBlockH define the smallest block dimensions at
+// which a label is still rendered. Below these the text would be unreadable
+// at the minimum font size (8 px) and just adds visual clutter.
+const (
+	minTextBlockW = 22.0
+	minTextBlockH = 14.0
+)
+
+// minFlagBlockW and minFlagBlockH define the smallest block dimensions at
+// which security/license flags are rendered. Below these the pennant would
+// overlap the block edge or obscure the label.
+const (
+	minFlagBlockW = 40.0
+	minFlagBlockH = 28.0
+)
+
+func blockTooSmallForText(b styles.Block) bool {
+	return b.W < minTextBlockW || b.H < minTextBlockH
+}
+
+func blockTooSmallForFlags(b styles.Block) bool {
+	return b.W < minFlagBlockW || b.H < minFlagBlockH
 }
 
 func renderBlockInteraction(buf *bytes.Buffer) {

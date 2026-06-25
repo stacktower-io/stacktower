@@ -88,6 +88,12 @@ func buildGraph(ctx context.Context, packages []lockPackage, scope string) *dag.
 	incoming := make(map[string]bool)
 	for _, pkg := range packages {
 		from := normalize(pkg.Name)
+		// Skip edges originating from packages filtered out in the node
+		// pass (e.g. dev-category packages under prod-only scope), so we
+		// never add edges from nonexistent nodes.
+		if !pkgs[from] {
+			continue
+		}
 		for dep, constraint := range pkg.Dependencies {
 			to := normalize(dep)
 			if pkgs[to] {
@@ -105,7 +111,7 @@ func buildGraph(ctx context.Context, packages []lockPackage, scope string) *dag.
 	_ = g.AddNode(dag.Node{ID: deps.ProjectRootNodeID, Meta: dag.Metadata{"virtual": true}})
 	for _, pkg := range packages {
 		name := normalize(pkg.Name)
-		if !incoming[name] {
+		if pkgs[name] && !incoming[name] {
 			edgeMeta := dag.Metadata{}
 			if pkg.Version != "" {
 				edgeMeta["constraint"] = "==" + pkg.Version

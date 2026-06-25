@@ -157,6 +157,82 @@ checksum = "ghi789"
 	}
 }
 
+func TestCargoLock_VersionlessDepPicksHighestVersion(t *testing.T) {
+	// When a dependency string lacks a version and the crate exists at
+	// multiple versions, the highest version is chosen deterministically.
+	content := `version = 3
+
+[[package]]
+name = "main"
+version = "0.1.0"
+dependencies = [
+ "multi",
+]
+
+[[package]]
+name = "multi"
+version = "0.9.0"
+
+[[package]]
+name = "multi"
+version = "0.10.2"
+
+[[package]]
+name = "multi"
+version = "0.10.1"
+`
+
+	tmpDir := t.TempDir()
+	lockPath := filepath.Join(tmpDir, "Cargo.lock")
+	if err := os.WriteFile(lockPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &CargoLock{}
+	result, err := c.Parse(lockPath, deps.Options{})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	g := result.Graph
+	children := g.Children("main")
+	if len(children) != 1 {
+		t.Fatalf("main has %d children, want 1: %v", len(children), children)
+	}
+	// 0.10.2 > 0.10.1 > 0.9.0 with semver ordering (lexicographic would pick 0.9.0)
+	want := "multi@0.10.2"
+	if children[0] != want {
+		t.Errorf("main child = %q, want %q", children[0], want)
+	}
+}
+
+func TestCompareCargoVersionStrings(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want int // sign of expected result
+	}{
+		{"0.10.0", "0.9.0", 1}, // semver, not lexicographic
+		{"1.0.0", "1.0.0", 0},
+		{"1.2.3", "1.2.4", -1},
+		{"2.0.0", "10.0.0", -1},
+		{"1.0.0", "1.0.0-beta", 1}, // stable above prerelease
+		{"garbage", "1.0.0", -1},   // unparseable sorts below
+	}
+	for _, tt := range tests {
+		t.Run(tt.a+"_vs_"+tt.b, func(t *testing.T) {
+			got := compareCargoVersionStrings(tt.a, tt.b)
+			switch {
+			case tt.want > 0 && got <= 0:
+				t.Errorf("compareCargoVersionStrings(%q, %q) = %d, want > 0", tt.a, tt.b, got)
+			case tt.want < 0 && got >= 0:
+				t.Errorf("compareCargoVersionStrings(%q, %q) = %d, want < 0", tt.a, tt.b, got)
+			case tt.want == 0 && got != 0:
+				t.Errorf("compareCargoVersionStrings(%q, %q) = %d, want 0", tt.a, tt.b, got)
+			}
+		})
+	}
+}
+
 func TestCargoLock_ParseWithSource(t *testing.T) {
 	// Test parsing dependencies with full source specification
 	content := `version = 3

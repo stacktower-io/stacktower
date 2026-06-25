@@ -119,7 +119,9 @@ func GenerateSPDX(g *dag.DAG, opts Options) ([]byte, error) {
 			CopyrightText:    "NOASSERTION",
 		}
 
-		if license != "" {
+		// SPDX license fields must be valid SPDX expressions; free-text
+		// license strings would make the document invalid.
+		if license != "" && (isSPDXID(license) || isSPDXExpression(license)) {
 			pkg.LicenseConcluded = license
 			pkg.LicenseDeclared = license
 		} else {
@@ -161,12 +163,23 @@ func GenerateSPDX(g *dag.DAG, opts Options) ([]byte, error) {
 }
 
 // spdxID converts a package name to a valid SPDX identifier.
+// Scoped npm names like "@angular/core" become "SPDXRef-npm-angular-core"
+// instead of producing a leading double hyphen.
 func spdxID(name string) string {
+	if strings.HasPrefix(name, "@") {
+		name = "npm-" + name[1:]
+	}
 	safe := strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '-' {
 			return r
 		}
 		return '-'
 	}, name)
+	// Collapse runs of hyphens introduced by replaced characters and trim
+	// any that would directly follow the "SPDXRef-" prefix.
+	for strings.Contains(safe, "--") {
+		safe = strings.ReplaceAll(safe, "--", "-")
+	}
+	safe = strings.Trim(safe, "-")
 	return "SPDXRef-" + safe
 }

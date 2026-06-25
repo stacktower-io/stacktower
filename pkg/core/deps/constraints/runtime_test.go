@@ -24,11 +24,29 @@ func TestCheckVersionConstraint(t *testing.T) {
 		{"caret 0.x compatible", "0.8.5", "^0.8", true},
 		{"caret 0.x incompatible", "0.9.0", "^0.8", false},
 
-		// Tilde
+		// Tilde (npm/Cargo: lock specified minor)
 		{"tilde", "3.10.5", "~3.10", true},
 		{"tilde fail", "3.11", "~3.10", false},
-		{"tilde ruby", "2.7.8", "~>2.7", true},
-		{"tilde ruby fail", "3.0", "~>2.7", false},
+		{"tilde major only", "1.5", "~1", true},
+		{"tilde major only fail", "2.0", "~1", false},
+
+		// Pessimistic operator (PEP 440 ~=, Ruby ~>): lock all but last component
+		{"pessimistic ruby patch", "2.7.8", "~>2.7", true},
+		{"pessimistic ruby minor bump", "2.8.0", "~>2.7", true},
+		{"pessimistic ruby fail", "3.0", "~>2.7", false},
+		{"pessimistic ruby below", "2.6", "~>2.7", false},
+		{"pessimistic ruby three parts", "2.7.9", "~>2.7.1", true},
+		{"pessimistic ruby three parts fail", "2.8.0", "~>2.7.1", false},
+		{"pep440 compatible release", "3.11", "~=3.8", true},
+		{"pep440 compatible release fail", "4.0", "~=3.8", false},
+		{"pep440 compatible release below", "3.7", "~=3.8", false},
+		{"pep440 three parts", "3.8.5", "~=3.8.1", true},
+		{"pep440 three parts fail", "3.9.0", "~=3.8.1", false},
+		{"pessimistic major only", "2.9", "~>2", true},
+		{"pessimistic major only fail", "3.0", "~>2", false},
+
+		// Unparseable constraints are permissive
+		{"wildcard satisfied", "3.11", "*", true},
 
 		// OR groups (Composer-style)
 		{"composer OR", "8.2", "^8.2|^8.3|^8.4|^8.5", true},

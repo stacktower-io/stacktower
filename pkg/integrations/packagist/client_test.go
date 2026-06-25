@@ -3,6 +3,7 @@ package packagist
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -275,6 +276,40 @@ func TestLatestStable(t *testing.T) {
 	if got.Version != "v1.9.0" {
 		t.Errorf("latestStable should skip alpha/RC, got %s", got.Version)
 	}
+
+	// Substring traps: stable versions whose package-ish names contain
+	// "dev"/"rc" must not be misclassified as prerelease. (Regression: the old
+	// implementation used strings.Contains.)
+	versions = []p2Version{
+		{Version: "1.0.0-RC1"}, // real prerelease
+		{Version: "1.0.0"},     // stable
+	}
+	got = latestStable(versions)
+	if got.Version != "1.0.0" {
+		t.Errorf("latestStable should pick stable over RC, got %s", got.Version)
+	}
+
+	// Must return the HIGHEST stable version, not the first stable in slice order.
+	versions = []p2Version{
+		{Version: "1.5.0"},
+		{Version: "2.3.1"},
+		{Version: "2.0.0"},
+	}
+	got = latestStable(versions)
+	if got.Version != "2.3.1" {
+		t.Errorf("latestStable should return highest stable, got %s", got.Version)
+	}
+
+	// Branch versions are skipped even when they sort high.
+	versions = []p2Version{
+		{Version: "2.x-dev"},
+		{Version: "dev-main"},
+		{Version: "1.2.3"},
+	}
+	got = latestStable(versions)
+	if got.Version != "1.2.3" {
+		t.Errorf("latestStable should skip branch versions, got %s", got.Version)
+	}
 }
 
 func TestP2Version_UnmarshalJSON(t *testing.T) {
@@ -314,6 +349,52 @@ func TestComposerVersionsEquivalent(t *testing.T) {
 		if got := composerVersionsEquivalent(tt.a, tt.b); got != tt.want {
 			t.Fatalf("composerVersionsEquivalent(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
 		}
+	}
+}
+
+func TestFetchPackage_EmptyVersions_NotFound(t *testing.T) {
+	// A P2 response without any versions for the package must surface as
+	// ErrNotFound so callers can distinguish "missing" from other failures.
+	payload := p2Response{Packages: map[string][]p2Version{}}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(payload)
+	}))
+	defer server.Close()
+
+	c := testClient(t, server.URL)
+
+	_, err := c.FetchPackage(context.Background(), "vendor/empty", true)
+	if err == nil {
+		t.Fatal("expected error for package without versions")
+	}
+	if !errors.Is(err, integrations.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+
+	_, err = c.ListVersions(context.Background(), "vendor/empty", true)
+	if err == nil {
+		t.Fatal("expected error from ListVersions for package without versions")
+	}
+	if !errors.Is(err, integrations.ErrNotFound) {
+		t.Errorf("ListVersions: expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestListVersionsWithConstraints_EmptyVersions_NotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"package":{"versions":{}}}`))
+	}))
+	defer server.Close()
+
+	c := testClient(t, server.URL)
+
+	_, err := c.ListVersionsWithConstraints(context.Background(), "vendor/empty", true)
+	if err == nil {
+		t.Fatal("expected error for package without versions")
+	}
+	if !errors.Is(err, integrations.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
 

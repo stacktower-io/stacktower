@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"errors"
+	"math/rand/v2"
 	"time"
 
 	"github.com/stacktower-io/stacktower/pkg/observability"
@@ -59,6 +60,9 @@ func RetryWithBackoff(ctx context.Context, fn func() error) error {
 
 // RetryWithBackoffRegistry retries fn up to 3 times with exponential backoff,
 // emitting observability hooks with the registry name for each retry.
+//
+// Delays are jittered by up to +25% so that many workers hitting the same
+// rate limit don't retry in synchronized waves.
 func RetryWithBackoffRegistry(ctx context.Context, registry string, fn func() error) error {
 	const attempts = 3
 	baseDelay := time.Second
@@ -76,6 +80,7 @@ func RetryWithBackoffRegistry(ctx context.Context, registry string, fn func() er
 			if retryAfter, ok := retryAfterFromError(lastErr); ok && retryAfter > 0 {
 				delay = time.Duration(retryAfter) * time.Second
 			}
+			delay += time.Duration(rand.Int64N(int64(delay) / 4))
 			observability.RateLimit().OnRetry(ctx, registry, i+1, delay)
 			select {
 			case <-ctx.Done():

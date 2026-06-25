@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -47,7 +46,7 @@ require (
 require github.com/stretchr/testify v1.8.0
 `
 
-	result, err := parseGoModComplete(strings.NewReader(content))
+	result, err := parseGoModComplete([]byte(content))
 	if err != nil {
 		t.Fatalf("parseGoModComplete failed: %v", err)
 	}
@@ -84,32 +83,57 @@ require github.com/stretchr/testify v1.8.0
 	}
 }
 
-func TestParseRequireLineComplete(t *testing.T) {
-	tests := []struct {
-		line           string
-		wantName       string
-		wantConstraint string
-		wantIndirect   bool
-	}{
-		{"github.com/gin-gonic/gin v1.9.0", "github.com/gin-gonic/gin", "=v1.9.0", false},
-		{"golang.org/x/sync v0.3.0 // indirect", "golang.org/x/sync", "=v0.3.0", true},
-		{"github.com/pkg/errors v0.9.1 // some comment", "github.com/pkg/errors", "=v0.9.1", false},
-		{"", "", "", false},
+func TestParseGoModComplete_ReplaceAndExclude(t *testing.T) {
+	content := `module github.com/example/myapp
+
+go 1.21
+
+require (
+	github.com/old/lib v1.0.0
+	github.com/pinned/lib v1.2.0
+	github.com/dropped/lib v0.5.0
+	github.com/local/lib v1.1.0
+	github.com/kept/lib v1.3.0
+)
+
+replace github.com/old/lib => github.com/new/lib v1.5.0
+
+replace github.com/pinned/lib v1.2.0 => github.com/pinned/lib v1.2.1
+
+replace github.com/local/lib => ../local-lib
+
+exclude github.com/dropped/lib v0.5.0
+`
+
+	result, err := parseGoModComplete([]byte(content))
+	if err != nil {
+		t.Fatalf("parseGoModComplete failed: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.line, func(t *testing.T) {
-			got, isIndirect := parseRequireLineComplete(tt.line)
-			if got.Name != tt.wantName {
-				t.Errorf("parseRequireLineComplete(%q).Name = %q, want %q", tt.line, got.Name, tt.wantName)
-			}
-			if got.Constraint != tt.wantConstraint {
-				t.Errorf("parseRequireLineComplete(%q).Constraint = %q, want %q", tt.line, got.Constraint, tt.wantConstraint)
-			}
-			if isIndirect != tt.wantIndirect {
-				t.Errorf("parseRequireLineComplete(%q) isIndirect = %v, want %v", tt.line, isIndirect, tt.wantIndirect)
-			}
-		})
+	got := make(map[string]string, len(result.directDeps))
+	for _, dep := range result.directDeps {
+		got[dep.Name] = dep.Constraint
+	}
+
+	want := map[string]string{
+		"github.com/new/lib":    "=v1.5.0", // wildcard replace applied
+		"github.com/pinned/lib": "=v1.2.1", // version-specific replace applied
+		"github.com/local/lib":  "=v1.1.0", // local replace keeps original requirement
+		"github.com/kept/lib":   "=v1.3.0",
+	}
+	if len(got) != len(want) {
+		t.Errorf("got %d deps %v, want %d", len(got), got, len(want))
+	}
+	for name, constraint := range want {
+		if got[name] != constraint {
+			t.Errorf("dep %s constraint = %q, want %q", name, got[name], constraint)
+		}
+	}
+	if _, present := got["github.com/dropped/lib"]; present {
+		t.Error("excluded dependency should be dropped")
+	}
+	if _, present := got["github.com/old/lib"]; present {
+		t.Error("replaced dependency should not keep its old path")
 	}
 }
 

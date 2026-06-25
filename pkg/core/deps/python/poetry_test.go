@@ -126,6 +126,64 @@ func TestPoetryLock_IncludesTransitive(t *testing.T) {
 	}
 }
 
+func TestPoetryLock_ProdOnlySkipsDevEdges(t *testing.T) {
+	// Dev packages are skipped as nodes under prod-only scope; their edges
+	// (including root edges) must be skipped too so the graph never contains
+	// edges from/to nonexistent dev nodes.
+	dir := t.TempDir()
+	lockFile := filepath.Join(dir, "poetry.lock")
+	content := `[[package]]
+name = "requests"
+version = "2.31.0"
+category = "main"
+
+[[package]]
+name = "pytest"
+version = "8.3.0"
+category = "dev"
+
+[package.dependencies]
+pluggy = ">=1.5"
+
+[[package]]
+name = "pluggy"
+version = "1.5.0"
+category = "main"
+`
+	if err := os.WriteFile(lockFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	parser := &PoetryLock{}
+	result, err := parser.Parse(lockFile, deps.Options{DependencyScope: deps.DependencyScopeProdOnly})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	g := result.Graph
+
+	if _, ok := g.Node("pytest"); ok {
+		t.Fatal("did not expect dev package pytest in prod_only scope")
+	}
+	// No edge may originate from the skipped pytest node
+	if children := g.Children("pytest"); len(children) != 0 {
+		t.Errorf("pytest (nonexistent node) has %d children, want 0", len(children))
+	}
+	// pluggy has no prod parents, so it should hang off the project root,
+	// not off the filtered dev package.
+	rootChildren := g.Children("__project__")
+	found := false
+	for _, child := range rootChildren {
+		if child == "pluggy" {
+			found = true
+		}
+		if child == "pytest" {
+			t.Error("__project__ must not have an edge to the filtered dev package pytest")
+		}
+	}
+	if !found {
+		t.Error("expected pluggy to be connected to __project__")
+	}
+}
+
 func TestPoetryLock_AllScopeIncludesDevPackages(t *testing.T) {
 	dir := t.TempDir()
 	lockFile := filepath.Join(dir, "poetry.lock")

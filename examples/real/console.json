@@ -4,7 +4,7 @@
     "include_prerelease": false,
     "language": "php",
     "runtime_source": "package",
-    "runtime_version": "8.4"
+    "runtime_version": "8.4.1"
   },
   "nodes": [
     {
@@ -22,7 +22,7 @@
         "repo_last_release": "2021-11-05",
         "repo_license": "MIT",
         "repo_owner": "php-fig",
-        "repo_stars": 10013,
+        "repo_stars": 10012,
         "repo_url": "https://github.com/php-fig/container",
         "version": "2.0.2"
       }
@@ -30,31 +30,32 @@
     {
       "id": "symfony/console",
       "license": "MIT",
-      "url": "https://github.com/symfony/string",
+      "url": "https://github.com/symfony/console",
       "meta": {
+        "author": "Fabien Potencier",
+        "description": "Eases the creation of beautiful and testable command line interfaces",
+        "homepage": "https://symfony.com",
         "license": "MIT",
         "repo_archived": false,
-        "repo_description": "Provides an object-oriented API to strings and deals with bytes, UTF-8 code points and grapheme clusters in a unified way",
+        "repo_description": "Eases the creation of beautiful and testable command line interfaces",
         "repo_language": "PHP",
-        "repo_last_commit": "2026-05-12",
-        "repo_last_release": "2026-05-06",
+        "repo_last_commit": "2026-06-09",
+        "repo_last_release": "2026-05-29",
         "repo_license": "MIT",
         "repo_owner": "symfony",
-        "repo_stars": 1788,
+        "repo_stars": 9819,
         "repo_topics": [
           "php",
           "symfony",
           "component",
           "symfony-component",
-          "string",
-          "utf8",
-          "unicode",
-          "grapheme",
-          "i18n",
-          "utf-8"
+          "console",
+          "cli",
+          "command-line",
+          "terminal"
         ],
-        "repo_url": "https://github.com/symfony/string",
-        "version": "v8.0.9"
+        "repo_url": "https://github.com/symfony/console",
+        "version": "v8.1.0"
       }
     },
     {
@@ -69,11 +70,11 @@
         "repo_archived": false,
         "repo_description": "A generic function and convention to trigger deprecation notices",
         "repo_language": "PHP",
-        "repo_last_commit": "2026-05-06",
+        "repo_last_commit": "2026-06-05",
         "repo_last_release": "2026-05-06",
         "repo_license": "MIT",
         "repo_owner": "symfony",
-        "repo_stars": 2111,
+        "repo_stars": 2112,
         "repo_topics": [
           "php",
           "symfony",
@@ -100,7 +101,7 @@
         "repo_last_release": "2026-04-26",
         "repo_license": "MIT",
         "repo_owner": "symfony",
-        "repo_stars": 4046,
+        "repo_stars": 4043,
         "repo_topics": [
           "symfony",
           "polyfill",
@@ -128,8 +129,8 @@
         "repo_archived": false,
         "repo_description": "Symfony polyfill for intl's grapheme_* functions",
         "repo_language": "PHP",
-        "repo_last_commit": "2026-04-26",
-        "repo_last_release": "2026-04-26",
+        "repo_last_commit": "2026-05-26",
+        "repo_last_release": "2026-05-26",
         "repo_license": "MIT",
         "repo_owner": "symfony",
         "repo_stars": 1736,
@@ -146,7 +147,7 @@
           "shim"
         ],
         "repo_url": "https://github.com/symfony/polyfill-intl-grapheme",
-        "version": "v1.37.0"
+        "version": "v1.38.1"
       }
     },
     {
@@ -161,11 +162,11 @@
         "repo_archived": false,
         "repo_description": "Symfony polyfill for intl's Normalizer class and related functions",
         "repo_language": "PHP",
-        "repo_last_commit": "2026-04-26",
-        "repo_last_release": "2026-04-26",
+        "repo_last_commit": "2026-05-25",
+        "repo_last_release": "2026-05-25",
         "repo_license": "MIT",
         "repo_owner": "symfony",
-        "repo_stars": 2072,
+        "repo_stars": 2071,
         "repo_topics": [
           "symfony",
           "polyfill",
@@ -179,7 +180,7 @@
           "shim"
         ],
         "repo_url": "https://github.com/symfony/polyfill-intl-normalizer",
-        "version": "v1.37.0"
+        "version": "v1.38.0"
       }
     },
     {
@@ -194,11 +195,11 @@
         "repo_archived": false,
         "repo_description": "Symfony polyfill for the Mbstring extension",
         "repo_language": "PHP",
-        "repo_last_commit": "2026-04-26",
-        "repo_last_release": "2026-04-26",
+        "repo_last_commit": "2026-06-09",
+        "repo_last_release": "2026-06-09",
         "repo_license": "MIT",
         "repo_owner": "symfony",
-        "repo_stars": 7836,
+        "repo_stars": 7831,
         "repo_topics": [
           "symfony",
           "polyfill",
@@ -212,7 +213,39 @@
           "symfony-polyfill"
         ],
         "repo_url": "https://github.com/symfony/polyfill-mbstring",
-        "version": "v1.37.0"
+        "version": "v1.38.2"
+      }
+    },
+    {
+      "id": "symfony/polyfill-php85",
+      "license": "MIT",
+      "url": "https://github.com/symfony/polyfill-php85",
+      "meta": {
+        "author": "Nicolas Grekas",
+        "description": "Symfony polyfill backporting some PHP 8.5+ features to lower PHP versions",
+        "homepage": "https://symfony.com",
+        "license": "MIT",
+        "repo_archived": false,
+        "repo_description": "Symfony polyfill backporting some PHP 8.5+ features to lower PHP versions",
+        "repo_language": "PHP",
+        "repo_last_commit": "2026-05-26",
+        "repo_last_release": "2026-05-26",
+        "repo_license": "MIT",
+        "repo_owner": "symfony",
+        "repo_stars": 49,
+        "repo_topics": [
+          "symfony-component",
+          "symfony-polyfill",
+          "compatibility",
+          "portable",
+          "shim",
+          "symfony",
+          "component",
+          "javascript",
+          "polyfill"
+        ],
+        "repo_url": "https://github.com/symfony/polyfill-php85",
+        "version": "v1.38.1"
       }
     },
     {
@@ -227,11 +260,11 @@
         "repo_archived": false,
         "repo_description": "Generic abstractions related to writing services",
         "repo_language": "PHP",
-        "repo_last_commit": "2026-05-06",
+        "repo_last_commit": "2026-06-05",
         "repo_last_release": "2026-05-06",
         "repo_license": "MIT",
         "repo_owner": "symfony",
-        "repo_stars": 2631,
+        "repo_stars": 2629,
         "repo_topics": [
           "php",
           "symfony",
@@ -252,15 +285,18 @@
       "license": "MIT",
       "url": "https://github.com/symfony/string",
       "meta": {
+        "author": "Nicolas Grekas",
+        "description": "Provides an object-oriented API to strings and deals with bytes, UTF-8 code points and grapheme clusters in a unified way",
+        "homepage": "https://symfony.com",
         "license": "MIT",
         "repo_archived": false,
         "repo_description": "Provides an object-oriented API to strings and deals with bytes, UTF-8 code points and grapheme clusters in a unified way",
         "repo_language": "PHP",
-        "repo_last_commit": "2026-05-12",
-        "repo_last_release": "2026-05-06",
+        "repo_last_commit": "2026-06-05",
+        "repo_last_release": "2026-05-29",
         "repo_license": "MIT",
         "repo_owner": "symfony",
-        "repo_stars": 1788,
+        "repo_stars": 1786,
         "repo_topics": [
           "php",
           "symfony",
@@ -274,36 +310,11 @@
           "utf-8"
         ],
         "repo_url": "https://github.com/symfony/string",
-        "version": "v8.0.8"
+        "version": "v8.1.0"
       }
     }
   ],
   "edges": [
-    {
-      "from": "symfony/console",
-      "to": "symfony/polyfill-mbstring",
-      "constraint": "^1.0"
-    },
-    {
-      "from": "symfony/console",
-      "to": "symfony/service-contracts",
-      "constraint": "^2.5|^3"
-    },
-    {
-      "from": "symfony/console",
-      "to": "symfony/string",
-      "constraint": "^7.4|^8.0"
-    },
-    {
-      "from": "symfony/service-contracts",
-      "to": "psr/container",
-      "constraint": "^1.1|^2.0"
-    },
-    {
-      "from": "symfony/service-contracts",
-      "to": "symfony/deprecation-contracts",
-      "constraint": "^2.5|^3"
-    },
     {
       "from": "symfony/string",
       "to": "symfony/polyfill-ctype",
@@ -323,6 +334,41 @@
       "from": "symfony/string",
       "to": "symfony/polyfill-mbstring",
       "constraint": "^1.0"
+    },
+    {
+      "from": "symfony/service-contracts",
+      "to": "psr/container",
+      "constraint": "^1.1|^2.0"
+    },
+    {
+      "from": "symfony/service-contracts",
+      "to": "symfony/deprecation-contracts",
+      "constraint": "^2.5|^3"
+    },
+    {
+      "from": "symfony/console",
+      "to": "symfony/deprecation-contracts",
+      "constraint": "^2.5|^3"
+    },
+    {
+      "from": "symfony/console",
+      "to": "symfony/polyfill-mbstring",
+      "constraint": "^1.0"
+    },
+    {
+      "from": "symfony/console",
+      "to": "symfony/polyfill-php85",
+      "constraint": "^1.32"
+    },
+    {
+      "from": "symfony/console",
+      "to": "symfony/service-contracts",
+      "constraint": "^2.5|^3"
+    },
+    {
+      "from": "symfony/console",
+      "to": "symfony/string",
+      "constraint": "^7.4.6|^8.0.6"
     }
   ]
 }

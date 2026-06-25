@@ -21,7 +21,7 @@
         "repo_last_release": "2024-05-20",
         "repo_license": "MIT",
         "repo_owner": "annotated-types",
-        "repo_stars": 600,
+        "repo_stars": 603,
         "repo_url": "https://github.com/annotated-types/annotated-types",
         "version": "0.7.0"
       }
@@ -36,11 +36,11 @@
         "repo_archived": false,
         "repo_description": "High level asynchronous concurrency and networking framework that works on top of either Trio or asyncio",
         "repo_language": "Python",
-        "repo_last_commit": "2026-05-12",
+        "repo_last_commit": "2026-06-10",
         "repo_last_release": "2026-03-24",
         "repo_license": "MIT",
         "repo_owner": "agronholm",
-        "repo_stars": 2463,
+        "repo_stars": 2479,
         "repo_topics": [
           "async-await",
           "trio",
@@ -62,11 +62,11 @@
         "repo_archived": false,
         "repo_description": "(Python Distribution) A carefully curated collection of Root Certificates for validating the trustworthiness of SSL certificates while verifying the identity of TLS hosts.",
         "repo_language": "Python",
-        "repo_last_commit": "2026-04-22",
+        "repo_last_commit": "2026-06-03",
         "repo_owner": "certifi",
-        "repo_stars": 967,
+        "repo_stars": 976,
         "repo_url": "https://github.com/certifi/python-certifi",
-        "version": "2026.4.22"
+        "version": "2026.5.20"
       }
     },
     {
@@ -79,10 +79,10 @@
         "repo_archived": false,
         "repo_description": "Simple cross-platform colored terminal text in Python",
         "repo_language": "Python",
-        "repo_last_commit": "2025-07-09",
+        "repo_last_commit": "2026-05-13",
         "repo_license": "BSD-3-Clause",
         "repo_owner": "tartley",
-        "repo_stars": 3782,
+        "repo_stars": 3790,
         "repo_url": "https://github.com/tartley/colorama",
         "version": "0.4.6"
       }
@@ -103,7 +103,7 @@
         "repo_last_release": "2024-01-14",
         "repo_license": "Apache-2.0",
         "repo_owner": "python-distro",
-        "repo_stars": 280,
+        "repo_stars": 281,
         "repo_topics": [
           "linux-distribution",
           "python",
@@ -133,7 +133,7 @@
         "repo_last_commit": "2025-04-24",
         "repo_license": "MIT",
         "repo_owner": "python-hyper",
-        "repo_stars": 557,
+        "repo_stars": 558,
         "repo_topics": [
           "python",
           "http",
@@ -157,7 +157,7 @@
         "repo_last_release": "2025-04-24",
         "repo_license": "BSD-3-Clause",
         "repo_owner": "encode",
-        "repo_stars": 540,
+        "repo_stars": 543,
         "repo_url": "https://github.com/encode/httpcore",
         "version": "1.0.9"
       }
@@ -176,7 +176,7 @@
         "repo_last_release": "2024-12-06",
         "repo_license": "BSD-3-Clause",
         "repo_owner": "encode",
-        "repo_stars": 15263,
+        "repo_stars": 15293,
         "repo_topics": [
           "python",
           "http",
@@ -197,11 +197,11 @@
         "repo_archived": false,
         "repo_description": "Internationalized Domain Names for Python (IDNA 2008 and UTS #46)",
         "repo_language": "Python",
-        "repo_last_commit": "2026-05-12",
-        "repo_last_release": "2026-05-12",
+        "repo_last_commit": "2026-06-02",
+        "repo_last_release": "2026-06-02",
         "repo_license": "BSD-3-Clause",
         "repo_owner": "kjd",
-        "repo_stars": 278,
+        "repo_stars": 286,
         "repo_topics": [
           "python",
           "idna",
@@ -209,7 +209,7 @@
           "unicode"
         ],
         "repo_url": "https://github.com/kjd/idna",
-        "version": "3.15"
+        "version": "3.18"
       }
     },
     {
@@ -223,11 +223,11 @@
         "repo_archived": false,
         "repo_description": "Fast iterable JSON parser.",
         "repo_language": "Rust",
-        "repo_last_commit": "2026-04-10",
-        "repo_last_release": "2026-04-10",
+        "repo_last_commit": "2026-06-06",
+        "repo_last_release": "2026-05-19",
         "repo_license": "MIT",
         "repo_owner": "pydantic",
-        "repo_stars": 525,
+        "repo_stars": 530,
         "repo_topics": [
           "json",
           "json-parser",
@@ -235,7 +235,7 @@
           "rust"
         ],
         "repo_url": "https://github.com/pydantic/jiter",
-        "version": "0.14.0"
+        "version": "0.15.0"
       }
     },
     {
@@ -248,17 +248,17 @@
         "repo_archived": false,
         "repo_description": "The official Python library for the OpenAI API",
         "repo_language": "Python",
-        "repo_last_commit": "2026-05-12",
-        "repo_last_release": "2026-05-07",
+        "repo_last_commit": "2026-06-10",
+        "repo_last_release": "2026-06-10",
         "repo_license": "Apache-2.0",
         "repo_owner": "openai",
-        "repo_stars": 30756,
+        "repo_stars": 30959,
         "repo_topics": [
           "openai",
           "python"
         ],
         "repo_url": "https://github.com/openai/openai-python",
-        "version": "2.36.0"
+        "version": "2.41.1"
       }
     },
     {
@@ -271,11 +271,11 @@
         "repo_archived": false,
         "repo_description": "Data validation using Python type hints",
         "repo_language": "Python",
-        "repo_last_commit": "2026-05-12",
+        "repo_last_commit": "2026-06-10",
         "repo_last_release": "2026-05-06",
         "repo_license": "MIT",
         "repo_owner": "pydantic",
-        "repo_stars": 27755,
+        "repo_stars": 28002,
         "repo_topics": [
           "validation",
           "parsing",
@@ -304,11 +304,11 @@
         "repo_archived": false,
         "repo_description": "Data validation using Python type hints",
         "repo_language": "Python",
-        "repo_last_commit": "2026-05-12",
+        "repo_last_commit": "2026-06-10",
         "repo_last_release": "2026-05-06",
         "repo_license": "MIT",
         "repo_owner": "pydantic",
-        "repo_stars": 27755,
+        "repo_stars": 28002,
         "repo_topics": [
           "validation",
           "parsing",
@@ -338,7 +338,7 @@
         "repo_language": "Python",
         "repo_last_commit": "2026-03-06",
         "repo_owner": "python-trio",
-        "repo_stars": 148,
+        "repo_stars": 150,
         "repo_topics": [
           "python",
           "async",
@@ -359,10 +359,10 @@
         "repo_archived": false,
         "repo_description": ":zap: A Fast, Extensible Progress Bar for Python and CLI",
         "repo_language": "Python",
-        "repo_last_commit": "2026-02-14",
-        "repo_last_release": "2026-02-03",
+        "repo_last_commit": "2026-06-09",
+        "repo_last_release": "2026-06-09",
         "repo_owner": "tqdm",
-        "repo_stars": 31145,
+        "repo_stars": 31189,
         "repo_topics": [
           "progressbar",
           "progressmeter",
@@ -376,7 +376,7 @@
           "gui"
         ],
         "repo_url": "https://github.com/tqdm/tqdm",
-        "version": "4.67.3"
+        "version": "4.68.2"
       }
     },
     {
@@ -389,10 +389,10 @@
         "repo_archived": false,
         "repo_description": "Backported and experimental type hints for Python",
         "repo_language": "Python",
-        "repo_last_commit": "2026-05-07",
+        "repo_last_commit": "2026-06-03",
         "repo_last_release": "2025-08-25",
         "repo_owner": "python",
-        "repo_stars": 565,
+        "repo_stars": 570,
         "repo_url": "https://github.com/python/typing_extensions",
         "version": "4.15.0"
       }
@@ -411,7 +411,7 @@
         "repo_last_release": "2025-10-01",
         "repo_license": "MIT",
         "repo_owner": "pydantic",
-        "repo_stars": 63,
+        "repo_stars": 65,
         "repo_url": "https://github.com/pydantic/typing-inspection",
         "version": "0.4.2"
       }
@@ -458,29 +458,6 @@
       "constraint": "\u003c5,\u003e=4.11"
     },
     {
-      "from": "tqdm",
-      "to": "colorama"
-    },
-    {
-      "from": "httpcore",
-      "to": "certifi"
-    },
-    {
-      "from": "httpcore",
-      "to": "h11",
-      "constraint": "\u003e=0.16"
-    },
-    {
-      "from": "pydantic-core",
-      "to": "typing-extensions",
-      "constraint": "\u003e=4.14.1"
-    },
-    {
-      "from": "typing-inspection",
-      "to": "typing-extensions",
-      "constraint": "\u003e=4.12.0"
-    },
-    {
       "from": "pydantic",
       "to": "annotated-types",
       "constraint": "\u003e=0.6.0"
@@ -499,6 +476,20 @@
       "from": "pydantic",
       "to": "typing-inspection",
       "constraint": "\u003e=0.4.2"
+    },
+    {
+      "from": "typing-inspection",
+      "to": "typing-extensions",
+      "constraint": "\u003e=4.12.0"
+    },
+    {
+      "from": "tqdm",
+      "to": "colorama"
+    },
+    {
+      "from": "pydantic-core",
+      "to": "typing-extensions",
+      "constraint": "\u003e=4.14.1"
     },
     {
       "from": "anyio",
@@ -535,6 +526,15 @@
     {
       "from": "httpx",
       "to": "sniffio"
+    },
+    {
+      "from": "httpcore",
+      "to": "certifi"
+    },
+    {
+      "from": "httpcore",
+      "to": "h11",
+      "constraint": "\u003e=0.16"
     }
   ]
 }

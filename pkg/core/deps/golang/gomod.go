@@ -139,11 +139,24 @@ type goModParseResult struct {
 	indirectDeps []deps.Dependency
 }
 
+// goModReplacement describes the target of a `replace` directive.
+type goModReplacement struct {
+	path    string // replacement module path (or filesystem path for local replacements)
+	version string // replacement version; empty for local filesystem replacements
+	local   bool   // true for filesystem replacements like `=> ../path`
+}
+
 func parseGoModFileComplete(f *os.File) goModParseResult {
 	result := goModParseResult{}
 	seenDirect := make(map[string]bool)
 	seenIndirect := make(map[string]bool)
 	inRequire := false
+	inReplace := false
+	// replacements maps an original module path to its replacement.
+	// Version-specific replacements ("old v1.0.0 => ...") are applied by
+	// path only — a pragmatic simplification, since go.mod files rarely
+	// replace only some versions of a module.
+	replacements := make(map[string]goModReplacement)
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -165,6 +178,30 @@ func parseGoModFileComplete(f *os.File) goModParseResult {
 		if strings.HasPrefix(line, "go ") {
 			result.goVersion = strings.TrimPrefix(line, "go ")
 			result.goVersion = strings.TrimSpace(result.goVersion)
+			continue
+		}
+
+		// Handle replace block
+		if strings.HasPrefix(line, "replace (") || line == "replace(" {
+			inReplace = true
+			continue
+		}
+		if inReplace {
+			if line == ")" {
+				inReplace = false
+				continue
+			}
+			if old, repl, ok := parseReplaceLine(line); ok {
+				replacements[old] = repl
+			}
+			continue
+		}
+
+		// Single-line replace
+		if strings.HasPrefix(line, "replace ") {
+			if old, repl, ok := parseReplaceLine(strings.TrimPrefix(line, "replace ")); ok {
+				replacements[old] = repl
+			}
 			continue
 		}
 
@@ -204,7 +241,77 @@ func parseGoModFileComplete(f *os.File) goModParseResult {
 		}
 	}
 
+	applyReplacements(result.directDeps, replacements)
+	applyReplacements(result.indirectDeps, replacements)
+
 	return result
+}
+
+// parseReplaceLine parses the body of a replace directive (with the leading
+// "replace " keyword already stripped). Supported forms:
+//
+//	old => new v1.2.3
+//	old v1.0.0 => new v1.2.3
+//	old => ../local/path
+//	old v1.0.0 => ../local/path
+//
+// Returns the original module path, the replacement, and whether parsing
+// succeeded.
+func parseReplaceLine(line string) (string, goModReplacement, bool) {
+	// Strip trailing comments
+	if idx := strings.Index(line, "//"); idx != -1 {
+		line = line[:idx]
+	}
+	parts := strings.SplitN(line, "=>", 2)
+	if len(parts) != 2 {
+		return "", goModReplacement{}, false
+	}
+
+	leftFields := strings.Fields(parts[0])
+	if len(leftFields) == 0 {
+		return "", goModReplacement{}, false
+	}
+	old := leftFields[0]
+
+	rightFields := strings.Fields(parts[1])
+	if len(rightFields) == 0 {
+		return "", goModReplacement{}, false
+	}
+	repl := goModReplacement{path: rightFields[0]}
+	if len(rightFields) >= 2 {
+		repl.version = rightFields[1]
+	}
+	// Per go.mod syntax, a module-path replacement must carry a version,
+	// while a filesystem replacement never does. So no version on the right
+	// side means a local directory replacement.
+	repl.local = repl.version == ""
+	return old, repl, true
+}
+
+// applyReplacements rewrites dependencies according to replace directives.
+// Module replacements swap in the replacement path and version. Local
+// filesystem replacements (`=> ../path`) keep the original module name and
+// constraint for display but clear Pinned so the resolver does not try to
+// fetch the (replaced, possibly nonexistent) version from the module proxy.
+func applyReplacements(depList []deps.Dependency, replacements map[string]goModReplacement) {
+	if len(replacements) == 0 {
+		return
+	}
+	for i, dep := range depList {
+		repl, ok := replacements[dep.Name]
+		if !ok {
+			continue
+		}
+		if repl.local {
+			depList[i].Pinned = ""
+			continue
+		}
+		depList[i].Name = repl.path
+		if repl.version != "" {
+			depList[i].Pinned = repl.version
+			depList[i].Constraint = "=" + repl.version
+		}
+	}
 }
 
 // parseRequireLineComplete parses a require line and returns a Dependency with version

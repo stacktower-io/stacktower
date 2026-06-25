@@ -31,6 +31,9 @@ type cacheEntry struct {
 
 // Get retrieves a value from the cache.
 func (c *FileCache) Get(ctx context.Context, key string) ([]byte, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	path := c.path(key)
 
 	data, err := os.ReadFile(path)
@@ -58,7 +61,15 @@ func (c *FileCache) Get(ctx context.Context, key string) ([]byte, bool, error) {
 }
 
 // Set stores a value in the cache.
+//
+// The write is atomic (temp file + rename), so concurrent readers always see
+// either the previous entry or the complete new entry, never a torn write.
+// This is required by the Cache interface contract: the resolver worker pool
+// and HTTP client call Set/Get concurrently on the same instance.
 func (c *FileCache) Set(ctx context.Context, key string, data []byte, ttl time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	entry := cacheEntry{
 		Data: data,
 	}
@@ -76,7 +87,39 @@ func (c *FileCache) Set(ctx context.Context, key string, data []byte, ttl time.D
 		return err
 	}
 
-	return os.WriteFile(path, entryData, 0600)
+	return writeFileAtomic(path, entryData, 0600)
+}
+
+// writeFileAtomic writes data to a unique temp file in the same directory and
+// renames it over path. Rename is atomic on POSIX (and replaces on Windows),
+// so readers never observe partial content.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 // Delete removes a value from the cache.

@@ -123,6 +123,56 @@ func TestEvaluatePythonVersionMarker(t *testing.T) {
 	}
 }
 
+func TestEvaluateMarker_EnvMarkers(t *testing.T) {
+	linuxEnv := map[string]string{
+		"sys_platform":     "linux",
+		"os_name":          "posix",
+		"platform_machine": "x86_64",
+	}
+	windowsEnv := map[string]string{
+		"sys_platform":     "win32",
+		"os_name":          "nt",
+		"platform_machine": "AMD64",
+	}
+
+	tests := []struct {
+		name   string
+		marker string
+		env    map[string]string
+		want   bool
+	}{
+		{"sys_platform match", `sys_platform == "linux"`, linuxEnv, true},
+		{"sys_platform mismatch", `sys_platform == "win32"`, linuxEnv, false},
+		{"sys_platform negated", `sys_platform != "win32"`, linuxEnv, true},
+		{"os_name nt on windows", `os_name == "nt"`, windowsEnv, true},
+		{"os_name nt on linux", `os_name == "nt"`, linuxEnv, false},
+		{"platform_machine match", `platform_machine == "x86_64"`, linuxEnv, true},
+		{"platform_machine mismatch", `platform_machine == "aarch64"`, linuxEnv, false},
+		{"combined with python_version pass", `sys_platform == "linux" and python_version >= "3.8"`, linuxEnv, true},
+		{"combined with python_version fail platform", `sys_platform == "win32" and python_version >= "3.8"`, linuxEnv, false},
+		{"or across platforms", `sys_platform == "win32" or sys_platform == "linux"`, linuxEnv, true},
+		{"unknown marker ignored", `implementation_name == "cpython"`, linuxEnv, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evaluateMarker(tt.marker, "3.11", tt.env)
+			if got != tt.want {
+				t.Errorf("evaluateMarker(%q) = %v, want %v", tt.marker, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDefaultEnvMarkers(t *testing.T) {
+	env := defaultEnvMarkers()
+	for _, key := range []string{"sys_platform", "os_name", "platform_machine"} {
+		if env[key] == "" {
+			t.Errorf("defaultEnvMarkers()[%q] is empty", key)
+		}
+	}
+}
+
 func TestExtractDeps_ExtractsConstraints(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -197,6 +247,38 @@ func TestExtractDeps_ExtractsConstraints(t *testing.T) {
 	}
 }
 
+func TestClient_FetchPackageVersion_EscapesVersion(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		resp := apiResponse{Info: apiInfo{Name: "torch", Version: "2.1.0+cu118"}}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	c := testClient(t, server.URL)
+
+	// PEP 440 local version: '+' must survive path interpolation intact.
+	info, err := c.FetchPackageVersion(context.Background(), "torch", "2.1.0+cu118", true)
+	if err != nil {
+		t.Fatalf("FetchPackageVersion failed: %v", err)
+	}
+	if info.Version != "2.1.0+cu118" {
+		t.Errorf("version = %q, want 2.1.0+cu118", info.Version)
+	}
+	if gotPath != "/torch/2.1.0+cu118/json" {
+		t.Errorf("request path = %q, want /torch/2.1.0+cu118/json", gotPath)
+	}
+
+	// Path metacharacters must be escaped so they can't alter the URL structure.
+	if _, err := c.FetchPackageVersion(context.Background(), "torch", "1.0/evil", true); err != nil {
+		t.Fatalf("FetchPackageVersion failed: %v", err)
+	}
+	if gotPath != "/torch/1.0%2Fevil/json" {
+		t.Errorf("request path = %q, want /torch/1.0%%2Fevil/json", gotPath)
+	}
+}
+
 func TestNormalizePkgName(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -206,6 +288,10 @@ func TestNormalizePkgName(t *testing.T) {
 		{"Flask_App", "flask-app"},
 		{"some_package-name", "some-package-name"},
 		{"UPPERCASE", "uppercase"},
+		// Full PEP 503: runs of [-_.] collapse to a single hyphen.
+		{"zope.interface", "zope-interface"},
+		{"my--pkg__name", "my-pkg-name"},
+		{"a-_.b", "a-b"},
 	}
 
 	for _, tt := range tests {

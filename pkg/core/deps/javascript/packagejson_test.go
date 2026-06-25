@@ -104,6 +104,36 @@ func TestPackageJSON_Parse_AllScopeIncludesDevDependencies(t *testing.T) {
 	}
 }
 
+func TestPackageJSON_Parse_OptionalDependenciesAreProdScope(t *testing.T) {
+	// npm installs optionalDependencies by default (only excluded with
+	// --omit=optional), so they count as production scope.
+	dir := t.TempDir()
+	pkgFile := filepath.Join(dir, "package.json")
+	content := `{
+  "name": "my-package",
+  "dependencies": {"express": "^4.18.0"},
+  "optionalDependencies": {"fsevents": "^2.3.0"},
+  "devDependencies": {"jest": "^29.0.0"}
+}`
+	if err := os.WriteFile(pkgFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	parser := &PackageJSON{}
+	result, err := parser.Parse(pkgFile, deps.Options{})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	g := result.Graph
+	for _, dep := range []string{"express", "fsevents"} {
+		if _, ok := g.Node(dep); !ok {
+			t.Errorf("expected node %q not found", dep)
+		}
+	}
+	if _, ok := g.Node("jest"); ok {
+		t.Error("did not expect dev dependency jest in prod_only scope")
+	}
+}
+
 func TestPackageJSON_Type(t *testing.T) {
 	parser := &PackageJSON{}
 	if got := parser.Type(); got != "package.json" {

@@ -1,6 +1,7 @@
 package dag
 
 import (
+	"cmp"
 	"errors"
 	"maps"
 	"slices"
@@ -183,6 +184,16 @@ func (d *DAG) SetRows(rows map[string]int) {
 			n.Row = newRow
 		}
 		d.rows[n.Row] = append(d.rows[n.Row], n)
+	}
+	d.sortRows()
+}
+
+// sortRows orders nodes within each row by ID for deterministic iteration.
+func (d *DAG) sortRows() {
+	for _, nodes := range d.rows {
+		slices.SortFunc(nodes, func(a, b *Node) int {
+			return cmp.Compare(a.ID, b.ID)
+		})
 	}
 }
 
@@ -558,5 +569,6 @@ func (d *DAG) Clone() *DAG {
 		})
 	}
 
+	clone.sortRows()
 	return clone
 }

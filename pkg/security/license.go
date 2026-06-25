@@ -517,9 +517,14 @@ func AnalyzeLicenses(g *dag.DAG) *LicenseReport {
 	}
 
 	for _, n := range g.Nodes() {
-		// Skip synthetic nodes, project root markers, and root-level nodes (Row 0).
-		// Root nodes are the packages being analyzed (user's own code), not dependencies.
-		if n.IsSynthetic() || n.ID == "__project__" || n.Row == 0 {
+		// Skip synthetic nodes and project root markers.
+		if n.IsSynthetic() || n.ID == "__project__" {
+			continue
+		}
+		// Skip root packages (InDegree == 0): they are the packages being
+		// analyzed (user's own code), not dependencies. Row cannot be used
+		// here because parsed graphs are not layered yet (all rows are 0).
+		if g.InDegree(n.ID) == 0 {
 			continue
 		}
 

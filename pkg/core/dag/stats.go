@@ -1,6 +1,9 @@
 package dag
 
-import "sort"
+import (
+	"math/bits"
+	"sort"
+)
 
 // GraphStats contains computed metrics about a dependency graph's topology.
 type GraphStats struct {
@@ -88,34 +91,84 @@ func ComputeStats(g *DAG) *GraphStats {
 
 // computeReverseDeps counts, for each node, how many distinct non-synthetic
 // nodes transitively depend on it (i.e. can reach it via forward edges).
+//
+// Instead of one DFS per source node (O(V·(V+E))), a single pass in
+// topological order propagates ancestor bitsets along edges: a node's
+// ancestor set is the union of each parent's set plus the parent itself.
+// Time is O(E·V/64), memory O(V²/64) — for a 2000-node graph that's a
+// ~500KB flat buffer instead of thousands of map-based DFS visits.
 func computeReverseDeps(g *DAG, root string) map[string]int {
-	counts := make(map[string]int)
+	nodes := g.Nodes()
+	n := len(nodes)
+	if n == 0 {
+		return map[string]int{}
+	}
+	idx := NodePosMap(nodes)
 
-	// For each non-synthetic, non-root node, walk its children and increment
-	// their reverse-dep count. We use DFS with per-source visited sets.
-	for _, n := range g.Nodes() {
-		if n.IsSynthetic() || n.ID == root || n.ID == ProjectRootNodeID {
+	// countable[i] reports whether node i is counted as an ancestor,
+	// mirroring the source filter of the per-node DFS version.
+	countable := make([]bool, n)
+	for i, node := range nodes {
+		countable[i] = !node.IsSynthetic() && node.ID != root && node.ID != ProjectRootNodeID
+	}
+
+	children := make([][]int, n)
+	indeg := make([]int, n)
+	for _, e := range g.EdgesIter() {
+		u, ok := idx[e.From]
+		if !ok {
 			continue
 		}
+		v, ok := idx[e.To]
+		if !ok {
+			continue
+		}
+		children[u] = append(children[u], v)
+		indeg[v]++
+	}
 
-		visited := map[string]bool{n.ID: true}
-		stack := append([]string{}, g.Children(n.ID)...)
-		for len(stack) > 0 {
-			id := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			if visited[id] {
-				continue
+	words := (n + 63) / 64
+	buf := make([]uint64, n*words)
+	ancestors := make([][]uint64, n)
+	for i := range ancestors {
+		ancestors[i] = buf[i*words : (i+1)*words]
+	}
+
+	// Kahn's algorithm with a head-index queue.
+	queue := make([]int, 0, n)
+	for i, d := range indeg {
+		if d == 0 {
+			queue = append(queue, i)
+		}
+	}
+	for head := 0; head < len(queue); head++ {
+		u := queue[head]
+		au := ancestors[u]
+		for _, v := range children[u] {
+			av := ancestors[v]
+			for w := range au {
+				av[w] |= au[w]
 			}
-			visited[id] = true
-			counts[id]++
-			for _, child := range g.Children(id) {
-				if !visited[child] {
-					stack = append(stack, child)
-				}
+			if countable[u] {
+				av[u/64] |= 1 << (u % 64)
+			}
+			indeg[v]--
+			if indeg[v] == 0 {
+				queue = append(queue, v)
 			}
 		}
 	}
 
+	counts := make(map[string]int, n)
+	for i, node := range nodes {
+		c := 0
+		for _, w := range ancestors[i] {
+			c += bits.OnesCount64(w)
+		}
+		if c > 0 {
+			counts[node.ID] = c
+		}
+	}
 	return counts
 }
 

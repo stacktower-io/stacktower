@@ -186,6 +186,48 @@ func TestSplitMavenRanges(t *testing.T) {
 	}
 }
 
+func TestMavenMatcher_MultiRangeIntersection(t *testing.T) {
+	// Maven semantics: a comma-separated list of ranges requires the version
+	// to satisfy ALL ranges (intersection), not any one of them.
+	m := MavenMatcher{}
+
+	tests := []struct {
+		constraint string
+		version    string
+		matches    bool
+	}{
+		// Disjoint ranges: nothing can satisfy both
+		{"[1.0,2.0),[3.0,4.0)", "1.5.0", false},
+		{"[1.0,2.0),[3.0,4.0)", "3.5.0", false},
+		{"[1.0,2.0),[3.0,4.0)", "2.5.0", false},
+
+		// Overlapping ranges: only the intersection matches
+		{"[1.0,3.0),[2.0,4.0)", "2.5.0", true},
+		{"[1.0,3.0),[2.0,4.0)", "2.0.0", true},
+		{"[1.0,3.0),[2.0,4.0)", "1.5.0", false}, // in first range only
+		{"[1.0,3.0),[2.0,4.0)", "3.5.0", false}, // in second range only
+
+		// Half-open ranges intersect to a bounded window
+		{"[1.0,),(,2.0]", "1.5.0", true},
+		{"[1.0,),(,2.0]", "0.9.0", false},
+		{"[1.0,),(,2.0]", "2.1.0", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.constraint+"_"+tt.version, func(t *testing.T) {
+			cond := m.ParseConstraint(tt.constraint)
+			if cond == nil {
+				t.Fatalf("ParseConstraint(%q) = nil", tt.constraint)
+			}
+			v := m.ParseVersion(tt.version)
+			if got := cond.Satisfies(v); got != tt.matches {
+				t.Errorf("constraint %q version %q: Satisfies = %v, want %v",
+					tt.constraint, tt.version, got, tt.matches)
+			}
+		})
+	}
+}
+
 func TestMavenSingleRangeToRange(t *testing.T) {
 	// Note: mavenSingleRangeToRange is now only used for actual range expressions.
 	// Plain versions and exact matches [1.0.0] are handled directly in ParseConstraint

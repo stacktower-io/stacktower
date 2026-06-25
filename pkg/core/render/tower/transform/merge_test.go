@@ -226,3 +226,38 @@ func TestMergeSubdividers_InconsistentPositions_MergesSubgroups(t *testing.T) {
 		t.Error("expected merged subdivider block at position 50-80")
 	}
 }
+
+func TestMergeSubdividers_SubgroupsWithSameLeftDoNotOverwrite(t *testing.T) {
+	g := dag.New(nil)
+	_ = g.AddNode(dag.Node{ID: "a", Row: 0})
+	_ = g.AddNode(dag.Node{ID: "a_sub_wide_1", Row: 1, Kind: dag.NodeKindSubdivider, MasterID: "a"})
+	_ = g.AddNode(dag.Node{ID: "a_sub_wide_2", Row: 2, Kind: dag.NodeKindSubdivider, MasterID: "a"})
+	_ = g.AddNode(dag.Node{ID: "a_sub_narrow", Row: 3, Kind: dag.NodeKindSubdivider, MasterID: "a"})
+
+	layout := layout.Layout{
+		Blocks: map[string]layout.Block{
+			"a":            {NodeID: "a", Left: 10, Right: 40, Bottom: 75, Top: 100},
+			"a_sub_wide_1": {NodeID: "a_sub_wide_1", Left: 50, Right: 90, Bottom: 50, Top: 75},
+			"a_sub_wide_2": {NodeID: "a_sub_wide_2", Left: 50, Right: 90, Bottom: 25, Top: 50},
+			"a_sub_narrow": {NodeID: "a_sub_narrow", Left: 50, Right: 60, Bottom: 0, Top: 25},
+		},
+	}
+
+	merged := MergeSubdividers(layout, g)
+
+	if got, want := len(merged.Blocks), 3; got != want {
+		t.Fatalf("block count = %d, want %d; blocks=%v", got, want, merged.Blocks)
+	}
+	if _, ok := merged.Blocks["a@50-90"]; !ok {
+		t.Fatalf("missing wide subgroup keyed by full span; blocks=%v", merged.Blocks)
+	}
+	if _, ok := merged.Blocks["a@50-60"]; !ok {
+		t.Fatalf("missing narrow subgroup keyed by full span; blocks=%v", merged.Blocks)
+	}
+	if b := merged.Blocks["a@50-90"]; b.Bottom != 25 || b.Top != 75 {
+		t.Errorf("wide subgroup vertical span = %.0f..%.0f, want 25..75", b.Bottom, b.Top)
+	}
+	if b := merged.Blocks["a@50-60"]; b.Bottom != 0 || b.Top != 25 {
+		t.Errorf("narrow subgroup vertical span = %.0f..%.0f, want 0..25", b.Bottom, b.Top)
+	}
+}

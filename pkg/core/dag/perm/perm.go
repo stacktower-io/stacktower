@@ -14,12 +14,20 @@ func Seq(n int) []int {
 	return result
 }
 
+// MaxFactorial is a sentinel returned by [Factorial] for n > 20 where
+// the true value would overflow int64.
+const MaxFactorial = 1<<62 - 1
+
 // Factorial returns n! (n factorial), the product 1 × 2 × ... × n.
-// For n <= 1, Factorial returns 1.
+// For n <= 1, Factorial returns 1. For n > 20, Factorial returns
+// [MaxFactorial] to avoid integer overflow.
 //
 // This function is useful for calculating the size of the full permutation space.
 // Note that factorials grow extremely fast: 13! = 6,227,020,800 exceeds 32-bit int.
 func Factorial(n int) int {
+	if n > 20 {
+		return MaxFactorial
+	}
 	result := 1
 	for i := 2; i <= n; i++ {
 		result *= i

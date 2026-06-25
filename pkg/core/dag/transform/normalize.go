@@ -110,9 +110,28 @@ func NormalizeWithOptions(g *dag.DAG, opts NormalizeOptions) (result *TransformR
 			return nil, fmt.Errorf("resolve span overlaps: %w", err)
 		}
 		result.SeparatorsAdded = g.NodeCount() - nodesBefore
+
+		// Separator insertion shifts rows down. A parent whose children are
+		// only partially covered by a separator range keeps direct edges to
+		// the uncovered children, and those edges now span the inserted row.
+		// Re-subdivide to restore the one-row-per-edge invariant (no-op when
+		// no such edges exist).
+		nodesBefore = g.NodeCount()
+		if err := subdivide(g); err != nil {
+			return nil, fmt.Errorf("subdivide after separators: %w", err)
+		}
+		result.SubdividersAdded += g.NodeCount() - nodesBefore
 	}
 
 	result.MaxRow = g.MaxRow()
+
+	// The transformations above must leave the graph in a renderable state:
+	// acyclic, with every edge spanning exactly one row. Catching violations
+	// here (instead of producing a silently corrupt layout) makes bugs in
+	// the transform chain visible at their source.
+	if err := g.Validate(); err != nil {
+		return nil, fmt.Errorf("normalize: resulting graph is invalid: %w", err)
+	}
 
 	return result, nil
 }

@@ -66,22 +66,78 @@ func (r *Requirements) Parse(path string, opts deps.Options) (*deps.ManifestResu
 	}, nil
 }
 
+// maxRequirementsIncludeDepth caps how deeply nested "-r other.txt" includes
+// are followed, guarding against pathological include chains.
+const maxRequirementsIncludeDepth = 10
+
 // parseRequirementsFile parses a requirements.txt file and returns dependencies
-// with their version constraints.
+// with their version constraints. Backslash line continuations are joined
+// before parsing, and "-r"/"--requirement" includes are followed relative to
+// the including file's directory (with cycle detection and a depth cap).
 func parseRequirementsFile(path string) ([]deps.Dependency, error) {
+	seen := make(map[string]bool)
+	visited := make(map[string]bool)
+	var result []deps.Dependency
+	if err := parseRequirementsInto(path, seen, visited, 0, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// parseRequirementsInto appends dependencies from path into result.
+// seen deduplicates package names across all included files; visited guards
+// against include cycles (keyed by absolute path).
+func parseRequirementsInto(path string, seen, visited map[string]bool, depth int, result *[]deps.Dependency) error {
+	if depth > maxRequirementsIncludeDepth {
+		return nil
+	}
+	abs, err := filepath.Abs(path)
+	if err == nil {
+		if visited[abs] {
+			return nil
+		}
+		visited[abs] = true
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		// Included files (depth > 0) may be missing; don't fail the whole
+		// parse for a broken include, only for the top-level file.
+		if depth > 0 {
+			return nil
+		}
+		return err
 	}
 	defer f.Close()
 
-	seen := make(map[string]bool)
-	var result []deps.Dependency
+	dir := filepath.Dir(path)
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" || line[0] == '#' || line[0] == '-' {
+
+		// Join backslash line continuations into a single logical line.
+		for strings.HasSuffix(line, `\`) && scanner.Scan() {
+			line = strings.TrimSpace(strings.TrimSuffix(line, `\`)) + " " + strings.TrimSpace(scanner.Text())
+		}
+
+		if line == "" || line[0] == '#' {
+			continue
+		}
+		if line[0] == '-' {
+			// Follow "-r other.txt" / "--requirement other.txt" includes.
+			if include := requirementsIncludePath(line); include != "" {
+				includePath := include
+				if !filepath.IsAbs(includePath) {
+					includePath = filepath.Join(dir, includePath)
+				}
+				if err := parseRequirementsInto(includePath, seen, visited, depth+1, result); err != nil {
+					return err
+				}
+			}
+			// Editable installs ("-e ./path", "-e git+...") reference local
+			// or VCS sources we can't resolve against a registry; they are
+			// skipped, as are all other "-"-prefixed pip flags.
 			continue
 		}
 		if strings.Contains(line, "://") || strings.HasPrefix(line, "git+") {
@@ -101,10 +157,31 @@ func parseRequirementsFile(path string) ([]deps.Dependency, error) {
 					}
 					dep.Constraint = constraint
 				}
-				result = append(result, dep)
+				*result = append(*result, dep)
 			}
 		}
 	}
 
-	return result, scanner.Err()
+	return scanner.Err()
+}
+
+// requirementsIncludePath extracts the referenced file from a
+// "-r file" / "--requirement file" (or "=file") line. Returns "" when the
+// line is not an include directive.
+func requirementsIncludePath(line string) string {
+	for _, prefix := range []string{"-r", "--requirement"} {
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		rest := line[len(prefix):]
+		if rest == "" {
+			return ""
+		}
+		// Require a separator so "-rfoo" or "--requirements" don't match.
+		if rest[0] != ' ' && rest[0] != '\t' && rest[0] != '=' {
+			continue
+		}
+		return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rest), "="))
+	}
+	return ""
 }

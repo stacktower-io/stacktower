@@ -25,6 +25,9 @@ func loadGitHubSession(ctx context.Context) (*session.Session, error) {
 	}
 
 	sess, err := store.GetSession(ctx)
+	if errors.Is(err, session.ErrExpired) {
+		return nil, WrapUserError(ErrNotLoggedIn, "GitHub session expired", "Run 'stacktower github login' to re-authenticate.")
+	}
 	if err != nil {
 		return nil, WrapSystemError(err, "failed to read session", "Try 'stacktower github logout' and re-login.")
 	}

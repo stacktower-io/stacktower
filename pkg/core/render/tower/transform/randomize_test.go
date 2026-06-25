@@ -8,6 +8,69 @@ import (
 	"github.com/stacktower-io/stacktower/pkg/core/render/tower/layout"
 )
 
+// TestEnsureMinimumOverlap_MergedColumn reproduces the "pydantic" bug: a
+// master whose subdivider segments were merged into a single column keyed by
+// the master ID. The overlap repair must resolve subdivider edge endpoints
+// through EffectiveID, and a distant column must not block the repair.
+func TestEnsureMinimumOverlap_MergedColumn(t *testing.T) {
+	g := dag.New(nil)
+	_ = g.AddNode(dag.Node{ID: "pyd", Row: 1})
+	_ = g.AddNode(dag.Node{ID: "pyd_sub_2", Row: 2, Kind: dag.NodeKindSubdivider, MasterID: "pyd"})
+	_ = g.AddNode(dag.Node{ID: "tinsp", Row: 3})
+	_ = g.AddNode(dag.Node{ID: "tall", Row: 1}) // merged column spanning all rows
+	_ = g.AddEdge(dag.Edge{From: "pyd", To: "pyd_sub_2"})
+	_ = g.AddEdge(dag.Edge{From: "pyd_sub_2", To: "tinsp"})
+
+	// Post-merge, post-shrink state: pyd's column (rows 1-2) no longer
+	// reaches tinsp (row 3). "tall" is a full-height column far to the
+	// left; "far" is a column next to tinsp that blocks tinsp from moving
+	// but not pyd from expanding.
+	blocks := map[string]layout.Block{
+		"pyd":   {NodeID: "pyd", Left: 678, Right: 708, Bottom: 200, Top: 400},
+		"tinsp": {NodeID: "tinsp", Left: 732, Right: 762, Bottom: 100, Top: 200},
+		"tall":  {NodeID: "tall", Left: 0, Right: 100, Bottom: 0, Top: 400},
+		"far@x": {NodeID: "far", Left: 710, Right: 730, Bottom: 0, Top: 200},
+	}
+
+	ensureMinimumOverlap(g, blocks, 10)
+
+	p, c := blocks["pyd"], blocks["tinsp"]
+	if ov := calcOverlap(p.Left, p.Right, c.Left, c.Right); ov < 10 {
+		t.Errorf("merged column should overlap its child: overlap %.1f < 10 (pyd [%.1f,%.1f], tinsp [%.1f,%.1f])",
+			ov, p.Left, p.Right, c.Left, c.Right)
+	}
+}
+
+// TestEnsureMinimumOverlap_NoIntrusionIntoOtherRows reproduces the beam
+// overlap bug: a tall merged column expanding to reach its child must not
+// intrude into a block of an intermediate row it passes through (e.g. the
+// separator beam behind pydantic's column).
+func TestEnsureMinimumOverlap_NoIntrusionIntoOtherRows(t *testing.T) {
+	g := dag.New(nil)
+	_ = g.AddNode(dag.Node{ID: "pyd", Row: 1})
+	_ = g.AddNode(dag.Node{ID: "pyd_sub_2", Row: 2, Kind: dag.NodeKindSubdivider, MasterID: "pyd"})
+	_ = g.AddNode(dag.Node{ID: "kid", Row: 3})
+	_ = g.AddNode(dag.Node{ID: "beam", Row: 2, Kind: dag.NodeKindAuxiliary})
+	_ = g.AddEdge(dag.Edge{From: "pyd", To: "pyd_sub_2"})
+	_ = g.AddEdge(dag.Edge{From: "pyd_sub_2", To: "kid"})
+
+	// pyd's merged column spans rows 1-2 (y 0..200); the beam occupies row 2
+	// (y 100..200) directly to its left; the child sits below, far left.
+	blocks := map[string]layout.Block{
+		"pyd":  {NodeID: "pyd", Left: 620, Right: 700, Bottom: 0, Top: 200},
+		"beam": {NodeID: "beam", Left: 360, Right: 620, Bottom: 100, Top: 200},
+		"kid":  {NodeID: "kid", Left: 540, Right: 580, Bottom: 200, Top: 300},
+	}
+
+	ensureMinimumOverlap(g, blocks, 10)
+
+	p, b := blocks["pyd"], blocks["beam"]
+	if ov := calcOverlap(p.Left, p.Right, b.Left, b.Right); ov > 1 {
+		t.Errorf("column must not intrude into the beam: overlap %.1f (pyd [%.1f,%.1f], beam [%.1f,%.1f])",
+			ov, p.Left, p.Right, b.Left, b.Right)
+	}
+}
+
 func TestRandomize_Deterministic(t *testing.T) {
 	layout := buildTestLayout()
 
@@ -58,6 +121,39 @@ func TestRandomize_WidthShrinks(t *testing.T) {
 		if shrinkRatio > 0.60 {
 			t.Errorf("block %s shrink ratio = %.2f%%, want <= 60%%", id, shrinkRatio*100)
 		}
+	}
+}
+
+func TestRandomize_DoesNotShrinkAuxiliaryBeams(t *testing.T) {
+	l := layout.Layout{
+		Blocks: map[string]layout.Block{
+			"root": {NodeID: "root", Left: 0, Right: 100, Bottom: 50, Top: 100},
+			"sep":  {NodeID: "sep", Left: 10, Right: 90, Bottom: 25, Top: 50},
+			"leaf": {NodeID: "leaf", Left: 0, Right: 100, Bottom: 0, Top: 25},
+		},
+		RowOrders: map[int][]string{
+			0: {"root"},
+			1: {"sep"},
+			2: {"leaf"},
+		},
+	}
+	g := dag.New(nil)
+	_ = g.AddNode(dag.Node{ID: "root", Row: 0})
+	_ = g.AddNode(dag.Node{ID: "sep", Row: 1, Kind: dag.NodeKindAuxiliary})
+	_ = g.AddNode(dag.Node{ID: "leaf", Row: 2})
+
+	result := Randomize(l, g, 42, &Options{
+		WidthShrink:   1,
+		MinBlockWidth: 1,
+		MinGap:        5,
+		MinOverlap:    0,
+	})
+
+	if got, want := result.Blocks["sep"], l.Blocks["sep"]; got.Left != want.Left || got.Right != want.Right {
+		t.Fatalf("auxiliary beam changed: got %.1f..%.1f, want %.1f..%.1f", got.Left, got.Right, want.Left, want.Right)
+	}
+	if got, want := result.Blocks["leaf"].Width(), l.Blocks["leaf"].Width(); got >= want {
+		t.Fatalf("non-auxiliary block did not shrink: got %.1f, want < %.1f", got, want)
 	}
 }
 

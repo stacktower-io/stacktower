@@ -250,3 +250,40 @@ func testClient(t *testing.T, serverURL string) *Client {
 		baseURL: serverURL,
 	}
 }
+
+func TestClient_FetchScopedPackage(t *testing.T) {
+	// Scoped packages use @scope/name which must appear as-is in the URL path.
+	// npm registry expects GET /@scope/name (unencoded slash).
+	response := registryResponse{
+		Name: "@types/node",
+		DistTags: distTags{
+			Latest: "20.0.0",
+		},
+		Versions: map[string]versionDetails{
+			"20.0.0": {
+				Description: "TypeScript definitions for node",
+				License:     "MIT",
+			},
+		},
+	}
+
+	var receivedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	c := testClient(t, server.URL)
+	info, err := c.FetchPackage(context.Background(), "@types/node", false)
+	if err != nil {
+		t.Fatalf("FetchPackage(@types/node) error: %v", err)
+	}
+	if info.Name != "@types/node" {
+		t.Errorf("Name = %q, want @types/node", info.Name)
+	}
+	// The path should be /@types/node (not /@types%2Fnode)
+	if receivedPath != "/@types/node" {
+		t.Errorf("request path = %q, want /@types/node", receivedPath)
+	}
+}

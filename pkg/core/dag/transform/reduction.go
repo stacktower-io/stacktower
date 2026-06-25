@@ -15,9 +15,12 @@ import "github.com/stacktower-io/stacktower/pkg/core/dag"
 //
 // # Algorithm
 //
-// TransitiveReduction computes full transitive closure using DFS-based
-// reachability, then removes any edge (u, v) where u can reach v through an
-// intermediate node w (where u→w and w reaches v).
+// For each node u with at least two children, a single DFS is run from the
+// children of u (paths of length ≥ 2 from u). Any child of u reached this way
+// is redundant. Checking against the original edge set is sound: in a DAG an
+// edge belongs to the transitive reduction iff no path of length ≥ 2 connects
+// its endpoints, and such paths never depend on other redundant edges being
+// kept.
 //
 // # Nil Handling
 //
@@ -26,13 +29,11 @@ import "github.com/stacktower-io/stacktower/pkg/core/dag"
 //
 // # Performance
 //
-// Time complexity is O(V²·E) in the worst case, where V is the number of nodes
-// and E is the number of edges. For sparse graphs (typical dependency graphs
-// with limited fan-out), performance approaches O(V·E).
-//
-// Space complexity is O(V²) for the reachability matrix. For large dense
-// graphs (thousands of nodes with high connectivity), this may consume
-// significant memory.
+// Time complexity is O(V·(V+E)) in the worst case, but each per-node DFS only
+// touches the descendants of that node, so on sparse layered dependency
+// graphs the typical cost is far lower. Space complexity is O(V): scratch
+// arrays are epoch-marked and reused across nodes instead of materializing a
+// V×V reachability matrix.
 //
 // # Edge Metadata
 //
@@ -54,39 +55,55 @@ func TransitiveReduction(g *dag.DAG) {
 		}
 	}
 
-	reachability := computeReachability(adjacency)
+	n := len(nodes)
+	// Epoch-marked scratch state, reused for every source node: a slot
+	// belongs to the current source iff it stores the current epoch.
+	visited := make([]int, n)   // node already expanded in this epoch
+	target := make([]int, n)    // node is a direct child of the source
+	redundant := make([]int, n) // child reached via an intermediate path
+	for i := range visited {
+		visited[i] = -1
+		target[i] = -1
+		redundant[i] = -1
+	}
+	stack := make([]int, 0, n)
 
-	for _, e := range g.Edges() {
-		src, dst := nodeIndex[e.From], nodeIndex[e.To]
-		for _, intermediate := range adjacency[src] {
-			if intermediate != dst && reachability[intermediate][dst] {
-				g.RemoveEdge(e.From, e.To)
-				break
+	for u, children := range adjacency {
+		if len(children) < 2 {
+			// Redundancy requires an alternate path through another child.
+			continue
+		}
+
+		epoch := u
+		for _, c := range children {
+			target[c] = epoch
+		}
+
+		// DFS from every child's children: each node reached lies on a
+		// path of length ≥ 2 from u. The visited set is shared across
+		// children — once a subtree is expanded, all targets inside it
+		// have been recorded.
+		stack = stack[:0]
+		for _, c := range children {
+			stack = append(stack, adjacency[c]...)
+		}
+		for len(stack) > 0 {
+			x := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if visited[x] == epoch {
+				continue
+			}
+			visited[x] = epoch
+			if target[x] == epoch {
+				redundant[x] = epoch
+			}
+			stack = append(stack, adjacency[x]...)
+		}
+
+		for _, c := range children {
+			if redundant[c] == epoch {
+				g.RemoveEdge(nodes[u].ID, nodes[c].ID)
 			}
 		}
 	}
-}
-
-func computeReachability(adjacency [][]int) [][]bool {
-	n := len(adjacency)
-	reachable := make([][]bool, n)
-	for i := range reachable {
-		reachable[i] = make([]bool, n)
-	}
-
-	var dfs func(source, current int)
-	dfs = func(source, current int) {
-		if reachable[source][current] {
-			return
-		}
-		reachable[source][current] = true
-		for _, next := range adjacency[current] {
-			dfs(source, next)
-		}
-	}
-
-	for i := range reachable {
-		dfs(i, i)
-	}
-	return reachable
 }

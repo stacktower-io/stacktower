@@ -171,43 +171,37 @@ func TestTransitiveReduction_NoModificationOnIrreducible(t *testing.T) {
 	}
 }
 
-func TestComputeReachability_SimpleChain(t *testing.T) {
-	adj := [][]int{
-		{1},
-		{2},
-		{},
+// TestTransitiveReduction_DeepSkipEdge verifies that redundancy is detected
+// across long alternate paths, not just paths through a single intermediate.
+func TestTransitiveReduction_DeepSkipEdge(t *testing.T) {
+	g := dag.New(nil)
+	for _, id := range []string{"a", "b", "c", "d", "e"} {
+		_ = g.AddNode(dag.Node{ID: id})
+	}
+	// Chain a→b→c→d→e plus a skip edge a→e (redundant via the chain).
+	_ = g.AddEdge(dag.Edge{From: "a", To: "b"})
+	_ = g.AddEdge(dag.Edge{From: "b", To: "c"})
+	_ = g.AddEdge(dag.Edge{From: "c", To: "d"})
+	_ = g.AddEdge(dag.Edge{From: "d", To: "e"})
+	_ = g.AddEdge(dag.Edge{From: "a", To: "e"})
+
+	TransitiveReduction(g)
+
+	hasEdge := func(from, to string) bool {
+		for _, e := range g.Edges() {
+			if e.From == from && e.To == to {
+				return true
+			}
+		}
+		return false
 	}
 
-	reach := computeReachability(adj)
-
-	if !reach[0][1] || !reach[0][2] {
-		t.Error("node 0 should reach nodes 1 and 2")
+	if hasEdge("a", "e") {
+		t.Error("a→e should be removed: a reaches e via the chain")
 	}
-	if !reach[1][2] {
-		t.Error("node 1 should reach node 2")
-	}
-	if reach[2][0] || reach[2][1] {
-		t.Error("node 2 should not reach any nodes")
-	}
-}
-
-func TestComputeReachability_Diamond(t *testing.T) {
-	adj := [][]int{
-		{1, 2},
-		{3},
-		{3},
-		{},
-	}
-
-	reach := computeReachability(adj)
-
-	if !reach[0][3] {
-		t.Error("node 0 should reach node 3 through multiple paths")
-	}
-	if !reach[1][3] {
-		t.Error("node 1 should reach node 3")
-	}
-	if !reach[2][3] {
-		t.Error("node 2 should reach node 3")
+	for _, e := range [][2]string{{"a", "b"}, {"b", "c"}, {"c", "d"}, {"d", "e"}} {
+		if !hasEdge(e[0], e[1]) {
+			t.Errorf("chain edge %s→%s should be kept", e[0], e[1])
+		}
 	}
 }

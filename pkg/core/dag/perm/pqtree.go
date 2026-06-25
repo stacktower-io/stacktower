@@ -513,8 +513,9 @@ func (t *PQTree) Enumerate(limit int) [][]int {
 	}
 
 	var results [][]int
-	t.enumerateLazy(t.root, nil, func(perm []int) bool {
-		results = append(results, perm)
+	buf := make([]int, 0, len(t.leaves))
+	t.enumerateLazy(t.root, &buf, func(perm []int) bool {
+		results = append(results, slices.Clone(perm))
 		return limit <= 0 || len(results) < limit
 	})
 	return results
@@ -556,7 +557,8 @@ func (t *PQTree) EnumerateFunc(fn func([]int) bool) int {
 	}
 
 	count := 0
-	t.enumerateLazy(t.root, nil, func(perm []int) bool {
+	buf := make([]int, 0, len(t.leaves))
+	t.enumerateLazy(t.root, &buf, func(perm []int) bool {
 		count++
 		return fn(perm)
 	})
@@ -565,13 +567,18 @@ func (t *PQTree) EnumerateFunc(fn func([]int) bool) int {
 
 // enumerateLazy generates permutations one at a time via callback.
 // Returns false if callback signaled stop, true otherwise.
-func (t *PQTree) enumerateLazy(node *pqNode, prefix []int, emit func([]int) bool) bool {
+// buf is a shared scratch buffer; callers must clone any permutation
+// they want to keep (Enumerate does this; EnumerateFunc documents it).
+func (t *PQTree) enumerateLazy(node *pqNode, buf *[]int, emit func([]int) bool) bool {
 	if node.kind == leafNode {
-		return emit(append(slices.Clone(prefix), node.value))
+		*buf = append(*buf, node.value)
+		ok := emit(*buf)
+		*buf = (*buf)[:len(*buf)-1]
+		return ok
 	}
 
 	return t.forEachChildPerm(node, func(children []*pqNode) bool {
-		return t.enumerateChildrenLazy(children, prefix, emit)
+		return t.enumerateChildrenLazy(children, buf, emit)
 	})
 }
 
@@ -628,17 +635,16 @@ func (t *PQTree) forEachChildPerm(node *pqNode, fn func([]*pqNode) bool) bool {
 	return true
 }
 
-func (t *PQTree) enumerateChildrenLazy(children []*pqNode, prefix []int, emit func([]int) bool) bool {
+func (t *PQTree) enumerateChildrenLazy(children []*pqNode, buf *[]int, emit func([]int) bool) bool {
 	if len(children) == 0 {
-		return emit(slices.Clone(prefix))
+		return emit(*buf)
 	}
 
 	first := children[0]
 	rest := children[1:]
 
-	return t.enumerateLazy(first, nil, func(firstPerm []int) bool {
-		newPrefix := append(slices.Clone(prefix), firstPerm...)
-		return t.enumerateChildrenLazy(rest, newPrefix, emit)
+	return t.enumerateLazy(first, buf, func(_ []int) bool {
+		return t.enumerateChildrenLazy(rest, buf, emit)
 	})
 }
 

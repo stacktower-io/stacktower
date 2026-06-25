@@ -94,20 +94,27 @@ func (m MavenMatcher) ParseConstraint(constraint string) pubgrub.Condition {
 	}
 
 	// Handle multiple ranges separated by comma (outside brackets)
-	// e.g., "[1.0,2.0),[3.0,4.0)" - we need to find the union
+	// e.g., "[1.0,2.0),[3.0,4.0)". Per Maven semantics, a version must
+	// satisfy ALL listed ranges (intersection), not any one of them.
+	// Disjoint ranges therefore produce an unsatisfiable constraint.
 	ranges := splitMavenRanges(constraint)
 	if len(ranges) > 1 {
 		var rangeStrs []string
 		for _, r := range ranges {
-			if rs := mavenSingleRangeToRange(r); rs != "" {
-				rangeStrs = append(rangeStrs, rs)
+			rs := mavenSingleRangeToRange(r)
+			if rs == "" || rs == "*" {
+				// Unbounded ranges don't narrow the intersection.
+				continue
 			}
+			rangeStrs = append(rangeStrs, rs)
 		}
 		if len(rangeStrs) == 0 {
-			return nil
+			// All ranges were unbounded or unparseable: match everything.
+			vs, _ := pubgrub.ParseVersionRange("*")
+			return pubgrub.NewVersionSetCondition(vs)
 		}
-		// Join with || for union
-		rangeStr := strings.Join(rangeStrs, " || ")
+		// Join with comma for intersection (AND)
+		rangeStr := strings.Join(rangeStrs, ", ")
 		versionSet, err := pubgrub.ParseVersionRange(rangeStr)
 		if err != nil {
 			return nil

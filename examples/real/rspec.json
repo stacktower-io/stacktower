@@ -14,7 +14,7 @@
       "meta": {
         "author": "Austin Ziegler",
         "description": "Diff::LCS computes the difference between two Enumerable sequences using the\nMcIlroy-Hunt longest common subsequence (LCS) algorithm. It includes utilities\nto create a simple HTML diff output format and a standard diff-like tool.\n\nThis is release 1.6.1, providing a simple extension that allows for\nDiff::LCS::Change objects to be treated implicitly as arrays and fixes a number\nof formatting issues.\n\nRuby versions below 2.5 are soft-deprecated, which means that older versions are\nno longer part of the CI test suite. If any changes have been introduced that\nbreak those versions, bug reports and patches will be accepted, but it will be\nup to the reporter to verify any fixes prior to release. The next major release\nwill completely break compatibility.",
-        "downloads": 1172014341,
+        "downloads": 1184941588,
         "homepage": "https://github.com/halostatue/diff-lcs",
         "license": "MIT, Artistic-1.0-Perl, GPL-2.0-or-later",
         "repo_archived": false,
@@ -22,7 +22,7 @@
         "repo_language": "Ruby",
         "repo_last_commit": "2026-05-01",
         "repo_owner": "halostatue",
-        "repo_stars": 304,
+        "repo_stars": 316,
         "repo_url": "https://github.com/halostatue/diff-lcs",
         "version": "1.6.2"
       }
@@ -34,16 +34,16 @@
       "meta": {
         "author": "Steven Baker, David Chelimsky, Myron Marston",
         "description": "BDD for Ruby",
-        "downloads": 977494423,
+        "downloads": 986557270,
         "homepage": "https://rspec.info",
         "license": "MIT",
         "repo_archived": false,
         "repo_description": "The RSpec monorepo",
         "repo_language": "Ruby",
-        "repo_last_commit": "2026-05-11",
+        "repo_last_commit": "2026-05-27",
         "repo_license": "MIT",
         "repo_owner": "rspec",
-        "repo_stars": 93,
+        "repo_stars": 106,
         "repo_url": "https://github.com/rspec/rspec",
         "version": "3.13.2"
       }
@@ -55,16 +55,16 @@
       "meta": {
         "author": "Steven Baker, David Chelimsky, Chad Humphries, Myron Marston",
         "description": "BDD for Ruby. RSpec runner and example groups.",
-        "downloads": 1143936578,
+        "downloads": 1155951434,
         "homepage": "https://rspec.info",
         "license": "MIT",
         "repo_archived": false,
         "repo_description": "The RSpec monorepo",
         "repo_language": "Ruby",
-        "repo_last_commit": "2026-05-11",
+        "repo_last_commit": "2026-05-27",
         "repo_license": "MIT",
         "repo_owner": "rspec",
-        "repo_stars": 93,
+        "repo_stars": 106,
         "repo_url": "https://github.com/rspec/rspec",
         "version": "3.13.6"
       }
@@ -76,16 +76,16 @@
       "meta": {
         "author": "Steven Baker, David Chelimsky, Myron Marston",
         "description": "rspec-expectations provides a simple, readable API to express expected outcomes of a code example.",
-        "downloads": 1143877979,
+        "downloads": 1155734136,
         "homepage": "https://rspec.info",
         "license": "MIT",
         "repo_archived": false,
         "repo_description": "The RSpec monorepo",
         "repo_language": "Ruby",
-        "repo_last_commit": "2026-05-11",
+        "repo_last_commit": "2026-05-27",
         "repo_license": "MIT",
         "repo_owner": "rspec",
-        "repo_stars": 93,
+        "repo_stars": 106,
         "repo_url": "https://github.com/rspec/rspec",
         "version": "3.13.5"
       }
@@ -97,16 +97,16 @@
       "meta": {
         "author": "Steven Baker, David Chelimsky, Myron Marston",
         "description": "RSpec's 'test double' framework, with support for stubbing and mocking",
-        "downloads": 1137958150,
+        "downloads": 1150027600,
         "homepage": "https://rspec.info",
         "license": "MIT",
         "repo_archived": false,
         "repo_description": "The RSpec monorepo",
         "repo_language": "Ruby",
-        "repo_last_commit": "2026-05-11",
+        "repo_last_commit": "2026-05-27",
         "repo_license": "MIT",
         "repo_owner": "rspec",
-        "repo_stars": 93,
+        "repo_stars": 106,
         "repo_url": "https://github.com/rspec/rspec",
         "version": "3.13.8"
       }
@@ -118,16 +118,16 @@
       "meta": {
         "author": "David Chelimsky, Myron Marson, Jon Rowe, Sam Phippen, Xaviery Shay, Bradley Schaefer",
         "description": "Support utilities for RSpec gems",
-        "downloads": 1129866207,
+        "downloads": 1142125817,
         "homepage": "https://rspec.info",
         "license": "MIT",
         "repo_archived": false,
         "repo_description": "The RSpec monorepo",
         "repo_language": "Ruby",
-        "repo_last_commit": "2026-05-11",
+        "repo_last_commit": "2026-05-27",
         "repo_license": "MIT",
         "repo_owner": "rspec",
-        "repo_stars": 93,
+        "repo_stars": 106,
         "repo_url": "https://github.com/rspec/rspec",
         "version": "3.13.7"
       }

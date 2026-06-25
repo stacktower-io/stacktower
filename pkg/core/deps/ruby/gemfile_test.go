@@ -74,6 +74,127 @@ end
 	}
 }
 
+func TestGemfile_Parse_MultipleVersionConstraints(t *testing.T) {
+	dir := t.TempDir()
+	gemfile := filepath.Join(dir, "Gemfile")
+	content := `source 'https://rubygems.org'
+
+gem 'rack', '>= 1.0', '< 2.0', '< 3.0'
+gem 'rails', '~> 7.0'
+gem 'puma', '>= 5.0', '< 7'
+gem 'sidekiq', '>= 6.0', require: false
+`
+	if err := os.WriteFile(gemfile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(gemfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	result, _ := parseGemfileWithVersions(f, deps.DependencyScopeProdOnly)
+	got := make(map[string]string, len(result))
+	for _, dep := range result {
+		got[dep.Name] = dep.Constraint
+	}
+
+	tests := []struct {
+		gem            string
+		wantConstraint string
+	}{
+		// All three constraints captured, not just the first two
+		{"rack", ">= 1.0, < 2.0, < 3.0"},
+		{"rails", "~> 7.0"},
+		{"puma", ">= 5.0, < 7"},
+		// Constraint extraction stops at hash options like require:
+		{"sidekiq", ">= 6.0"},
+	}
+	for _, tt := range tests {
+		constraint, ok := got[tt.gem]
+		if !ok {
+			t.Errorf("gem %q missing from result", tt.gem)
+			continue
+		}
+		if constraint != tt.wantConstraint {
+			t.Errorf("gem %q constraint = %q, want %q", tt.gem, constraint, tt.wantConstraint)
+		}
+	}
+}
+
+func TestGemfile_Parse_GitAndPathSourceGems(t *testing.T) {
+	// Gems declared with git:/github:/path: sources still produce a
+	// dependency node (with no version constraint) instead of being dropped.
+	dir := t.TempDir()
+	gemfile := filepath.Join(dir, "Gemfile")
+	content := `source 'https://rubygems.org'
+
+gem 'rails', github: 'rails/rails'
+gem 'my_engine', path: '../my_engine'
+gem 'custom', git: 'https://github.com/user/custom.git', branch: 'main'
+gem 'pinned', '~> 1.0', github: 'user/pinned'
+`
+	if err := os.WriteFile(gemfile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(gemfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	result, _ := parseGemfileWithVersions(f, deps.DependencyScopeProdOnly)
+	got := make(map[string]string, len(result))
+	for _, dep := range result {
+		got[dep.Name] = dep.Constraint
+	}
+
+	for _, gem := range []string{"rails", "my_engine", "custom"} {
+		constraint, ok := got[gem]
+		if !ok {
+			t.Errorf("gem %q with git/path source missing from result", gem)
+			continue
+		}
+		if constraint != "" {
+			t.Errorf("gem %q constraint = %q, want empty (source option is not a constraint)", gem, constraint)
+		}
+	}
+	// Version constraints before source options are still captured
+	if got["pinned"] != "~> 1.0" {
+		t.Errorf("gem %q constraint = %q, want %q", "pinned", got["pinned"], "~> 1.0")
+	}
+}
+
+func TestExtractGemConstraints(t *testing.T) {
+	tests := []struct {
+		rest string
+		want []string
+	}{
+		{", '~> 5.0'", []string{"~> 5.0"}},
+		{", '>= 1.0', '< 2.0', '< 3.0'", []string{">= 1.0", "< 2.0", "< 3.0"}},
+		{", '>= 1.0', require: false", []string{">= 1.0"}},
+		{", github: 'rails/rails'", nil},
+		{", tag: '1.2.3'", nil}, // quoted hash value is not a constraint
+		{"", nil},
+		{", '1.0.0'", []string{"1.0.0"}}, // bare version
+	}
+	for _, tt := range tests {
+		t.Run(tt.rest, func(t *testing.T) {
+			got := extractGemConstraints(tt.rest)
+			if len(got) != len(tt.want) {
+				t.Fatalf("extractGemConstraints(%q) = %v, want %v", tt.rest, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("extractGemConstraints(%q)[%d] = %q, want %q", tt.rest, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestGemfile_Type(t *testing.T) {
 	parser := &Gemfile{}
 	if got := parser.Type(); got != "Gemfile" {

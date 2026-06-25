@@ -18,9 +18,11 @@ func TestComposerMatcher_ParseVersion(t *testing.T) {
 		{"0.1.0", "0.1.0", true},
 		{"1.2", "1.2.0", true},
 		{"1", "1.0.0", true},
-		{"1.2.3-beta", "1.2.3", true},
-		{"1.2.3@dev", "1.2.3", true},
-		{"1.2.3-RC1", "1.2.3", true},
+		// Stability suffixes are preserved so prereleases order below the
+		// corresponding stable release (and don't collide with it).
+		{"1.2.3-beta", "1.2.3-beta", true},
+		{"1.2.3@dev", "1.2.3", true}, // @dev is a stability flag, not part of the version
+		{"1.2.3-RC1", "1.2.3-rc1", true},
 		{"invalid", "", false},
 		{"", "", false},
 	}
@@ -42,6 +44,71 @@ func TestComposerMatcher_ParseVersion(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestComposerMatcher_SinglePipeOR(t *testing.T) {
+	// Composer accepts both "||" and a single "|" as the OR operator.
+	m := ComposerMatcher{}
+
+	tests := []struct {
+		constraint string
+		version    string
+		matches    bool
+	}{
+		{"^8.2 | ^8.3", "8.2.5", true},
+		{"^8.2 | ^8.3", "8.3.0", true},
+		{"^8.2 | ^8.3", "9.0.0", false},
+		{"^8.2 | ^8.3", "8.1.0", false},
+		// "||" still works and must not be split twice
+		{"^8.2 || ^8.3", "8.2.5", true},
+		{"^8.2 || ^8.3", "9.0.0", false},
+		// Mixed forms
+		{"^1.0 | ^2.0 || ^3.0", "2.5.0", true},
+		{"^1.0 | ^2.0 || ^3.0", "4.0.0", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.constraint+"_"+tt.version, func(t *testing.T) {
+			cond := m.ParseConstraint(tt.constraint)
+			if cond == nil {
+				t.Fatalf("ParseConstraint(%q) = nil", tt.constraint)
+			}
+			v := m.ParseVersion(tt.version)
+			if v == nil {
+				t.Fatalf("ParseVersion(%q) = nil", tt.version)
+			}
+			if got := cond.Satisfies(v); got != tt.matches {
+				t.Errorf("constraint %q version %q: Satisfies = %v, want %v",
+					tt.constraint, tt.version, got, tt.matches)
+			}
+		})
+	}
+}
+
+func TestComposerMatcher_PrereleaseOrdering(t *testing.T) {
+	m := ComposerMatcher{}
+
+	// A beta must not satisfy a constraint that only the stable release meets.
+	cond := m.ParseConstraint(">=1.2.3")
+	if cond == nil {
+		t.Fatal("ParseConstraint returned nil")
+	}
+	beta := m.ParseVersion("1.2.3-beta")
+	if beta == nil {
+		t.Fatal("ParseVersion(1.2.3-beta) = nil")
+	}
+	if cond.Satisfies(beta) {
+		t.Error(">=1.2.3 should not be satisfied by 1.2.3-beta (prerelease sorts below stable)")
+	}
+
+	// Versions order correctly: 1.2.3-beta < 1.2.3
+	stable := m.ParseVersion("1.2.3")
+	if got := beta.Sort(stable); got >= 0 {
+		t.Errorf("1.2.3-beta.Sort(1.2.3) = %d, want < 0", got)
+	}
+	if got := stable.Sort(beta); got <= 0 {
+		t.Errorf("1.2.3.Sort(1.2.3-beta) = %d, want > 0", got)
 	}
 }
 

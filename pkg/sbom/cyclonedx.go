@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/stacktower-io/stacktower/pkg/core/dag"
-	"github.com/stacktower-io/stacktower/pkg/security"
 )
 
 // CycloneDX BOM types (CycloneDX 1.6 JSON/XML schema)
@@ -44,12 +43,29 @@ type cdxComponent struct {
 	ExtRefs  []cdxExtRef        `json:"externalReferences,omitempty" xml:"externalReferences>reference,omitempty"`
 }
 
+// cdxLicenseChoice holds either a single license or an SPDX expression,
+// per the CycloneDX schema (exactly one of the fields is set).
 type cdxLicenseChoice struct {
-	License cdxLicense `json:"license" xml:"license"`
+	License    *cdxLicense `json:"license,omitempty" xml:"license,omitempty"`
+	Expression string      `json:"expression,omitempty" xml:"expression,omitempty"`
 }
 
 type cdxLicense struct {
-	ID string `json:"id,omitempty" xml:"id,omitempty"`
+	ID   string `json:"id,omitempty" xml:"id,omitempty"`
+	Name string `json:"name,omitempty" xml:"name,omitempty"`
+}
+
+// cdxLicenseFor maps a raw license string to the appropriate CycloneDX
+// representation: SPDX id, SPDX expression, or free-text name.
+func cdxLicenseFor(license string) cdxLicenseChoice {
+	switch {
+	case isSPDXID(license):
+		return cdxLicenseChoice{License: &cdxLicense{ID: license}}
+	case isSPDXExpression(license):
+		return cdxLicenseChoice{Expression: license}
+	default:
+		return cdxLicenseChoice{License: &cdxLicense{Name: license}}
+	}
 }
 
 type cdxExtRef struct {
@@ -63,11 +79,23 @@ type cdxDependency struct {
 }
 
 type cdxVuln struct {
-	BOMRef  string       `json:"bom-ref" xml:"bom-ref,attr"`
-	ID      string       `json:"id" xml:"id"`
-	Source  *cdxSource   `json:"source,omitempty" xml:"source,omitempty"`
-	Ratings []cdxRating  `json:"ratings,omitempty" xml:"ratings>rating,omitempty"`
-	Affects []cdxAffects `json:"affects" xml:"affects>target"`
+	BOMRef      string        `json:"bom-ref" xml:"bom-ref,attr"`
+	ID          string        `json:"id" xml:"id"`
+	Source      *cdxSource    `json:"source,omitempty" xml:"source,omitempty"`
+	References  []cdxVulnRef  `json:"references,omitempty" xml:"references>reference,omitempty"`
+	Ratings     []cdxRating   `json:"ratings,omitempty" xml:"ratings>rating,omitempty"`
+	Description string        `json:"description,omitempty" xml:"description,omitempty"`
+	Advisories  []cdxAdvisory `json:"advisories,omitempty" xml:"advisories>advisory,omitempty"`
+	Affects     []cdxAffects  `json:"affects" xml:"affects>target"`
+}
+
+// cdxVulnRef lists alternative identifiers (e.g. CVE aliases of a GHSA id).
+type cdxVulnRef struct {
+	ID string `json:"id" xml:"id"`
+}
+
+type cdxAdvisory struct {
+	URL string `json:"url" xml:"url"`
 }
 
 type cdxSource struct {
@@ -153,7 +181,7 @@ func GenerateCycloneDX(g *dag.DAG, opts Options) ([]byte, error) {
 		}
 
 		if license != "" {
-			comp.Licenses = []cdxLicenseChoice{{License: cdxLicense{ID: license}}}
+			comp.Licenses = []cdxLicenseChoice{cdxLicenseFor(license)}
 		}
 		if repoURL != "" {
 			comp.ExtRefs = []cdxExtRef{{Type: "vcs", URL: repoURL}}
@@ -182,36 +210,29 @@ func GenerateCycloneDX(g *dag.DAG, opts Options) ([]byte, error) {
 		})
 	}
 
-	// Vulnerabilities from report
+	// Vulnerabilities from the scan report. Nodes annotated only with a
+	// severity (no stored report) are intentionally not exported: synthetic
+	// IDs would be unusable by downstream tools like Dependency-Track.
 	if opts.VulnReport != nil {
 		for i, f := range opts.VulnReport.Findings {
-			bom.Vulns = append(bom.Vulns, cdxVuln{
+			v := cdxVuln{
 				BOMRef: fmt.Sprintf("vuln-%d", i+1),
 				ID:     f.ID,
 				Source: &cdxSource{
 					Name: "OSV",
 					URL:  "https://osv.dev",
 				},
-				Ratings: []cdxRating{{Severity: string(f.Severity)}},
-				Affects: []cdxAffects{{Ref: f.Package}},
-			})
-		}
-	} else {
-		// Fall back to node-level vuln metadata
-		for _, n := range g.Nodes() {
-			if n.Meta == nil {
-				continue
+				Ratings:     []cdxRating{{Severity: string(f.Severity)}},
+				Description: f.Summary,
+				Affects:     []cdxAffects{{Ref: f.Package}},
 			}
-			sev, ok := n.Meta[security.MetaVulnSeverity].(string)
-			if !ok || sev == "" {
-				continue
+			for _, alias := range f.Aliases {
+				v.References = append(v.References, cdxVulnRef{ID: alias})
 			}
-			bom.Vulns = append(bom.Vulns, cdxVuln{
-				BOMRef:  fmt.Sprintf("vuln-%s", n.ID),
-				ID:      fmt.Sprintf("vuln-%s", n.ID),
-				Ratings: []cdxRating{{Severity: sev}},
-				Affects: []cdxAffects{{Ref: n.ID}},
-			})
+			for _, ref := range f.References {
+				v.Advisories = append(v.Advisories, cdxAdvisory{URL: ref})
+			}
+			bom.Vulns = append(bom.Vulns, v)
 		}
 	}
 
