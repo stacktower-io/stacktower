@@ -83,8 +83,8 @@ func (h *HandDrawn) RenderBlock(buf *bytes.Buffer, b styles.Block) {
 		if b.VulnSeverity != "" {
 			class += " vuln vuln-" + b.VulnSeverity
 		}
-		fmt.Fprintf(buf, `<path id="block-%s" class="%s" d="%s" fill="%s" stroke="#333" stroke-width="2" stroke-linejoin="round" transform="rotate(%.3f %.2f %.2f)"/>`,
-			styles.EscapeXML(b.ID), class, path, fill, rot, b.CX, b.CY)
+		fmt.Fprintf(buf, `<path id="block-%s" class="%s" data-block="%s" d="%s" fill="%s" stroke="#333" stroke-width="2" stroke-linejoin="round" transform="rotate(%.3f %.2f %.2f)"/>`,
+			styles.EscapeXML(b.ID), class, styles.EscapeXML(b.Label), path, fill, rot, b.CX, b.CY)
 	})
 	buf.WriteByte('\n')
 
@@ -128,7 +128,7 @@ func renderFlag(buf *bytes.Buffer, b styles.Block, cssClass, color, tooltip stri
 	pennantPath := wobblyTriangle(p1x, p1y, p2x, p2y, p3x, p3y, seed)
 
 	fmt.Fprintf(buf, `  <g class="%s" data-block="%s" cursor="pointer" transform="rotate(%.3f %.2f %.2f)">`+"\n",
-		cssClass, styles.EscapeXML(b.ID), rot, b.CX, b.CY)
+		cssClass, styles.EscapeXML(b.Label), rot, b.CX, b.CY)
 	fmt.Fprintf(buf, `    <title>%s</title>`+"\n", styles.EscapeXML(tooltip))
 	fmt.Fprintf(buf, `    <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="#333" stroke-width="%.1f" stroke-linecap="round"/>`+"\n",
 		poleX, poleTopY, poleX, poleBotY, flagPoleW)
@@ -159,7 +159,7 @@ func (h *HandDrawn) RenderText(buf *bytes.Buffer, b styles.Block) {
 		textW, textH = textH, textW
 	}
 
-	fmt.Fprintf(buf, `  <g class="block-text" data-block="%s">`+"\n", styles.EscapeXML(b.ID))
+	fmt.Fprintf(buf, `  <g class="block-text" data-block="%s">`+"\n", styles.EscapeXML(b.Label))
 	styles.WrapURL(buf, b.URL, func() {
 		fmt.Fprintf(buf, `    <rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="%s"/>`+"\n",
 			b.CX-textW/2, b.CY-textH/2, textW, textH, bgFill)
@@ -210,7 +210,7 @@ func (h *HandDrawn) RenderPopup(buf *bytes.Buffer, b styles.Block) {
 	height := float64(numDescLines+statsRows+licenseRows+vulnRows)*popupLineHeight + popupPadding
 	path := wobbledRect(0, 0, popupWidth, height, h.seed, b.ID+"_popup")
 
-	fmt.Fprintf(buf, `  <g class="popup" data-for="%s" visibility="hidden">`+"\n", styles.EscapeXML(b.ID))
+	fmt.Fprintf(buf, `  <g class="popup" data-for="%s" visibility="hidden">`+"\n", styles.EscapeXML(b.Label))
 	fmt.Fprintf(buf, `    <path d="%s" fill="white" stroke="#333" stroke-width="1.5" stroke-linejoin="round"/>`+"\n", path)
 
 	textY := popupTextStartY

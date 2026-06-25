@@ -102,7 +102,11 @@ func buildBlocks(l Layout, g *dag.DAG) []graph.Block {
 			Height: b.Height(),
 		}
 		if g != nil {
-			if n, ok := g.Node(id); ok {
+			n, ok := g.Node(id)
+			if !ok && b.NodeID != id {
+				n, ok = g.Node(b.NodeID)
+			}
+			if ok {
 				bd.Auxiliary = n.IsAuxiliary()
 				bd.Synthetic = n.IsSynthetic()
 				if n.Meta != nil {

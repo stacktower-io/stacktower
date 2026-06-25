@@ -24,7 +24,7 @@ const blockInteractionCSS = `
 
 const blockInteractionJS = `
     function highlight(pkgs) {
-      document.querySelectorAll('.block').forEach(b => b.classList.toggle('highlight', pkgs.includes(b.id.replace('block-', ''))));
+      document.querySelectorAll('.block').forEach(b => b.classList.toggle('highlight', pkgs.includes(b.dataset.block || b.id.replace('block-', ''))));
       document.querySelectorAll('.block-text').forEach(t => t.classList.toggle('highlight', pkgs.includes(t.dataset.block)));
       document.querySelectorAll('.license-flag, .license-stripe, .vuln-flag').forEach(f => f.classList.toggle('highlight', pkgs.includes(f.dataset.block)));
     }
@@ -32,7 +32,7 @@ const blockInteractionJS = `
       document.querySelectorAll('.block, .block-text, .license-flag, .license-stripe, .vuln-flag').forEach(el => el.classList.remove('highlight'));
     }
     document.querySelectorAll('.block').forEach(el => {
-      el.addEventListener('mouseenter', () => highlight([el.id.replace('block-', '')]));
+      el.addEventListener('mouseenter', () => highlight([el.dataset.block || el.id.replace('block-', '')]));
       el.addEventListener('mouseleave', clearHighlight);
     });
     document.querySelectorAll('.block-text').forEach(el => {
@@ -221,7 +221,11 @@ func buildBlocks(l layout.Layout, g *dag.DAG, withPopups bool) []styles.Block {
 			CX: b.CenterX(), CY: b.CenterY(),
 		}
 		if g != nil {
-			if n, ok := g.Node(id); ok && n.Meta != nil {
+			n, ok := g.Node(id)
+			if !ok && b.NodeID != id {
+				n, ok = g.Node(b.NodeID)
+			}
+			if ok && n.Meta != nil {
 				// Prefer repo_url (GitHub), fallback to homepage for packages without repos
 				if url, ok := n.Meta[metadata.RepoURL].(string); ok && url != "" {
 					blk.URL = url

@@ -25,8 +25,8 @@ func (Simple) RenderBlock(buf *bytes.Buffer, b Block) {
 		if b.VulnSeverity != "" {
 			class += " vuln vuln-" + b.VulnSeverity
 		}
-		fmt.Fprintf(buf, `<rect id="block-%s" class="%s" x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.1f" ry="%.1f" fill="%s" stroke="#333" stroke-width="1"/>`,
-			EscapeXML(b.ID), class, b.X, b.Y, b.W, b.H, radius, radius, "white")
+		fmt.Fprintf(buf, `<rect id="block-%s" class="%s" data-block="%s" x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.1f" ry="%.1f" fill="%s" stroke="#333" stroke-width="1"/>`,
+			EscapeXML(b.ID), class, EscapeXML(b.Label), b.X, b.Y, b.W, b.H, radius, radius, "white")
 	})
 	buf.WriteByte('\n')
 }
@@ -67,7 +67,7 @@ func renderSimpleFlag(buf *bytes.Buffer, b Block, cssClass, color, tooltip strin
 	poleBotY := poleTopY + simpleFlagPoleH
 
 	fmt.Fprintf(buf, `  <g class="%s" data-block="%s" cursor="pointer">`+"\n",
-		cssClass, EscapeXML(b.ID))
+		cssClass, EscapeXML(b.Label))
 	fmt.Fprintf(buf, `    <title>%s</title>`+"\n", EscapeXML(tooltip))
 	// Pole
 	fmt.Fprintf(buf, `    <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="#333" stroke-width="%.1f" stroke-linecap="round"/>`+"\n",
@@ -99,7 +99,7 @@ func (Simple) RenderText(buf *bytes.Buffer, b Block) {
 		textW, textH = textH, textW
 	}
 
-	fmt.Fprintf(buf, `  <g class="block-text" data-block="%s">`+"\n", EscapeXML(b.ID))
+	fmt.Fprintf(buf, `  <g class="block-text" data-block="%s">`+"\n", EscapeXML(b.Label))
 	WrapURL(buf, b.URL, func() {
 		fmt.Fprintf(buf, `    <rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="%s"/>`+"\n",
 			b.CX-textW/2, b.CY-textH/2, textW, textH, "white")

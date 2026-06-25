@@ -130,7 +130,7 @@ func TestHandDrawn_RenderText(t *testing.T) {
 	if !strings.Contains(output, `class="block-text"`) {
 		t.Errorf("RenderText() missing block-text class: %s", output)
 	}
-	if !strings.Contains(output, `data-block="text-block"`) {
+	if !strings.Contains(output, `data-block="Text Label"`) {
 		t.Errorf("RenderText() missing data-block attr: %s", output)
 	}
 	if !strings.Contains(output, `<text`) {
@@ -195,7 +195,7 @@ func TestHandDrawn_RenderPopup(t *testing.T) {
 	if !strings.Contains(output, `class="popup"`) {
 		t.Errorf("RenderPopup() missing popup class: %s", output)
 	}
-	if !strings.Contains(output, `data-for="popup-block"`) {
+	if !strings.Contains(output, `data-for="Popup Block"`) {
 		t.Errorf("RenderPopup() missing data-for attr: %s", output)
 	}
 	if !strings.Contains(output, "A description of the package") {
